@@ -1,0 +1,70 @@
+services:
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - ${REDIS_PORT}:6379
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    env_file:
+      - .env
+    networks:
+      - agent-api
+
+
+  pgvector:
+    image: agnohq/pgvector:16
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    networks:
+      - agent-api
+  
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: always
+    container_name: qdrant
+    ports:
+      - ${QDRANT_PORT}:6333
+      - 6334:6334
+    expose:
+      - ${QDRANT_PORT}
+      - 6334
+      - 6335
+    configs:
+      - source: qdrant_config
+        target: /qdrant/config/production.yaml
+    env_file:
+      - .env
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+    
+    environment:
+      QDRANT_HOST: ${QDRANT_HOST}
+      QDRANT_PORT: ${QDRANT_PORT}
+    
+    networks:
+      - agent-api
+
+configs:
+  qdrant_config:
+    content: |
+      log_level: INFO
+
+networks:
+  agent-api:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redis_data:
+  tmp:

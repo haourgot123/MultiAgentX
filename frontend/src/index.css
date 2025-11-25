@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: #E5E7EB;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: #FFFFFF;
+    color: #111827;
+  }
+}
+
+@layer utilities {
+  .bg-tech-gradient {
+    background: linear-gradient(135deg, #10B981 0%, #34D399 100%);
+  }
+
+  .text-tech {
+    color: #10B981;
+  }
+
+  /* Smooth expand animation */
+  @keyframes expand-down {
+    from {
+      opacity: 0;
+      max-height: 0;
+      transform: translateY(-10px);
+    }
+
+    to {
+      opacity: 1;
+      max-height: 500px;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-expand {
+    animation: expand-down 0.3s ease-out forwards;
+  }
+
+  /* Spin animation for new chat button */
+  @keyframes spin-once {
+    from {
+      transform: rotate(0deg);
+    }
+
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .animate-spin-once {
+    animation: spin-once 0.5s ease-out;
+  }
+}
