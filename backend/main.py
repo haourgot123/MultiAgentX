@@ -1,12 +1,12 @@
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from backend.api.revision.view import database_router
 from backend.api.token.view import token_router
 from backend.api.user.view import authentication_router
-from backend.exceptions.model import BusinessBaseException
 from backend.exceptions.handler import exception_handler, global_exception_handler
-
+from backend.exceptions.model import BusinessBaseException
 
 app = FastAPI()
 
@@ -22,7 +22,7 @@ app.add_exception_handler(BusinessBaseException, exception_handler)
 app.add_exception_handler(Exception, global_exception_handler)
 app.include_router(authentication_router)
 app.include_router(database_router)
-app.include_router(token_router)    
+app.include_router(token_router)
 
 
 @app.get("/")

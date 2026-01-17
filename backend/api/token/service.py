@@ -1,9 +1,9 @@
 from backend.api.token.model import Token, TokenUpdate
 from backend.api.user.model import User
 from backend.databases.db import get_by_filter, get_by_id, insert_row, update_row
-from backend.utils.authentic import create_access_token, create_refresh_token
-from backend.utils.constants import Message, TokenType
 from backend.exceptions.model import UserNotFoundException
+from backend.utils.authentic import create_access_token, create_refresh_token
+from backend.utils.constants import TokenType
 
 
 def get_token(db_session, token_data: Token):

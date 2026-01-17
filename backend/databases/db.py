@@ -9,20 +9,22 @@ from loguru import logger
 from pydantic.types import constr
 from six import string_types
 from sqlalchemy import String, and_, cast, event, inspect, not_, or_
+from sqlalchemy.engine import Engine, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, joinedload, load_only, sessionmaker
 from sqlalchemy.orm.base import InspectionAttr
 from sqlalchemy.orm.relationships import RelationshipProperty
 from sqlalchemy_filters import apply_filters, apply_pagination, apply_sort
 from sqlalchemy_filters.exceptions import BadFilterFormat
-from sqlalchemy.engine import Engine, create_engine
+
 from backend.config.settings import _settings
-from backend.utils.constants import Message
 from backend.exceptions.model import InvalidJoinFieldException
+from backend.utils.constants import Message
 
 Base = declarative_base()
 engine: Engine = create_engine(_settings.postgres.url)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 
 def get_utc_now():
     """Get current UTC time with timezone awareness."""

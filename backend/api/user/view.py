@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from loguru import logger
+
 from backend.api.user.model import (
     LoginRequest,
     LoginResponse,
@@ -33,8 +33,11 @@ async def login(login_request: LoginRequest, db_session: Session = Depends(get_d
     description="Logout a user",
 )
 async def logout(user_id: int, db_session: Session = Depends(get_db)):
-    user = user_service.logout_user(db_session, user_id)
-    return JSONResponse(status_code=status.HTTP_200_OK, content={"message": Message.USER_LOGGED_OUT_SUCCESSFULLY})
+    user_service.logout_user(db_session, user_id)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"message": Message.USER_LOGGED_OUT_SUCCESSFULLY},
+    )
 
 
 @authentication_router.post(
@@ -47,8 +50,8 @@ async def register_user(
     user_register_request: UserRegisterRequest, db_session: Session = Depends(get_db)
 ):
 
-   user = user_service.create_new_user(db_session, user_register_request)
-   return user
+    user = user_service.create_new_user(db_session, user_register_request)
+    return user
 
 
 @authentication_router.get(
@@ -77,9 +80,12 @@ async def update_user(
     description="Delete a user by ID",
 )
 async def delete_user(user_id: int, db_session: Session = Depends(get_db)):
-    
+
     try:
-        user = user_service.delete_user_by_id(db_session, user_id)
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": Message.USER_DELETED_SUCCESSFULLY})
+        user_service.delete_user_by_id(db_session, user_id)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"message": Message.USER_DELETED_SUCCESSFULLY},
+        )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

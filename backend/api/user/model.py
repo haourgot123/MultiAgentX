@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from sqlalchemy import Boolean, Column, DateTime, Integer, String, UnicodeText
 from sqlalchemy.orm import relationship
 
@@ -28,10 +28,10 @@ class User(Base):
 
     def check_password(self, password: str) -> bool:
         return verify_password(password, self.password)
-    
+
     def change_password(self, password: str):
         self.password = get_hash_password(password)
-        
+
     token = relationship("Token", back_populates="user")
 
 
@@ -40,14 +40,14 @@ class UserRegisterRequest(BaseModel):
     password: str = Field(..., description="Password")
     full_name: str = Field(..., description="Full Name")
     username: str = Field(..., description="Username")
-    
-    @field_validator('password')
+
+    @field_validator("password")
     @classmethod
     def validate_password(cls, v):
         if len(v) < 8:
             raise InvalidPasswordException()
         return v
-    
+
 
 class UserUpdateRequest(BaseModel):
     email: Optional[str] = Field(None, description="Email")
@@ -55,8 +55,8 @@ class UserUpdateRequest(BaseModel):
     deleted: Optional[bool] = Field(False, description="Deleted")
     username: Optional[str] = Field(None, description="Username")
     password: Optional[str] = Field(None, description="Password")
-    
-    @field_validator('password')
+
+    @field_validator("password")
     @classmethod
     def validate_password(cls, v):
         if v is None:
@@ -64,6 +64,7 @@ class UserUpdateRequest(BaseModel):
         if len(v) < 8:
             raise InvalidPasswordException()
         return v
+
 
 class UserResponse(BaseModel):
     id: int = Field(..., description="ID")
@@ -75,25 +76,26 @@ class UserResponse(BaseModel):
     deleted: bool = Field(..., description="Deleted")
     created_at: datetime = Field(..., description="Created At")
     updated_at: datetime = Field(..., description="Updated At")
-    
+
     model_config = ConfigDict(from_attributes=True)
-    
+
 
 class LoginRequest(BaseModel):
     username: str = Field(..., description="Username")
     password: str = Field(..., description="Password")
-    
+
+
 class LoginResponse(BaseModel):
     user: UserResponse = Field(..., description="User")
     refresh_token: str = Field(..., description="Refresh Token")
     access_token: str = Field(..., description="Access Token")
-    
+
+
 class ChangePasswordRequest(BaseModel):
     old_password: str = Field(..., description="Old Password")
     new_password: str = Field(..., description="New Password")
 
+
 class ChangePasswordResponse(BaseModel):
     user: UserResponse = Field(..., description="User")
     message: str = Field(..., description="Message")
-
-

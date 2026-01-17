@@ -20,7 +20,7 @@ class Message:
     INTERNAL_SERVER_ERROR = "Internal server error"
     INVALID_JOIN_FIELD = "Invalid join field"
 
+
 class TokenType(Enum):
     REFRESH = 1
     ACCESS = 2
-

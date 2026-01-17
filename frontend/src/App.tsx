@@ -9,7 +9,7 @@ import LoginPage from './store/LoginPage'
 
 
 function LoginRoute() {
-  return <LoginPage />  
+  return <LoginPage />
 }
 
 const router = createBrowserRouter([

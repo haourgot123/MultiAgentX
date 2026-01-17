@@ -3,7 +3,6 @@ from time import time
 
 import jwt
 from fastapi import HTTPException, status
-from loguru import logger
 
 from backend.config.settings import _settings
 
@@ -37,9 +36,7 @@ def create_access_token(*, data: dict):
     rt = int(time())
     to_encode = data.copy()
     expire = int(_settings.jwt.access_token_expire_minutes) * 60
-    to_encode.update(
-        {"rt": rt, "expire_after": expire, "sub": "access_token"}
-    )
+    to_encode.update({"rt": rt, "expire_after": expire, "sub": "access_token"})
     encoded_jwt = jwt.encode(
         to_encode, str(_settings.jwt.secret_key), algorithm=_settings.jwt.algorithm
     )
