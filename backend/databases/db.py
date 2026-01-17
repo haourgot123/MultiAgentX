@@ -10,18 +10,19 @@ from pydantic.types import constr
 from six import string_types
 from sqlalchemy import String, and_, cast, event, inspect, not_, or_
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Session, joinedload, load_only
+from sqlalchemy.orm import Session, joinedload, load_only, sessionmaker
 from sqlalchemy.orm.base import InspectionAttr
 from sqlalchemy.orm.relationships import RelationshipProperty
 from sqlalchemy_filters import apply_filters, apply_pagination, apply_sort
 from sqlalchemy_filters.exceptions import BadFilterFormat
-
-from backend.databases.sqldb_factory import engine
+from sqlalchemy.engine import Engine, create_engine
+from backend.config.settings import _settings
 from backend.utils.constants import Message
-from backend.utils.error_message import InvalidRequestException
+from backend.exceptions.model import InvalidJoinFieldException
 
 Base = declarative_base()
-
+engine: Engine = create_engine(_settings.postgres.url)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def get_utc_now():
     """Get current UTC time with timezone awareness."""
@@ -382,7 +383,7 @@ def perform_join(model_type: ModelType, query, join_fields=[]):
             if join_field in get_relationship_fields(model_type):
                 query = query.options(joinedload(getattr(model_type, join_field)))
             else:
-                raise InvalidRequestException(
+                raise InvalidJoinFieldException(
                     message=f"Invalid join field {join_field}"
                 )
 

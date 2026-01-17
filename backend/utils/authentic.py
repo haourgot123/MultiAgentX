@@ -16,61 +16,55 @@ def verify_password(password: str, hashed_password: str) -> bool:
     return get_hash_password(password) == hashed_password
 
 
-def create_refresh_token(user_id: str, user_email: str) -> str:
-    rt = str(time())
-    refresh_token_jwt_subject = "refresh_token"
-    to_encode = {"user_id": user_id, "user_email": user_email}
-    to_encode.update(
+def create_refresh_token(uid, email):
+    rt = int(time())
+    expire = int(_settings.jwt.refresh_token_expire_minutes) * 60
+    token = jwt.encode(
         {
-            "exp_after": _settings.jwt.refresh_token_expire_minutes * 60,
-            "iat": rt,
-            "sub": refresh_token_jwt_subject,
-        }
-    )
-    encoded_jwt = jwt.encode(
-        payload=to_encode,
-        key=_settings.jwt.secret_key,
+            "rt": rt,
+            "expire_after": expire,
+            "uid": uid,
+            "email": email,
+            "tok_type": "refresh",
+        },
+        str(_settings.jwt.secret_key),
         algorithm=_settings.jwt.algorithm,
     )
-    return encoded_jwt
+    return token
 
 
-def create_access_token(data: dict) -> str:
-    rt = str(time())
-    access_token_jwt_subject = "access_token"
+def create_access_token(*, data: dict):
+    rt = int(time())
     to_encode = data.copy()
+    expire = int(_settings.jwt.access_token_expire_minutes) * 60
     to_encode.update(
-        {
-            "exp_after": _settings.jwt.access_token_expire_minutes * 60,
-            "iat": rt,
-            "sub": access_token_jwt_subject,
-        }
+        {"rt": rt, "expire_after": expire, "sub": "access_token"}
     )
     encoded_jwt = jwt.encode(
-        payload=to_encode,
-        key=_settings.jwt.secret_key,
-        algorithm=_settings.jwt.algorithm,
+        to_encode, str(_settings.jwt.secret_key), algorithm=_settings.jwt.algorithm
     )
     return encoded_jwt
 
 
 def verify_access_token(token: str) -> dict:
-    current_rt = str(time())
-    token_info = None
+    # Returns Is_Valid, user_id
+    rt = int(time())
+    token_raw = None
     try:
-        token_info = jwt.decode(
-            token, _settings.jwt.secret_key, algorithms=[_settings.jwt.algorithm]
+        token_raw = jwt.decode(
+            token, _settings.jwt.secret_key, algorithms=_settings.jwt.algorithm
         )
     except Exception as e:
-        logger.error(f"Error verifying access token: {e}")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
         )
+    tk_rt = token_raw["rt"]
+    tk_ex = token_raw["expire_after"]
 
-    token_rt = token_info.get("exp_after")
-    token_iat = token_info.get("iat")
-
-    if token_rt < current_rt and (current_rt - token_rt) <= int(token_iat):
-        return True, token_info
+    # validate time expired token
+    if tk_rt <= rt and (rt - tk_rt) <= int(tk_ex):
+        return True, token_raw
     else:
+        # token is outdated
         return False, None

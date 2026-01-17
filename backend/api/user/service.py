@@ -1,134 +1,152 @@
-from typing import Optional
-
-from fastapi import Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
-
-from backend.api.token.service import generate_tokens
+from loguru import logger
 from backend.api.user.model import (
     LoginRequest,
     User,
     UserRegisterRequest,
-    UserRegisterResponse,
-    UserResponse,
     UserUpdateRequest,
+    LoginResponse,
+    ChangePasswordRequest,
+    ChangePasswordResponse,
 )
-from backend.databases.db import get_by_filter, get_by_id, get_utc_now, insert_row
-from backend.utils.authentic import verify_access_token
+from backend.databases.db import get_by_id, get_utc_now, insert_row
+from backend.api.token.service import generate_tokens
 from backend.utils.constants import Message
-from backend.utils.error_message import InvalidRequestException
+from backend.exceptions.model import (
+    UserNotFoundException,
+    UserEmailAlreadyExistsException,
+    UserNameAlreadyExistsException,
+    InvalidPasswordException,
+    InvalidFullNameException
+)
 
 
-def get_current_user(request: Request, token: Optional[str] = Header(None)):
-    if "Token" in request.headers:
-        token = request.headers["Token"]
-    elif "Authorization" in request.headers:
-        token = request.headers["Authorization"].split()[-1]
 
-    valid_token, data = verify_access_token(token)
+class UserService:
+    def __init__(self):
+        pass
+    
+    def get_user_by_email(self, db_session: Session, email: str):
+        """ Get user by email from database """
+        user = db_session.query(User).filter(User.email == email.lower()).first()
+        return user
+    
+    def get_user_by_username(self, db_session: Session, username: str):
+        """ Get user by username from database """
+        user = db_session.query(User).filter(User.username == username.lower()).first()
+        return user
 
-    if not valid_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=Message.INVALID_TOKEN,
+    def get_user_by_id(self, db_session: Session, user_id: int):
+        """ Get user by id from database """
+        user = get_by_id(db_session, User, user_id)
+        return user
+
+    def create_new_user(self, db_session: Session, user_in: UserRegisterRequest):
+        """ Create new user in database """
+        # Check email and username are already exists
+        if self.get_user_by_email(db_session, user_in.email):
+            raise UserEmailAlreadyExistsException()
+        if self.get_user_by_username(db_session, user_in.username):
+            raise UserNameAlreadyExistsException()
+        
+        # Create new user
+        new_user = User(
+            email=user_in.email.lower(),
+            full_name=user_in.full_name,
+            username=user_in.username.lower(),
         )
-    request.state.email = data["email"]
-    request.state.user_id = data["user_id"]
+        new_user.set_password(user_in.password)
+        
+        new_user.created_at = get_utc_now()
+        new_user.updated_at = get_utc_now()
+        new_user = insert_row(db_session, new_user)
+        return new_user
+    
+    def update_user_by_id(self, db_session: Session, user_id: int, user_update: UserUpdateRequest):
+        """ Update user by id in database """
+        
+        logger.info(f"Updating user by id: {user_update}")
 
+        user = self.get_user_by_id(db_session, user_id)
+        if not user:
+            raise UserNotFoundException()
+        
+        # Update password if provided
+        if user_update.password:
+            user.change_password(user_update.password)
+        
+        # Update fullname if provided
+        if user_update.full_name:
+            user.full_name = user_update.full_name
+        
+        # Update deleted if provided
+        if user_update.deleted:
+            user.deleted = user_update.deleted
+        
+        # Update username if provided
+        if user_update.username:
+            is_username_exists = self.get_user_by_username(db_session, user_update.username)
+            if is_username_exists:
+                raise UserNameAlreadyExistsException()
+            user.username = user_update.username.lower()
+        
+        # Update updated_at
+        user.updated_at = get_utc_now()
+        
+        db_session.commit()
+        db_session.refresh(user)
+        return user
 
-def get_user_by_email(db_session: Session, email: str):
-    return get_by_filter(
-        db_session,
-        User,
-        filters=[User.email == email.lower(), User.deleted.is_(False)],
-        first=True,
-    )
+    def delete_user_by_id(self, db_session: Session, user_id: int):
+        """ Delete user by id in database """
+        user = self.get_user_by_id(db_session, user_id)
+        if not user:
+            raise UserNotFoundException()
+        user.deleted = True
+        db_session.commit()
+        db_session.refresh(user)
+        return user
+    
+    def login_user(self, db_session: Session, login_request: LoginRequest):
+        """ Login user in database """
+        user = self.get_user_by_username(db_session, login_request.username) or self.get_user_by_email(db_session, login_request.username)
+        if not user:
+            raise UserNotFoundException()
+        if not user.check_password(login_request.password):
+            raise InvalidPasswordException()
+        if not user.first_login:
+            user.first_login = get_utc_now()
+        user.last_login = get_utc_now()
+        refresh_token, access_token = generate_tokens(db_session, user.id, user.email)
+        db_session.commit()
+        db_session.refresh(user)
+        return LoginResponse(user=user, refresh_token=refresh_token, access_token=access_token)
+    
+    
+    def logout_user(self, db_session: Session, user_id: int):
+        """ Logout user in database """
+        user = self.get_user_by_id(db_session, user_id)
+        if not user:
+            raise UserNotFoundException()
+        user.last_login = get_utc_now()
+        db_session.commit()
+        db_session.refresh(user)
+        return user
+    
+    def change_password_user(self, db_session: Session, user_id: int, change_password_request: ChangePasswordRequest):
+        """ Change password user in database """
+        
+        user = self.get_user_by_id(db_session, user_id)
+        if not user:
+            raise UserNotFoundException()
+        if user.check_password(change_password_request.old_password):
+            user.change_password(change_password_request.new_password)
+            db_session.commit()
+            db_session.refresh(user)
+            return ChangePasswordResponse(user=user, message=Message.PASSWORD_CHANGED_SUCCESSFULLY)
+        else:
+            raise InvalidPasswordException()
 
+    
+user_service = UserService()
 
-def get_user_by_username(db_session: Session, username: str):
-    return get_by_filter(
-        db_session,
-        User,
-        filters=[User.username == username.lower(), User.deleted.is_(False)],
-        first=True,
-    )
-
-
-def create_new_user(db_session: Session, user_register_request: UserRegisterRequest):
-    new_user = User(
-        email=user_register_request.email.lower(),
-        full_name=user_register_request.full_name,
-        username=user_register_request.username.lower(),
-    )
-    if user_register_request.password:
-        new_user.set_password(user_register_request.password)
-    insert_row(db_session, new_user)
-
-    new_user.created_at = get_utc_now()
-    new_user.updated_at = get_utc_now()
-    db_session.commit()
-    db_session.refresh(new_user)
-    return UserRegisterResponse.model_validate(new_user)
-
-
-def get_user_by_id(db_session: Session, user_id: int):
-    return get_by_id(db_session, User, user_id)
-
-
-def update_user_by_id(
-    db_session: Session, user_id: int, user_update_request: UserUpdateRequest
-):
-    user = get_user_by_id(db_session, user_id)
-    if not user:
-        raise InvalidRequestException(message=Message.USER_NOT_FOUND)
-    user.email = (
-        user_update_request.email.lower() if user_update_request.email else user.email
-    )
-    user.full_name = (
-        user_update_request.full_name
-        if user_update_request.full_name
-        else user.full_name
-    )
-    user.username = (
-        user_update_request.username.lower()
-        if user_update_request.username
-        else user.username
-    )
-    user.roles = user_update_request.roles if user_update_request.roles else user.roles
-    user.password = (
-        user_update_request.password if user_update_request.password else user.password
-    )
-    user.updated_at = get_utc_now()
-    db_session.commit()
-    db_session.refresh(user)
-    return UserResponse.model_validate(user)
-
-
-def delete_user_by_id(db_session: Session, user_id: int):
-    user = get_user_by_id(db_session, user_id)
-    if not user:
-        raise InvalidRequestException(message=Message.USER_NOT_FOUND)
-    user.deleted = True
-    db_session.commit()
-    db_session.refresh(user)
-    return user
-
-
-def login_user(db_session: Session, login_request: LoginRequest):
-    user = get_user_by_username(db_session, login_request.username)
-    if not user:
-        raise InvalidRequestException(message=Message.USER_NOT_FOUND)
-    if not user.check_password(login_request.password):
-        raise InvalidRequestException(message=Message.INVALID_PASSWORD)
-
-    refresh_token, access_token = generate_tokens(db_session, user.id, user.email)
-    return user
-
-
-def logout_user(db_session: Session, user_id: int):
-    user = get_user_by_id(db_session, user_id)
-    if not user:
-        raise InvalidRequestException(message=Message.USER_NOT_FOUND)
-    user.last_login = get_utc_now()
-    db_session.commit()
-    db_session.refresh(user)
-    return user

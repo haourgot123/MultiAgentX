@@ -1,21 +1,15 @@
-import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider} from 'react-router-dom'
 import AppLayout from './layout/AppLayout'
-import LoginPage from './pages/LoginPage'
 import { ChatInterface } from './components/chat/ChatInterface'
 import FilesPage from './pages/FilesPage'
 import ChatWithFilePage from './pages/ChatWithFilePage'
 import { ProtectedRoute } from './components/ProtectedRoute'
-import { useAuthStore } from './store/auth-store'
+import { Toaster } from "@/components/ui/sonner"
+import LoginPage from './store/LoginPage'
+
 
 function LoginRoute() {
-  const { isAuthenticated } = useAuthStore()
-
-  // If already logged in, redirect to home
-  if (isAuthenticated) {
-    return <Navigate to="/" replace />
-  }
-
-  return <LoginPage />
+  return <LoginPage />  
 }
 
 const router = createBrowserRouter([
@@ -48,7 +42,12 @@ const router = createBrowserRouter([
 ])
 
 function App() {
-  return <RouterProvider router={router} />
+  return (
+    <>
+      <RouterProvider router={router} />
+      <Toaster />
+    </>
+  )
 }
 
 export default App

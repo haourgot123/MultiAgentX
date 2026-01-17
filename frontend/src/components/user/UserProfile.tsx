@@ -25,7 +25,7 @@ export function UserProfile({ open, onOpenChange }: UserProfileProps) {
     const { user, logout } = useAuthStore()
     const navigate = useNavigate()
 
-    const [name, setName] = useState(user?.name || "Test User")
+    const [name, setName] = useState(user?.full_name || "Test User")
     const [username, setUsername] = useState(user?.username || "@test")
     const [email, setEmail] = useState(user?.email || "test@example.com")
 

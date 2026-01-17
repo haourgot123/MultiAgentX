@@ -3,7 +3,7 @@ from backend.api.user.model import User
 from backend.databases.db import get_by_filter, get_by_id, insert_row, update_row
 from backend.utils.authentic import create_access_token, create_refresh_token
 from backend.utils.constants import Message, TokenType
-from backend.utils.error_message import InvalidRequestException
+from backend.exceptions.model import UserNotFoundException
 
 
 def get_token(db_session, token_data: Token):
@@ -21,10 +21,10 @@ def get_token(db_session, token_data: Token):
 def generate_access_token(db_session, email, uid, refresh_token):
     user = get_by_id(db_session, User, uid)
     if not user:
-        raise InvalidRequestException(message=Message.USER_NOT_FOUND)
+        raise UserNotFoundException()
 
     access_token = create_access_token(
-        {"user_id": uid, "email": email, "refresh_token": refresh_token}
+        data={"user_id": uid, "email": email, "refresh_token": refresh_token}
     )
     return access_token
 
