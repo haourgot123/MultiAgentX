@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Aperture } from "lucide-react"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { useState } from "react"
 import { useAuthStore } from "@/store/auth-store"
 import { toast } from "sonner"
@@ -92,6 +92,15 @@ export default function LoginPage() {
                         >
                             Sign In
                         </Button>
+                        <div className="text-center text-sm text-muted-foreground">
+                            Don&apos;t have an account?{" "}
+                            <Link
+                                to="/register"
+                                className="text-primary font-medium hover:underline"
+                            >
+                                Sign up
+                            </Link>
+                        </div>
                     </form>
                 </CardContent>
             </Card>

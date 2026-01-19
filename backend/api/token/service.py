@@ -7,6 +7,15 @@ from backend.utils.constants import TokenType
 
 
 def get_token(db_session, token_data: Token):
+    """Retrieve a token from the database based on user_id and token_type.
+
+    Args:
+        db_session: SQLAlchemy database session.
+        token_data (Token): Token object containing user_id and token_type to filter.
+
+    Returns:
+        Token | None: Token object if found, None otherwise.
+    """
     return get_by_filter(
         db_session=db_session,
         table=Token,
@@ -19,6 +28,17 @@ def get_token(db_session, token_data: Token):
 
 
 def generate_access_token(db_session, email, uid, refresh_token):
+    """Generate a new access token for a user.
+
+    Args:
+        db_session: SQLAlchemy database session.
+        email (str): User's email address.
+        uid (int): User's ID.
+        refresh_token (str): User's current refresh token.
+
+    Returns:
+        str: JWT-encoded access token.
+    """
     user = get_by_id(db_session, User, uid)
     if not user:
         raise UserNotFoundException()
@@ -30,8 +50,15 @@ def generate_access_token(db_session, email, uid, refresh_token):
 
 
 def generate_tokens(db_session, uid, email):
-    """
-    Generate access token code when user login with 3rd authentication
+    """Generate access and refresh token pair for user login.
+
+    Args:
+        db_session: SQLAlchemy database session.
+        uid (int): User's ID.
+        email (str): User's email address.
+
+    Returns:
+        tuple[str, str]: Tuple containing (refresh_token, access_token).
     """
 
     token = get_token(

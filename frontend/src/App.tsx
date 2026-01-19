@@ -6,6 +6,7 @@ import ChatWithFilePage from './pages/ChatWithFilePage'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { Toaster } from "@/components/ui/sonner"
 import LoginPage from './store/LoginPage'
+import RegisterPage from './store/RegisterPage'
 
 
 function LoginRoute() {
@@ -16,6 +17,10 @@ const router = createBrowserRouter([
   {
     path: '/login',
     element: <LoginRoute />
+  },
+  {
+    path: '/register',
+    element: <RegisterPage />
   },
   {
     path: '/',

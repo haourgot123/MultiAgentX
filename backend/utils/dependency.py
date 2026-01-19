@@ -27,7 +27,7 @@ def get_current_user(request: Request, token: Optional[str] = Header(None)):
     if not valid_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=Message.INVALID_TOKEN,
+            detail=Message.MESSAGE_INVALID_TOKEN,
         )
     request.state.email = data["email"]
     request.state.user_id = data["user_id"]

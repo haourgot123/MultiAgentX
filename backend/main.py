@@ -1,14 +1,24 @@
 import uvicorn
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.meta.view import router as meta_router
 from backend.api.revision.view import database_router
-from backend.api.token.view import token_router
-from backend.api.user.view import authentication_router
+from backend.api.token.view import router as token_router
+from backend.api.user.view import router as user_router
 from backend.exceptions.handler import exception_handler, global_exception_handler
 from backend.exceptions.model import BusinessBaseException
 
-app = FastAPI()
+main_router = APIRouter(prefix="/api")
+main_router.include_router(token_router)
+main_router.include_router(database_router)
+main_router.include_router(user_router)
+main_router.include_router(meta_router)
+app = FastAPI(
+    title="MultiAgentX API",
+    description="API for the MultiAgentX application",
+    version="1.0.0",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,15 +30,7 @@ app.add_middleware(
 
 app.add_exception_handler(BusinessBaseException, exception_handler)
 app.add_exception_handler(Exception, global_exception_handler)
-app.include_router(authentication_router)
-app.include_router(database_router)
-app.include_router(token_router)
-
-
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
-
+app.include_router(main_router)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
