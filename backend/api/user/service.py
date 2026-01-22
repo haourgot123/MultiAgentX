@@ -16,13 +16,7 @@ from backend.api.user.model import (
     UserUpdateRequest,
 )
 from backend.databases.db import get_by_id, get_utc_now, insert_row
-from backend.exceptions.model import (
-    InvalidPasswordException,
-    UserAlreadyDeletedException,
-    UserEmailAlreadyExistsException,
-    UserNameAlreadyExistsException,
-    UserNotFoundException,
-)
+from backend.exceptions.model import InvalidRequestException, ObjectNotFoundException
 from backend.utils.constants import Message
 
 
@@ -44,7 +38,7 @@ class UserService:
         """
         user = db_session.query(User).filter(User.email == email.lower()).first()
         if not user:
-            raise UserNotFoundException()
+            raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         return user
 
     def get_user_by_username(self, db_session: Session, username: str):
@@ -59,7 +53,7 @@ class UserService:
         """
         user = db_session.query(User).filter(User.username == username.lower()).first()
         if not user:
-            raise UserNotFoundException()
+            raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         return user
 
     def get_user_by_id(self, db_session: Session, user_id: int):
@@ -74,7 +68,7 @@ class UserService:
         """
         user = get_by_id(db_session, User, user_id)
         if not user:
-            raise UserNotFoundException()
+            raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         return user
 
     def get_user_roles_by_id(self, db_session: Session, user_id: int):
@@ -89,7 +83,7 @@ class UserService:
         """
         user = self.get_user_by_id(db_session, user_id)
         if not user:
-            raise UserNotFoundException()
+            raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         return user.roles
 
     def create_new_user(self, db_session: Session, user_in: UserCreateRequest):
@@ -105,10 +99,14 @@ class UserService:
         # Check email and username are already exists
         try:
             if self.get_user_by_email(db_session, user_in.email):
-                raise UserEmailAlreadyExistsException()
+                raise InvalidRequestException(
+                    message=Message.MESSAGE_USER_EMAIL_ALREADY_EXISTS
+                )
             if self.get_user_by_username(db_session, user_in.username):
-                raise UserNameAlreadyExistsException()
-        except UserNotFoundException:
+                raise InvalidRequestException(
+                    message=Message.MESSAGE_USERNAME_ALREADY_EXISTS
+                )
+        except ObjectNotFoundException:
             pass
         # Create new user
         new_user = User(
@@ -154,7 +152,7 @@ class UserService:
 
         user = self.get_user_by_id(db_session, user_id)
         if not user:
-            raise UserNotFoundException()
+            raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
 
         # Update password if provided
         if user_update.password:
@@ -174,7 +172,9 @@ class UserService:
                 db_session, user_update.username
             )
             if is_username_exists:
-                raise UserNameAlreadyExistsException()
+                raise InvalidRequestException(
+                    message=Message.MESSAGE_USERNAME_ALREADY_EXISTS
+                )
             user.username = user_update.username.lower()
 
         # Update updated_at
@@ -203,7 +203,7 @@ class UserService:
         """
         user = self.get_user_by_id(db_session, user_id)
         if not user:
-            raise UserNotFoundException()
+            raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         user.deleted = True
         try:
             db_session.commit()
@@ -230,9 +230,9 @@ class UserService:
             db_session, login_request.username
         ) or self.get_user_by_email(db_session, login_request.username)
         if not user:
-            raise UserNotFoundException()
+            raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         if not user.check_password(login_request.password):
-            raise InvalidPasswordException()
+            raise InvalidRequestException(message=Message.MESSAGE_INVALID_PASSWORD)
         if not user.first_login:
             user.first_login = get_utc_now()
         user.last_login = get_utc_now()
@@ -262,7 +262,7 @@ class UserService:
         """
         user = self.get_user_by_id(db_session, user_id)
         if not user:
-            raise UserNotFoundException()
+            raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         user.last_login = get_utc_now()
         try:
             # Commit transaction
@@ -297,7 +297,7 @@ class UserService:
 
         user = self.get_user_by_id(db_session, user_id)
         if not user:
-            raise UserNotFoundException()
+            raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         if user.check_password(change_password_request.old_password):
             user.change_password(change_password_request.new_password)
             try:
@@ -313,7 +313,7 @@ class UserService:
                 db_session.rollback()
                 raise e
         else:
-            raise InvalidPasswordException()
+            raise InvalidRequestException(message=Message.MESSAGE_INVALID_PASSWORD)
 
     def update_self_user_information(
         self,
@@ -333,10 +333,10 @@ class UserService:
         """
         user = self.get_user_by_id(db_session, user_id)
         if not user:
-            raise UserNotFoundException()
+            raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
 
         if user.deleted:
-            raise UserAlreadyDeletedException()
+            raise InvalidRequestException(message=Message.MESSAGE_USER_DELETED)
 
         if user_update_request.full_name:
             user.full_name = user_update_request.full_name

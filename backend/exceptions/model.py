@@ -10,50 +10,16 @@ class BusinessBaseException(Exception):
         super().__init__(self.message)
 
 
-class UserNotFoundException(BusinessBaseException):
-    def __init__(self, message: str = constants.Message.MESSAGE_USER_NOT_FOUND):
+class ObjectNotFoundException(BusinessBaseException):
+    def __init__(self, message: str = constants.Message.MESSAGE_OBJECT_NOT_FOUND):
         super().__init__(status_code=status.HTTP_404_NOT_FOUND, message=message)
 
 
-class UserNameAlreadyExistsException(BusinessBaseException):
-    def __init__(
-        self, message: str = constants.Message.MESSAGE_USERNAME_ALREADY_EXISTS
-    ):
+class InvalidRequestException(BusinessBaseException):
+    def __init__(self, message: str = constants.Message.MESSAGE_INVALID_REQUEST):
         super().__init__(status_code=status.HTTP_400_BAD_REQUEST, message=message)
 
 
-class UserEmailAlreadyExistsException(BusinessBaseException):
-    def __init__(
-        self, message: str = constants.Message.MESSAGE_USER_EMAIL_ALREADY_EXISTS
-    ):
-        super().__init__(status_code=status.HTTP_400_BAD_REQUEST, message=message)
-
-
-class InvalidPasswordException(BusinessBaseException):
-    def __init__(self, message: str = constants.Message.MESSAGE_INVALID_PASSWORD):
-        super().__init__(status_code=status.HTTP_400_BAD_REQUEST, message=message)
-
-
-class InvalidFullNameException(BusinessBaseException):
-    def __init__(self, message: str = constants.Message.MESSAGE_INVALID_FULL_NAME):
-        super().__init__(status_code=status.HTTP_400_BAD_REQUEST, message=message)
-
-
-class InvalidJoinFieldException(BusinessBaseException):
-    def __init__(self, message: str = constants.Message.MESSAGE_INVALID_JOIN_FIELD):
-        super().__init__(status_code=status.HTTP_400_BAD_REQUEST, message=message)
-
-
-class UserAlreadyDeletedException(BusinessBaseException):
-    def __init__(self, message: str = constants.Message.MESSAGE_USER_ALREADY_DELETED):
-        super().__init__(status_code=status.HTTP_400_BAD_REQUEST, message=message)
-
-
-class InvalidPhoneNumberException(BusinessBaseException):
-    def __init__(self, message: str = constants.Message.MESSAGE_INVALID_PHONE_NUMBER):
-        super().__init__(status_code=status.HTTP_400_BAD_REQUEST, message=message)
-
-
-class ValueErrorException(BusinessBaseException):
-    def __init__(self, message: str = constants.Message.MESSAGE_VALUE_ERROR):
-        super().__init__(status_code=status.HTTP_400_BAD_REQUEST, message=message)
+class PermissionErrorException(BusinessBaseException):
+    def __init__(self, message: str = constants.Message.MESSAGE_PERMISSION_DENIED):
+        super().__init__(status_code=status.HTTP_403_FORBIDDEN, message=message)

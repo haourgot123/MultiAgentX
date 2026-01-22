@@ -31,6 +31,8 @@ class Message:
     MESSAGE_INVALID_PHONE_NUMBER = "Oops! Invalid phone number"
     MESSAGE_VALUE_ERROR = "Oops! Value error"
 
+    MESSAGE_OBJECT_NOT_FOUND = "Oops! Object Not Found"
+
 
 class TokenType(Enum):
     REFRESH = 1

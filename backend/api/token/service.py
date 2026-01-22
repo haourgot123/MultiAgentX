@@ -1,9 +1,9 @@
 from backend.api.token.model import Token, TokenUpdate
 from backend.api.user.model import User
 from backend.databases.db import get_by_filter, get_by_id, insert_row, update_row
-from backend.exceptions.model import UserNotFoundException
+from backend.exceptions.model import ObjectNotFoundException
 from backend.utils.authentic import create_access_token, create_refresh_token
-from backend.utils.constants import TokenType
+from backend.utils.constants import Message, TokenType
 
 
 def get_token(db_session, token_data: Token):
@@ -41,7 +41,7 @@ def generate_access_token(db_session, email, uid, refresh_token):
     """
     user = get_by_id(db_session, User, uid)
     if not user:
-        raise UserNotFoundException()
+        raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
 
     access_token = create_access_token(
         data={"user_id": uid, "email": email, "refresh_token": refresh_token}
