@@ -22,7 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from backend.databases.db import Base
-from backend.exceptions.model import IvalidRequestException
+from backend.exceptions.model import InvalidRequestException
 from backend.utils.authentic import get_hash_password, verify_password
 from backend.utils.utils import validate_and_normalize_phone
 
@@ -104,21 +104,21 @@ class UserCreateRequest(BaseModel):
     @classmethod
     def validate_password(cls, v):
         if len(v) < 8:
-            raise IvalidRequestException(message="Invalid password")
+            raise InvalidRequestException(message="Invalid password")
         return v
 
     @field_validator("date_of_birth")
     @classmethod
     def validate_date_of_birth(cls, v):
         if v is not None and v > datetime.now():
-            raise IvalidRequestException(message="Invalid date of birth")
+            raise InvalidRequestException(message="Invalid date of birth")
         return v
 
     @model_validator(mode="after")
     def validate_phone_number(self):
         if self.phone_number:
             if not self.country:
-                raise IvalidRequestException(message="Country is required")
+                raise InvalidRequestException(message="Country is required")
             self.phone_number = validate_and_normalize_phone(
                 self.phone_number, self.country
             )
@@ -143,21 +143,21 @@ class UserUpdateRequest(BaseModel):
         if v is None:
             return v
         if len(v) < 8:
-            raise IvalidRequestException(message="Invalid password")
+            raise InvalidRequestException(message="Invalid password")
         return v
 
     @field_validator("date_of_birth")
     @classmethod
     def validate_date_of_birth(cls, v):
         if v is not None and v > datetime.now():
-            raise IvalidRequestException(message="Invalid date of birth")
+            raise InvalidRequestException(message="Invalid date of birth")
         return v
 
     @model_validator(mode="after")
     def validate_phone_number(self):
         if self.phone_number:
             if not self.country:
-                raise IvalidRequestException(message="Country is required")
+                raise InvalidRequestException(message="Country is required")
             self.phone_number = validate_and_normalize_phone(
                 self.phone_number, self.country
             )
@@ -216,14 +216,14 @@ class SelfUserInformationUpdateRequest(BaseModel):
     @classmethod
     def validate_date_of_birth(cls, v):
         if v is not None and v > datetime.now():
-            raise IvalidRequestException(message="Invalid date of birth")
+            raise InvalidRequestException(message="Invalid date of birth")
         return v
 
     @model_validator(mode="after")
     def validate_phone_number(self):
         if self.phone_number:
             if not self.country:
-                raise IvalidRequestException(message="Country is required")
+                raise InvalidRequestException(message="Country is required")
             self.phone_number = validate_and_normalize_phone(
                 self.phone_number, self.country
             )
