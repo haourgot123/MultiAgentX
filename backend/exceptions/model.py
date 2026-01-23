@@ -28,3 +28,8 @@ class PermissionErrorException(BusinessBaseException):
 class InvalidJoinFieldException(BusinessBaseException):
     def __init__(self, message: str = "Invalid join field"):
         super().__init__(status_code=status.HTTP_400_BAD_REQUEST, message=message)
+
+
+class NotImplementedException(BusinessBaseException):
+    def __init__(self, message: str = "Not implemented"):
+        super().__init__(status_code=status.HTTP_501_NOT_IMPLEMENTED, message=message)

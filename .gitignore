@@ -4,3 +4,4 @@ __pycache__/
 .DS_Store
 app/agent/test
 docker-compose.yaml
+tests
