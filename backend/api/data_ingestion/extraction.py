@@ -334,7 +334,8 @@ class DoclingExtractionService:
             do_cell_matching: Whether to do cell matching.
             force_full_page_ocr: Whether to force full page OCR.
             num_threads: The number of threads to use.
-            picture_description_model: The model to use for picture description.
+            vlm_framework: The framework to use for picture description.
+            vlm_model: The model to use for picture description.s
         Returns:
             str: The text from the document.
         """
