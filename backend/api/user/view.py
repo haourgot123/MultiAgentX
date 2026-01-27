@@ -12,8 +12,9 @@ from backend.api.user.model import (
     UserResponse,
     UserUpdateRequest,
 )
+from backend.api.user.permissions import check_admin_role, check_user_permission
 from backend.api.user.service import user_service
-from backend.utils.constants import Message, RoleType
+from backend.utils.constants import Message
 from backend.utils.dependency import get_current_user, get_db
 
 router = APIRouter(
@@ -27,11 +28,8 @@ router = APIRouter(
     description="Logout a user",
 )
 async def logout(request: Request, user_id: int, db_session: Session = Depends(get_db)):
-    if user_id != request.state.user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=Message.MESSAGE_PERMISSION_DENIED,
-        )
+    """Logout a user."""
+    check_user_permission(request, user_id)
     user_service.logout_user(db_session, user_id)
     return JSONResponse(
         status_code=status.HTTP_200_OK,
@@ -43,12 +41,8 @@ async def logout(request: Request, user_id: int, db_session: Session = Depends(g
 async def get_self_user(
     request: Request, user_id: int, db_session: Session = Depends(get_db)
 ):
-    """Get self user information"""
-    if user_id != request.state.user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=Message.MESSAGE_PERMISSION_DENIED,
-        )
+    """Get self user information."""
+    check_user_permission(request, user_id)
     user = user_service.get_user_by_id(db_session, user_id)
     return user
 
@@ -56,7 +50,7 @@ async def get_self_user(
 @router.put(
     "/me/password",
     response_model=ChangePasswordResponse,
-    description="Update self user information",
+    description="Change user password",
 )
 async def update_self_user(
     request: Request,
@@ -64,14 +58,8 @@ async def update_self_user(
     user_update_request: ChangePasswordRequest,
     db_session: Session = Depends(get_db),
 ):
-    """Update self user information"""
-
-    # Check permission
-    if user_id != request.state.user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=Message.MESSAGE_PERMISSION_DENIED,
-        )
+    """Change user password."""
+    check_user_permission(request, user_id)
 
     # Check new password is not the same as old password
     if user_update_request.new_password == user_update_request.old_password:
@@ -101,13 +89,8 @@ async def update_self_user_information(
     user_update_request: SelfUserInformationUpdateRequest,
     db_session: Session = Depends(get_db),
 ):
-    """Update self user information"""
-    # Check permission
-    if user_id != request.state.user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=Message.MESSAGE_PERMISSION_DENIED,
-        )
+    """Update self user information."""
+    check_user_permission(request, user_id)
 
     # Update self user information
     response = user_service.update_self_user_information(
@@ -124,19 +107,9 @@ async def update_self_user_information(
 async def get_user(
     request: Request, user_id: int, db_session: Session = Depends(get_db)
 ):
-    """Get a user by ID"""
-
-    # Check role permission
-    roles = user_service.get_user_roles_by_id(db_session, request.state.user_id)
-    role_ids = [role.id for role in roles]
-    admin_role_id = RoleType.ADMIN.value
-    logger.info(f"Role IDs: {role_ids}")
-    print(f"{admin_role_id} not in {role_ids}")
-    if admin_role_id not in role_ids:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=Message.MESSAGE_PERMISSION_DENIED,
-        )
+    """Get a user by ID (admin only)."""
+    check_admin_role(request, db_session)
+    
     # Get user by ID
     user = user_service.get_user_by_id(db_session, user_id)
     return user
@@ -151,23 +124,25 @@ async def update_user(
     user_update_request: UserUpdateRequest,
     db_session: Session = Depends(get_db),
 ):
-    # Check role permission
-    roles = user_service.get_user_roles_by_id(db_session, request.state.user_id)
-    role_ids = [role.id for role in roles]
-    admin_role_id = RoleType.ADMIN.value
-    logger.info(f"Role IDs: {role_ids}")
-    if admin_role_id not in role_ids:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=Message.MESSAGE_PERMISSION_DENIED,
-        )
+    """Update a user by ID (admin only).
+    
+    Args:
+        request: FastAPI request object.
+        user_id: ID of the user to update.
+        user_update_request: User update request data.
+        db_session: Database session.
+        
+    Returns:
+        Updated user object.
+    """
+    check_admin_role(request, db_session)
 
-    # Check roles of user to be updated
+    # Check roles of user to be updated (prevent updating other admins)
     user_roles = user_service.get_user_roles_by_id(db_session, user_id)
     user_role_ids = [role.id for role in user_roles]
-    if admin_role_id in user_role_ids:
+    if RoleType.ADMIN.value in user_role_ids:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=Message.MESSAGE_PERMISSION_DENIED,
         )
 
@@ -185,24 +160,18 @@ async def update_user(
 async def delete_user(
     request: Request, user_id: int, db_session: Session = Depends(get_db)
 ):
-    # Check role permission
-    roles = user_service.get_user_roles_by_id(db_session, request.state.user_id)
-    role_ids = [role.id for role in roles]
-    admin_role_id = RoleType.ADMIN.value
-    if admin_role_id not in role_ids:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=Message.MESSAGE_PERMISSION_DENIED,
-        )
+    """Delete a user by ID (admin only)."""
+    check_admin_role(request, db_session)
 
-    # Check roles of user to be deleted
+    # Check roles of user to be deleted (prevent deleting other admins)
     user_roles = user_service.get_user_roles_by_id(db_session, user_id)
     user_role_ids = [role.id for role in user_roles]
-    if admin_role_id in user_role_ids:
+    if RoleType.ADMIN.value in user_role_ids:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=Message.MESSAGE_PERMISSION_DENIED,
         )
+        
     # Delete user by ID
     logger.info(f"Deleting user by ID: {user_id}")
     user_service.delete_user_by_id(db_session, user_id)

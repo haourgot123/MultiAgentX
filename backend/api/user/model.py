@@ -9,6 +9,12 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from backend.api.user.validators import (
+    validate_date_not_future,
+    validate_password_strength,
+    validate_phone_with_country,
+)
 from sqlalchemy import (
     Boolean,
     Column,
@@ -97,41 +103,38 @@ class UserCreateRequest(BaseModel):
     date_of_birth: Optional[datetime] = Field(None, description="Date of Birth")
     phone_number: Optional[str] = Field(None, description="Phone Number")
     country: Optional[str] = Field(None, description="Country")
-    gender: Optional[str] = Field(None, description="Gender")
+    gender: Optional[Literal["male", "female", "other"]] = Field(
+        None, description="Gender"
+    )
     roles: Optional[list[int]] = Field(None, description="Role IDs")
 
     @field_validator("password")
     @classmethod
     def validate_password(cls, v):
-        if len(v) < 8:
-            raise InvalidRequestException(message="Invalid password")
-        return v
+        return validate_password_strength(v)
 
     @field_validator("date_of_birth")
     @classmethod
     def validate_date_of_birth(cls, v):
-        if v is not None and v > datetime.now():
-            raise InvalidRequestException(message="Invalid date of birth")
-        return v
+        return validate_date_not_future(v)
 
     @model_validator(mode="after")
     def validate_phone_number(self):
-        if self.phone_number:
-            if not self.country:
-                raise InvalidRequestException(message="Country is required")
-            self.phone_number = validate_and_normalize_phone(
-                self.phone_number, self.country
-            )
+        self.phone_number = validate_phone_with_country(
+            self.phone_number, self.country
+        )
         return self
 
 
 class UserUpdateRequest(BaseModel):
-    email: Optional[str] = Field(None, description="Email")
+    email: Optional[EmailStr] = Field(None, description="Email")
     full_name: Optional[str] = Field(None, description="Full Name")
     date_of_birth: Optional[datetime] = Field(None, description="Date of Birth")
     phone_number: Optional[str] = Field(None, description="Phone Number")
     country: Optional[str] = Field(None, description="Country")
-    gender: Optional[str] = Field(None, description="Gender")
+    gender: Optional[Literal["male", "female", "other"]] = Field(
+        None, description="Gender"
+    )
     deleted: Optional[bool] = Field(False, description="Deleted")
     username: Optional[str] = Field(None, description="Username")
     password: Optional[str] = Field(None, description="Password")
@@ -140,27 +143,18 @@ class UserUpdateRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password(cls, v):
-        if v is None:
-            return v
-        if len(v) < 8:
-            raise InvalidRequestException(message="Invalid password")
-        return v
+        return validate_password_strength(v)
 
     @field_validator("date_of_birth")
     @classmethod
     def validate_date_of_birth(cls, v):
-        if v is not None and v > datetime.now():
-            raise InvalidRequestException(message="Invalid date of birth")
-        return v
+        return validate_date_not_future(v)
 
     @model_validator(mode="after")
     def validate_phone_number(self):
-        if self.phone_number:
-            if not self.country:
-                raise InvalidRequestException(message="Country is required")
-            self.phone_number = validate_and_normalize_phone(
-                self.phone_number, self.country
-            )
+        self.phone_number = validate_phone_with_country(
+            self.phone_number, self.country
+        )
         return self
 
 
@@ -215,18 +209,13 @@ class SelfUserInformationUpdateRequest(BaseModel):
     @field_validator("date_of_birth")
     @classmethod
     def validate_date_of_birth(cls, v):
-        if v is not None and v > datetime.now():
-            raise InvalidRequestException(message="Invalid date of birth")
-        return v
+        return validate_date_not_future(v)
 
     @model_validator(mode="after")
     def validate_phone_number(self):
-        if self.phone_number:
-            if not self.country:
-                raise InvalidRequestException(message="Country is required")
-            self.phone_number = validate_and_normalize_phone(
-                self.phone_number, self.country
-            )
+        self.phone_number = validate_phone_with_country(
+            self.phone_number, self.country
+        )
         return self
 
 

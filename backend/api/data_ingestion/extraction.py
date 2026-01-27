@@ -1,6 +1,5 @@
-from ast import List
 from pathlib import Path
-from typing import Literal
+from typing import List, Literal
 
 import torch
 from docling.datamodel.accelerator_options import AcceleratorOptions
@@ -20,11 +19,7 @@ from backend.exceptions.model import NotImplementedException
 
 
 class DoclingExtractionService:
-
-    def __init__(
-        self,
-    ):
-        pass
+    """Service for extracting text and data from various document formats using Docling."""
 
     def _get_document_type(self, doc_path: Path) -> DocumentType:
         """
@@ -347,9 +342,6 @@ class DoclingExtractionService:
         if not output_folder.exists():
             output_folder.mkdir(parents=True, exist_ok=True)
 
-        # Get the document type
-        document_type = self._get_document_type(doc_path)  # noqa: F841
-
         if is_accelerator:
             converter = self._get_accelerator_converter(
                 ocr_batch_size=ocr_batch_size,
@@ -374,9 +366,3 @@ class DoclingExtractionService:
 
         doc = converter.convert(doc_path).document
         return doc
-
-    def _batch_extract_documents(self, doc_paths: List[Path]):
-        pass
-
-    def _format_json_response(self, json_response: dict):
-        pass
