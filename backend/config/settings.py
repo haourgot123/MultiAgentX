@@ -17,6 +17,8 @@ from .config import (
     S3Config,
     TavilySearchConfig,
     WebConfig,
+    VLMConfig,
+    ProcessingConfig,
 )
 
 
@@ -39,6 +41,8 @@ class Settings(BaseSettings):
     process_file: ProcessFileConfig = ProcessFileConfig()
     conversation_chat: ConversationChatConfig = ConversationChatConfig()
     jwt: JWTConfig = JWTConfig()
+    vlm: VLMConfig = VLMConfig()
+    processing: ProcessingConfig = ProcessingConfig()
 
     def __str__(self) -> str:
         return f"""

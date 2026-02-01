@@ -214,3 +214,34 @@ class ConversationChatConfig:
     """Conversation chat configuration settings."""
 
     nums_history_messages: int = 30
+
+@dataclass
+class VLMConfig:
+    """Configuration for Vision-Language Model (VLM) services."""
+
+    default_seed: int = 42
+    default_timeout: int = 120
+    default_max_completion_tokens: int = 512
+    default_prompt: str = "Describe the image in three sentences. Be concise and accurate."
+    default_host: str = "localhost"
+    vllm_default_port: int = 8000
+    lms_default_port: int = 1234
+
+@dataclass
+class ProcessingConfig:
+    """Configuration for document processing."""
+
+    default_num_threads: int = 4
+    default_ocr_batch_size: int = 4
+    default_layout_batch_size: int = 64
+    default_table_batch_size: int = 4
+
+    default_ocr_languages: list = None
+
+    def __post_init__(self):
+        """Initialize default values that can't be set as class variables."""
+        if self.default_ocr_languages is None:
+            self.default_ocr_languages = ["auto"]
+
+
+

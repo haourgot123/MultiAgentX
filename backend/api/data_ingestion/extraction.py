@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 import torch
 from docling.datamodel.accelerator_options import AcceleratorOptions
@@ -16,6 +16,7 @@ from docling.pipeline.threaded_standard_pdf_pipeline import ThreadedStandardPdfP
 
 from backend.api.data_ingestion.model import DocumentSuffix, DocumentType
 from backend.exceptions.model import NotImplementedException
+from backend.config.settings import _settings
 
 
 class DoclingExtractionService:
@@ -85,65 +86,41 @@ class DoclingExtractionService:
         else:
             return "cpu"
 
-    def _get_vllm_picture_annotation_with_vlm(
+    def _get_picture_annotation_with_vlm(
         self,
         model: str,
-        seed: int = 42,
-        timeout: int = 120,
-        max_completion_tokens: int = 512,
-        host: str = "localhost",
-        port: int = 8000,
-        prompt: str = "Describe the image in three sentences. Be consise and accurate.",
+        framework: Literal["vllm", "lms"] = "vllm",
+        seed: int = _settings.vlm.default_seed,
+        timeout: int = _settings.vlm.default_timeout,
+        max_completion_tokens: int = _settings.vlm.default_max_completion_tokens,
+        host: str = _settings.vlm.default_host,
+        port: Optional[int] = None,
+        prompt: str = _settings.vlm.default_prompt,
     ) -> PictureDescriptionApiOptions:
         """
-        Get the picture annotation with VLM using VLLM.
+        Get picture annotation configuration for Vision-Language Models.
+        
         Args:
             model: The model to use.
-            seed: The seed to use.
-            timeout: The timeout to use.
-            max_completion_tokens: The maximum completion tokens to use.
-            host: The host to use.
-            port: The port to use.
-            prompt: The prompt to use.
+            framework: The VLM framework ('vllm' or 'lms').
+            seed: Random seed for reproducibility.
+            timeout: Timeout in seconds for API calls.
+            max_completion_tokens: Maximum tokens in completion response.
+            host: Host address for VLM service.
+            port: Port number (uses framework default if not specified).
+            prompt: Prompt template for image description.
+            
         Returns:
-            option: DoclingOption: The Docling option.
+            PictureDescriptionApiOptions: Configuration for picture description.
         """
+        # Use framework-specific default port if not provided
+        if port is None:
+            port = (
+                _settings.vlm.vllm_default_port
+                if framework == "vllm"
+                else _settings.vlm.lms_default_port
+            )
 
-        options = PictureDescriptionApiOptions(
-            url=f"http://{host}:{port}/v1/chat/completions",
-            params=dict(
-                model=model,
-                seed=seed,
-                max_completion_tokens=max_completion_tokens,
-            ),
-            prompt=prompt,
-            timeout=timeout,
-        )
-        return options
-
-    def _get_lms_picture_annotation_with_vlm(
-        self,
-        model: str,
-        seed: int = 42,
-        timeout: int = 120,
-        max_completion_tokens: int = 512,
-        host: str = "localhost",
-        port: int = 1234,
-        prompt: str = "Describe the image in three sentences. Be consise and accurate.",
-    ) -> PictureDescriptionApiOptions:
-        """
-        Get the picture annotation with VLM using LMS.
-        Args:
-            model: The model to use.
-            seed: The seed to use.
-            timeout: The timeout to use.
-            max_completion_tokens: The maximum completion tokens to use.
-            host: The host to use.
-            port: The port to use.
-            prompt: The prompt to use.
-        Returns:
-            option: DoclingOption: The Docling option.
-        """
         options = PictureDescriptionApiOptions(
             url=f"http://{host}:{port}/v1/chat/completions",
             params=dict(
@@ -158,7 +135,7 @@ class DoclingExtractionService:
 
     def _get_accelerator_config(
         self,
-        num_threads: int = 4,
+        num_threads: int = _settings.processing.default_num_threads,
     ) -> AcceleratorOptions:
         """
         Get the CUDA configuration.
@@ -196,7 +173,9 @@ class DoclingExtractionService:
             DocumentConverter: The standard converter.
         """
 
-        ocr_options = TesseractCliOcrOptions(lang=["auto"])
+        ocr_options = TesseractCliOcrOptions(
+            lang=_settings.processing.default_ocr_languages
+        )
         pipeline_options = PdfPipelineOptions(
             do_ocr=do_ocr,
             force_full_page_ocr=force_full_page_ocr,
@@ -207,18 +186,13 @@ class DoclingExtractionService:
             ),
         )
 
+        # Add VLM picture description if model specified
         if vlm_model is not None:
-            if vlm_framework == "vllm":
-                picture_description_options = (
-                    self._get_vllm_picture_annotation_with_vlm(vlm_model)
+            pipeline_options.picture_description_options = (
+                self._get_picture_annotation_with_vlm(
+                    model=vlm_model, framework=vlm_framework
                 )
-            elif vlm_framework == "lms":
-                picture_description_options = self._get_lms_picture_annotation_with_vlm(
-                    vlm_model
-                )
-
-            # Set the picture description options
-            pipeline_options.picture_description_options = picture_description_options
+            )
 
         converter = DocumentConverter(
             format_options={
@@ -235,10 +209,10 @@ class DoclingExtractionService:
         force_full_page_ocr: bool = True,
         do_table_structure: bool = True,
         do_cell_matching: bool = True,
-        num_threads: int = 4,
-        ocr_batch_size: int = 4,
-        layout_batch_size: int = 64,
-        table_batch_size: int = 4,
+        num_threads: int = _settings.processing.default_num_threads,
+        ocr_batch_size: int = _settings.processing.default_ocr_batch_size,
+        layout_batch_size: int = _settings.processing.default_layout_batch_size,
+        table_batch_size: int = _settings.processing.default_table_batch_size,
         vlm_framework: Literal["vllm", "lms"] = "vllm",
         vlm_model: str = None,
     ) -> DocumentConverter:
@@ -260,7 +234,9 @@ class DoclingExtractionService:
             DocumentConverter: The accelerator converter.
         """
 
-        ocr_options = TesseractCliOcrOptions(lang=["auto"])
+        ocr_options = TesseractCliOcrOptions(
+            lang=_settings.processing.default_ocr_languages
+        )
         accelerator_config = self._get_accelerator_config(num_threads=num_threads)
         pipeline_options = ThreadedPdfPipelineOptions(
             accelerator_options=accelerator_config,
@@ -276,18 +252,13 @@ class DoclingExtractionService:
             ocr_options=ocr_options,
         )
 
+        # Add VLM picture description if model specified
         if vlm_model is not None:
-            if vlm_framework == "vllm":
-                picture_description_options = (
-                    self._get_vllm_picture_annotation_with_vlm(vlm_model)
+            pipeline_options.picture_description_options = (
+                self._get_picture_annotation_with_vlm(
+                    model=vlm_model, framework=vlm_framework
                 )
-            elif vlm_framework == "lms":
-                picture_description_options = self._get_lms_picture_annotation_with_vlm(
-                    vlm_model
-                )
-
-            # Set the picture description options
-            pipeline_options.picture_description_options = picture_description_options
+            )
 
         converter = DocumentConverter(
             format_options={
@@ -304,14 +275,14 @@ class DoclingExtractionService:
         doc_path: Path,
         output_folder: Path = Path("temp"),
         is_accelerator: bool = False,
-        ocr_batch_size: int = 4,
-        layout_batch_size: int = 64,
-        table_batch_size: int = 4,
+        ocr_batch_size: int = _settings.processing.default_ocr_batch_size,
+        layout_batch_size: int = _settings.processing.default_layout_batch_size,
+        table_batch_size: int = _settings.processing.default_table_batch_size,
         do_ocr: bool = True,
         do_table_structure: bool = True,
         do_cell_matching: bool = True,
         force_full_page_ocr: bool = True,
-        num_threads: int = 4,
+        num_threads: int = _settings.processing.default_num_threads,
         vlm_framework: Literal["vllm", "lms"] = "vllm",
         vlm_model: str = None,
     ):
@@ -330,7 +301,7 @@ class DoclingExtractionService:
             force_full_page_ocr: Whether to force full page OCR.
             num_threads: The number of threads to use.
             vlm_framework: The framework to use for picture description.
-            vlm_model: The model to use for picture description.s
+            vlm_model: The model to use for picture description.
         Returns:
             str: The text from the document.
         """
