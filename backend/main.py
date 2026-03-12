@@ -2,6 +2,9 @@ import uvicorn
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.data_ingestion.view import router as data_ingestion_router
+from backend.api.files.view import router as file_router
+from backend.api.conversation.view import router as conversation_router
 from backend.api.meta.view import router as meta_router
 from backend.api.revision.view import database_router
 from backend.api.token.view import router as token_router
@@ -14,6 +17,9 @@ main_router.include_router(token_router)
 main_router.include_router(database_router)
 main_router.include_router(user_router)
 main_router.include_router(meta_router)
+main_router.include_router(file_router)
+main_router.include_router(conversation_router)
+main_router.include_router(data_ingestion_router)
 app = FastAPI(
     title="MultiAgentX API",
     description="API for the MultiAgentX application",

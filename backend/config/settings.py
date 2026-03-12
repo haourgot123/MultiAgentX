@@ -10,6 +10,8 @@ from .config import (
     EmbeddingModelConfig,
     JWTConfig,
     LoggingConfig,
+    MilvusConfig,
+    OpenAIEmbeddingConfig,
     PostgresConfig,
     ProcessFileConfig,
     QdrantConfig,
@@ -24,7 +26,9 @@ from .config import (
 
 class Settings(BaseSettings):
     qdrant: QdrantConfig = QdrantConfig()
+    milvus: MilvusConfig = MilvusConfig()
     embedding_model: EmbeddingModelConfig = EmbeddingModelConfig()
+    openai_embedding: OpenAIEmbeddingConfig = OpenAIEmbeddingConfig()
     postgres: PostgresConfig = PostgresConfig()
     s3: S3Config = S3Config()
     azure_document_intelligence: AzureDocumentIntelligenceConfig = (
@@ -47,6 +51,8 @@ class Settings(BaseSettings):
     def __str__(self) -> str:
         return f"""
         Qdrant: {self.qdrant}
+        Milvus: {self.milvus}
+        OpenAI Embedding: {self.openai_embedding}
         Postgres: {self.postgres}
         S3: {self.s3}
         Azure Document Intelligence: {self.azure_document_intelligence}

@@ -16,81 +16,293 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
-import { useFileStore } from "@/store/file-store"
+import { API_BASE_URL } from "@/lib/api"
+import { useAuthStore } from "@/store/auth-store"
+import { type FileItem, useFileStore } from "@/store/file-store"
 import { useState, useEffect, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useChatStore } from "@/store/chat-store"
+import { toast } from "sonner"
 
 export default function ChatWithFilePage() {
     const [searchParams] = useSearchParams()
     const fileIdFromUrl = searchParams.get('fileId')
-    const { files, addFile } = useFileStore()
-    const { createNewChat, currentChatId, getCurrentMessages } = useChatStore()
+    const { files, fetchFiles, uploadFiles, isUploading, downloadFile } = useFileStore()
+    const {
+        createNewChat,
+        currentChatId,
+        chatSessions,
+        loadConversation,
+        updateConversationFiles,
+    } = useChatStore()
 
-    const [selectedFile, setSelectedFile] = useState<any>(null)
+    const [selectedFile, setSelectedFile] = useState<FileItem | null>(null)
     const [showUploadDialog, setShowUploadDialog] = useState(false)
     const [showLibraryDialog, setShowLibraryDialog] = useState(false)
-    const [availableFiles, setAvailableFiles] = useState<any[]>([])
+    const [availableFiles, setAvailableFiles] = useState<FileItem[]>([])
     const [hasStartedChat, setHasStartedChat] = useState(false)
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
     const [showAllFiles, setShowAllFiles] = useState(false)
-    const [isUploading, setIsUploading] = useState(false)
-    const [previousChatId, setPreviousChatId] = useState<string | null>(null)
+    const [previousChatId, setPreviousChatId] = useState<number | null>(null)
     const [isStartingChat, setIsStartingChat] = useState(false)
+    const [handledUrlFile, setHandledUrlFile] = useState(false)
+    const [previewType, setPreviewType] = useState<'none' | 'pdf' | 'image' | 'text' | 'unsupported'>('none')
+    const [previewText, setPreviewText] = useState("")
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+    const [previewError, setPreviewError] = useState<string | null>(null)
+    const [isPreviewLoading, setIsPreviewLoading] = useState(false)
+    const [previewReloadVersion, setPreviewReloadVersion] = useState(0)
     const fileInputRef = useRef<HTMLInputElement>(null)
 
-    // Watch for chat changes - handle both new chat and selecting existing chat
+    const buildFileConversationTitle = (conversationFiles: FileItem[]) => {
+        if (conversationFiles.length === 0) {
+            return 'New Chat'
+        }
+        const firstFileName = conversationFiles[0].name
+        if (conversationFiles.length === 1) {
+            return firstFileName
+        }
+        return `${firstFileName} +${conversationFiles.length - 1}`
+    }
+
+    useEffect(() => {
+        const loadFiles = async () => {
+            try {
+                await fetchFiles()
+            } catch (error) {
+                toast.error(error instanceof Error ? error.message : 'Failed to load files')
+            }
+        }
+        void loadFiles()
+    }, [fetchFiles])
+
     useEffect(() => {
         if (currentChatId && currentChatId !== previousChatId) {
-            const currentMessages = getCurrentMessages()
+            const currentSession = chatSessions.find((session) => session.id === currentChatId)
 
-            // If selecting an existing chat with messages, show the chat interface
-            if (currentMessages.length > 0) {
+            if (currentSession?.chatType === 'file') {
                 setHasStartedChat(true)
-            }
-            // If this is a new empty chat AND user didn't manually start chat, reset to selection screen
-            else if (!fileIdFromUrl && !isStartingChat) {
+                const attachedFiles = files.filter((file) =>
+                    currentSession.fileIds.includes(file.id)
+                )
+                setAvailableFiles(attachedFiles)
+                setSelectedFile(attachedFiles[0] || null)
+                void loadConversation(currentChatId)
+            } else if (!fileIdFromUrl && !isStartingChat) {
                 setHasStartedChat(false)
                 setAvailableFiles([])
                 setSelectedFile(null)
             }
 
             setPreviousChatId(currentChatId)
-
-            // Reset the starting flag after processing
             if (isStartingChat) {
                 setIsStartingChat(false)
             }
         }
-    }, [currentChatId, previousChatId, getCurrentMessages, fileIdFromUrl, isStartingChat])
+    }, [
+        currentChatId,
+        previousChatId,
+        chatSessions,
+        files,
+        fileIdFromUrl,
+        isStartingChat,
+        loadConversation,
+    ])
 
     useEffect(() => {
-        // If fileId in URL, filter to show only that file, create new chat, and start chat immediately
-        if (fileIdFromUrl) {
-            const file = files.find(f => f.id === fileIdFromUrl)
-            if (file) {
+        if (!fileIdFromUrl || handledUrlFile) {
+            return
+        }
+        const parsedFileId = Number(fileIdFromUrl)
+        if (Number.isNaN(parsedFileId)) {
+            setHandledUrlFile(true)
+            return
+        }
+        const file = files.find((item) => item.id === parsedFileId)
+        if (!file) {
+            return
+        }
+
+        const startUrlConversation = async () => {
+            try {
                 setSelectedFile(file)
                 setAvailableFiles([file])
                 setHasStartedChat(true)
                 setIsStartingChat(true)
-                createNewChat('file')
+                await createNewChat('file', {
+                    title: buildFileConversationTitle([file]),
+                    fileIds: [file.id],
+                })
+                setHandledUrlFile(true)
+            } catch (error) {
+                setHasStartedChat(false)
+                setIsStartingChat(false)
+                setHandledUrlFile(true)
+                toast.error(
+                    error instanceof Error
+                        ? error.message
+                        : 'Failed to create file conversation'
+                )
             }
         }
-    }, [fileIdFromUrl, files])
+        void startUrlConversation()
+    }, [fileIdFromUrl, files, handledUrlFile, createNewChat])
 
-    const handleFileSelect = (file: any) => {
-        const exists = availableFiles.some(f => f.id === file.id)
-        if (!exists) {
-            setAvailableFiles(prev => [...prev, file])
+    useEffect(() => {
+        let objectUrl: string | null = null
+        let isActive = true
+
+        const loadPreview = async () => {
+            if (!selectedFile) {
+                setPreviewType('none')
+                setPreviewText("")
+                setPreviewError(null)
+                if (previewUrl) {
+                    URL.revokeObjectURL(previewUrl)
+                    setPreviewUrl(null)
+                }
+                return
+            }
+
+            setIsPreviewLoading(true)
+            setPreviewError(null)
+            setPreviewText("")
+
+            if (previewUrl) {
+                URL.revokeObjectURL(previewUrl)
+                setPreviewUrl(null)
+            }
+
+            try {
+                const token = useAuthStore.getState().accessToken
+                const response = await fetch(
+                    `${API_BASE_URL}/files/${selectedFile.id}/download`,
+                    {
+                        headers: token ? { Token: token } : {},
+                    }
+                )
+
+                if (!response.ok) {
+                    throw new Error(`Cannot preview file (${response.status})`)
+                }
+
+                if (selectedFile.type.includes('pdf')) {
+                    const blob = await response.blob()
+                    objectUrl = URL.createObjectURL(blob)
+                    if (!isActive) {
+                        URL.revokeObjectURL(objectUrl)
+                        return
+                    }
+                    setPreviewType('pdf')
+                    setPreviewUrl(objectUrl)
+                } else if (selectedFile.type.includes('image')) {
+                    const blob = await response.blob()
+                    objectUrl = URL.createObjectURL(blob)
+                    if (!isActive) {
+                        URL.revokeObjectURL(objectUrl)
+                        return
+                    }
+                    setPreviewType('image')
+                    setPreviewUrl(objectUrl)
+                } else if (
+                    selectedFile.type.startsWith('text/') ||
+                    selectedFile.type.includes('json') ||
+                    selectedFile.type.includes('csv') ||
+                    selectedFile.type.includes('xml')
+                ) {
+                    const textContent = await response.text()
+                    if (!isActive) {
+                        return
+                    }
+                    setPreviewType('text')
+                    setPreviewText(textContent.slice(0, 30000))
+                } else {
+                    setPreviewType('unsupported')
+                }
+            } catch (error) {
+                if (!isActive) {
+                    return
+                }
+                setPreviewType('unsupported')
+                setPreviewError(
+                    error instanceof Error ? error.message : 'Failed to load preview'
+                )
+            } finally {
+                if (isActive) {
+                    setIsPreviewLoading(false)
+                }
+            }
         }
-        setSelectedFile(file)
+
+        void loadPreview()
+
+        return () => {
+            isActive = false
+            if (objectUrl) {
+                URL.revokeObjectURL(objectUrl)
+            }
+        }
+    }, [selectedFile?.id, selectedFile?.type, previewReloadVersion])
+
+    const syncConversationFiles = async (nextFiles: FileItem[]) => {
+        if (hasStartedChat && currentChatId) {
+            await updateConversationFiles(
+                currentChatId,
+                nextFiles.map((file) => file.id)
+            )
+        }
     }
 
-    const handleStartChat = () => {
+    const handleFileSelect = async (file: FileItem) => {
+        const previousFiles = availableFiles
+        const previousSelectedFile = selectedFile
+        const exists = availableFiles.some((item) => item.id === file.id)
+        const nextFiles = exists
+            ? availableFiles.filter((item) => item.id !== file.id)
+            : [...availableFiles, file]
+
+        setAvailableFiles(nextFiles)
+
+        if (exists) {
+            if (selectedFile?.id === file.id) {
+                setSelectedFile(nextFiles[0] || null)
+            }
+        } else {
+            setSelectedFile(file)
+        }
+
+        try {
+            await syncConversationFiles(nextFiles)
+        } catch (error) {
+            setAvailableFiles(previousFiles)
+            setSelectedFile(previousSelectedFile)
+            toast.error(
+                error instanceof Error
+                    ? error.message
+                    : 'Failed to update files for this conversation'
+            )
+        }
+    }
+
+    const handleStartChat = async () => {
         if (availableFiles.length > 0) {
-            setIsStartingChat(true)  // Set flag before creating chat
-            setHasStartedChat(true)
-            createNewChat('file')
+            try {
+                setIsStartingChat(true)
+                setHasStartedChat(true)
+                await createNewChat('file', {
+                    title: buildFileConversationTitle(availableFiles),
+                    fileIds: availableFiles.map((file) => file.id),
+                })
+                toast.success('File conversation created')
+            } catch (error) {
+                setHasStartedChat(false)
+                setIsStartingChat(false)
+                toast.error(
+                    error instanceof Error
+                        ? error.message
+                        : 'Failed to create file conversation'
+                )
+            }
         }
     }
 
@@ -104,35 +316,27 @@ export default function ChatWithFilePage() {
 
     const handleUploadConfirm = async () => {
         if (uploadedFiles.length > 0) {
-            setIsUploading(true)
-
-            // Simulate API call - in real app, this would be actual file upload
             try {
-                await new Promise(resolve => setTimeout(resolve, 2000)) // 2 second delay
+                const createdFiles = await uploadFiles(uploadedFiles)
+                const mergedFilesMap = new Map<number, FileItem>()
+                availableFiles.forEach((file) => mergedFilesMap.set(file.id, file))
+                createdFiles.forEach((file) => mergedFilesMap.set(file.id, file))
+                const nextFiles = Array.from(mergedFilesMap.values())
 
-                // Process all files
-                uploadedFiles.forEach(uploadedFile => {
-                    const newFile = {
-                        id: `file-${Date.now()}-${Math.random()}`,
-                        name: uploadedFile.name,
-                        type: uploadedFile.type,
-                        size: uploadedFile.size,
-                        uploadedAt: Date.now()
-                    }
-                    addFile(newFile)
-                    handleFileSelect(newFile)
-                })
+                setAvailableFiles(nextFiles)
+                if (!selectedFile && nextFiles.length > 0) {
+                    setSelectedFile(nextFiles[0])
+                }
+                await syncConversationFiles(nextFiles)
+                toast.success(`Uploaded ${createdFiles.length} file${createdFiles.length > 1 ? 's' : ''}`)
 
-                // Reset and close dialog
                 setShowUploadDialog(false)
                 setUploadedFiles([])
                 if (fileInputRef.current) {
                     fileInputRef.current.value = ''
                 }
             } catch (error) {
-                console.error('Upload failed:', error)
-            } finally {
-                setIsUploading(false)
+                toast.error(error instanceof Error ? error.message : 'Upload failed')
             }
         }
     }
@@ -144,6 +348,75 @@ export default function ChatWithFilePage() {
             if (fileInputRef.current) {
                 fileInputRef.current.value = ''
             }
+        }
+    }
+
+    const handleDownloadSelectedFile = async () => {
+        if (!selectedFile) {
+            return
+        }
+        try {
+            await downloadFile(selectedFile.id)
+            toast.success('Download started')
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Download failed')
+        }
+    }
+
+    const handleRefreshFileLibrary = async () => {
+        try {
+            await fetchFiles()
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Failed to refresh files')
+            return
+        }
+        if (!currentChatId || !hasStartedChat) {
+            setPreviewReloadVersion((value) => value + 1)
+            return
+        }
+
+        const latestStoreState = useFileStore.getState()
+        const latestChatState = useChatStore.getState()
+        const activeSession = latestChatState.chatSessions.find(
+            (session) => session.id === currentChatId
+        )
+        if (!activeSession) {
+            return
+        }
+
+        const attachedFiles = latestStoreState.files.filter((file) =>
+            activeSession.fileIds.includes(file.id)
+        )
+        setAvailableFiles(attachedFiles)
+        setSelectedFile(
+            attachedFiles.find((file) => file.id === selectedFile?.id) ||
+            attachedFiles[0] ||
+            null
+        )
+        setPreviewReloadVersion((value) => value + 1)
+        toast.success('File list refreshed')
+    }
+
+    const handleRemoveSelectedFromConversation = async () => {
+        if (!selectedFile) {
+            return
+        }
+        const previousFiles = availableFiles
+        const previousSelectedFile = selectedFile
+        const nextFiles = availableFiles.filter((file) => file.id !== selectedFile.id)
+        setAvailableFiles(nextFiles)
+        setSelectedFile(nextFiles[0] || null)
+        try {
+            await syncConversationFiles(nextFiles)
+            toast.success('Removed file from this conversation')
+        } catch (error) {
+            setAvailableFiles(previousFiles)
+            setSelectedFile(previousSelectedFile)
+            toast.error(
+                error instanceof Error
+                    ? error.message
+                    : 'Failed to update files for this conversation'
+            )
         }
     }
 
@@ -242,12 +515,7 @@ export default function ChatWithFilePage() {
                                                 variant="ghost"
                                                 size="icon"
                                                 className="h-8 w-8 rounded-lg"
-                                                onClick={() => {
-                                                    setAvailableFiles(prev => prev.filter(f => f.id !== file.id))
-                                                    if (selectedFile?.id === file.id) {
-                                                        setSelectedFile(availableFiles[0] || null)
-                                                    }
-                                                }}
+                                                onClick={() => void handleFileSelect(file)}
                                             >
                                                 <X className="h-4 w-4" />
                                             </Button>
@@ -281,7 +549,7 @@ export default function ChatWithFilePage() {
                                                 key={file.id}
                                                 variant="outline"
                                                 className={`h-auto p-3 justify-start rounded-lg ${isSelected ? 'bg-primary/10 border-primary' : ''}`}
-                                                onClick={() => handleFileSelect(file)}
+                                                onClick={() => void handleFileSelect(file)}
                                             >
                                                 <div className="flex items-center gap-2 w-full">
                                                     <div className={`h-8 w-8 rounded-md flex items-center justify-center shrink-0 ${getFileTypeColor(file.type)}`}>
@@ -318,7 +586,7 @@ export default function ChatWithFilePage() {
                     <div className="p-8 pt-4 border-t border-border shrink-0 bg-white">
                         <Button
                             className="w-full bg-primary hover:bg-primary-hover text-white rounded-lg py-6 text-base font-medium"
-                            onClick={handleStartChat}
+                            onClick={() => void handleStartChat()}
                             disabled={availableFiles.length === 0}
                         >
                             Start Chat with {availableFiles.length} File{availableFiles.length !== 1 ? 's' : ''}
@@ -349,7 +617,7 @@ export default function ChatWithFilePage() {
                                                 key={file.id}
                                                 variant="outline"
                                                 className={`w-full justify-start h-auto p-3 rounded-lg hover:bg-primary/10 hover:border-primary ${isSelected ? 'bg-primary/10 border-primary' : ''}`}
-                                                onClick={() => handleFileSelect(file)}
+                                                onClick={() => void handleFileSelect(file)}
                                             >
                                                 <div className="flex items-center gap-3 w-full">
                                                     <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${getFileTypeColor(file.type)}`}>
@@ -455,7 +723,7 @@ export default function ChatWithFilePage() {
                             </Button>
                             <Button
                                 className="bg-primary hover:bg-primary-hover text-white rounded-lg"
-                                onClick={handleUploadConfirm}
+                                onClick={() => void handleUploadConfirm()}
                                 disabled={uploadedFiles.length === 0 || isUploading}
                             >
                                 {isUploading ? (
@@ -543,13 +811,30 @@ export default function ChatWithFilePage() {
                         </DropdownMenu>
                     </div>
                     <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-lg"
+                            onClick={() => void handleDownloadSelectedFile()}
+                            disabled={!selectedFile}
+                        >
                             <Download className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-lg"
+                            onClick={() => void handleRefreshFileLibrary()}
+                        >
                             <RefreshCw className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700 rounded-lg">
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-red-600 hover:text-red-700 rounded-lg"
+                            onClick={() => void handleRemoveSelectedFromConversation()}
+                            disabled={!selectedFile}
+                        >
                             <Trash2 className="h-4 w-4" />
                         </Button>
                     </div>
@@ -557,9 +842,38 @@ export default function ChatWithFilePage() {
 
                 {/* File Content Preview */}
                 <div className="flex-1 p-6 overflow-auto">
-                    <Card className="h-full shadow-sm border-border rounded-xl flex flex-col items-center justify-center bg-white">
-                        {selectedFile ? (
-                            <div className="text-center space-y-4">
+                    <Card className="h-full shadow-sm border-border rounded-xl bg-white overflow-hidden">
+                        {!selectedFile ? null : isPreviewLoading ? (
+                            <div className="h-full flex flex-col items-center justify-center gap-3">
+                                <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
+                                <p className="text-sm text-text-muted">Loading preview...</p>
+                            </div>
+                        ) : previewType === 'pdf' && previewUrl ? (
+                            <iframe
+                                title={selectedFile.name}
+                                src={previewUrl}
+                                className="w-full h-full"
+                            />
+                        ) : previewType === 'image' && previewUrl ? (
+                            <div className="h-full w-full flex items-center justify-center bg-surface p-4">
+                                <img
+                                    src={previewUrl}
+                                    alt={selectedFile.name}
+                                    className="max-h-full max-w-full object-contain rounded-lg shadow-sm"
+                                />
+                            </div>
+                        ) : previewType === 'text' ? (
+                            <div className="h-full overflow-auto p-4">
+                                <div className="mb-3">
+                                    <h3 className="font-medium text-text-primary text-base">{selectedFile.name}</h3>
+                                    <p className="text-xs text-text-muted">Showing first 30,000 characters</p>
+                                </div>
+                                <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words text-text-primary bg-surface p-3 rounded-lg border border-border">
+                                    {previewText || "This file has no text content."}
+                                </pre>
+                            </div>
+                        ) : (
+                            <div className="h-full flex flex-col items-center justify-center text-center space-y-4 p-6">
                                 <div className="h-20 w-20 bg-surface rounded-full flex items-center justify-center mx-auto">
                                     <FileText className="h-10 w-10 text-text-muted" />
                                 </div>
@@ -568,12 +882,18 @@ export default function ChatWithFilePage() {
                                     <p className="text-sm text-text-muted max-w-xs mx-auto mt-2">
                                         {getFileTypeDisplay(selectedFile.type)} Preview Unavailable
                                     </p>
-                                    <p className="text-xs text-text-muted max-w-xs mx-auto mt-1">
-                                        In a real app, a renderer would display the document here.
-                                    </p>
+                                    {previewError && (
+                                        <p className="text-xs text-red-500 max-w-xs mx-auto mt-1">
+                                            {previewError}
+                                        </p>
+                                    )}
                                 </div>
                                 <div className="flex flex-col gap-2">
-                                    <Button variant="outline" className="border-border rounded-lg">
+                                    <Button
+                                        variant="outline"
+                                        className="border-border rounded-lg"
+                                        onClick={() => void handleDownloadSelectedFile()}
+                                    >
                                         Download to View
                                     </Button>
                                     {availableFiles.length > 1 && (
@@ -583,7 +903,7 @@ export default function ChatWithFilePage() {
                                     )}
                                 </div>
                             </div>
-                        ) : null}
+                        )}
                     </Card>
                 </div>
             </div>
@@ -610,7 +930,7 @@ export default function ChatWithFilePage() {
                                             key={file.id}
                                             variant="outline"
                                             className={`w-full justify-start h-auto p-3 rounded-lg hover:bg-primary/10 hover:border-primary ${isSelected ? 'bg-primary/10 border-primary' : ''}`}
-                                            onClick={() => handleFileSelect(file)}
+                                            onClick={() => void handleFileSelect(file)}
                                         >
                                             <div className="flex items-center gap-3 w-full">
                                                 <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${getFileTypeColor(file.type)}`}>
@@ -724,7 +1044,7 @@ export default function ChatWithFilePage() {
                         </Button>
                         <Button
                             className="bg-primary hover:bg-primary-hover text-white rounded-lg"
-                            onClick={handleUploadConfirm}
+                            onClick={() => void handleUploadConfirm()}
                             disabled={uploadedFiles.length === 0 || isUploading}
                         >
                             {isUploading ? (

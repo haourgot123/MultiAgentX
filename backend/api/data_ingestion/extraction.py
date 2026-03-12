@@ -1,339 +1,216 @@
+from __future__ import annotations
+
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Any
 
-import torch
-from docling.datamodel.accelerator_options import AcceleratorOptions
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import (
-    PdfPipelineOptions,
-    PictureDescriptionApiOptions,
-    TableStructureOptions,
-    TesseractCliOcrOptions,
-    ThreadedPdfPipelineOptions,
+from loguru import logger
+
+from backend.api.data_ingestion.model import (
+    DocumentSuffix,
+    DocumentType,
+    ExtractedTextBlock,
 )
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.pipeline.threaded_standard_pdf_pipeline import ThreadedStandardPdfPipeline
-
-from backend.api.data_ingestion.model import DocumentSuffix, DocumentType
-from backend.exceptions.model import NotImplementedException
-from backend.config.settings import _settings
+from backend.exceptions.model import InvalidRequestException, NotImplementedException
 
 
 class DoclingExtractionService:
-    """Service for extracting text and data from various document formats using Docling."""
+    """Extract document text with layout metadata (including bounding boxes)."""
 
     def _get_document_type(self, doc_path: Path) -> DocumentType:
-        """
-        Get the document type from the file extension.
-        Args:
-            doc_path: Path to the document.
-        Returns:
-            DocumentType: The document type.
-        """
-        if doc_path.suffix.lower() in DocumentSuffix.PDF.value:
+        suffix = doc_path.suffix.lower()
+        if suffix in DocumentSuffix.PDF.value:
             return DocumentType.PDF
-        elif doc_path.suffix.lower() in DocumentSuffix.DOCX.value:
+        if suffix in DocumentSuffix.DOCX.value:
             return DocumentType.DOCX
-        elif doc_path.suffix.lower() in DocumentSuffix.DOC.value:
+        if suffix in DocumentSuffix.DOC.value:
             return DocumentType.DOC
-        elif doc_path.suffix.lower() in DocumentSuffix.EXCEL.value:
+        if suffix in DocumentSuffix.EXCEL.value:
             return DocumentType.EXCEL
-        elif doc_path.suffix.lower() in DocumentSuffix.POWERPOINT.value:
+        if suffix in DocumentSuffix.POWERPOINT.value:
             return DocumentType.POWERPOINT
-        elif doc_path.suffix.lower() in DocumentSuffix.IMAGE.value:
+        if suffix in DocumentSuffix.IMAGE.value:
             return DocumentType.IMAGE
-        elif doc_path.suffix.lower() in DocumentSuffix.AUDIO.value:
+        if suffix in DocumentSuffix.AUDIO.value:
             return DocumentType.AUDIO
-        elif doc_path.suffix.lower() in DocumentSuffix.VIDEO.value:
+        if suffix in DocumentSuffix.VIDEO.value:
             return DocumentType.VIDEO
-        else:
-            raise NotImplementedException(
-                f"Unsupported document type: {doc_path.suffix.lower()}"
-            )
+        raise NotImplementedException(f"Unsupported document type: {suffix}")
 
     def _preprocess_document(self, doc_path: Path) -> Path:
-        """
-        Preprocess the document to make it compatible with Docling.
-        Args:
-            doc_path: Path to the document.
-        Returns:
-            Path: The path to the preprocessed document.
-        """
-        document_type = self._get_document_type(doc_path)
-        if document_type in [
-            DocumentType.DOCX,
-            DocumentType.DOC,
-            DocumentType.EXCEL,
-            DocumentType.POWERPOINT,
-            DocumentType.IMAGE,
-        ]:
-            # TODO: Implement conversion to PDF
-            return doc_path
-        else:
-            return doc_path
-
-    def _get_device_type(self) -> str:
-        """
-        Get the device type.
-        Returns:
-            str: The device type.
-        """
-
-        if torch.cuda.is_available():
-            return "cuda"
-        elif torch.backends.mps.is_available():
-            return "mps"
-        else:
-            return "cpu"
-
-    def _get_picture_annotation_with_vlm(
-        self,
-        model: str,
-        framework: Literal["vllm", "lms"] = "vllm",
-        seed: int = _settings.vlm.default_seed,
-        timeout: int = _settings.vlm.default_timeout,
-        max_completion_tokens: int = _settings.vlm.default_max_completion_tokens,
-        host: str = _settings.vlm.default_host,
-        port: Optional[int] = None,
-        prompt: str = _settings.vlm.default_prompt,
-    ) -> PictureDescriptionApiOptions:
-        """
-        Get picture annotation configuration for Vision-Language Models.
-        
-        Args:
-            model: The model to use.
-            framework: The VLM framework ('vllm' or 'lms').
-            seed: Random seed for reproducibility.
-            timeout: Timeout in seconds for API calls.
-            max_completion_tokens: Maximum tokens in completion response.
-            host: Host address for VLM service.
-            port: Port number (uses framework default if not specified).
-            prompt: Prompt template for image description.
-            
-        Returns:
-            PictureDescriptionApiOptions: Configuration for picture description.
-        """
-        # Use framework-specific default port if not provided
-        if port is None:
-            port = (
-                _settings.vlm.vllm_default_port
-                if framework == "vllm"
-                else _settings.vlm.lms_default_port
-            )
-
-        options = PictureDescriptionApiOptions(
-            url=f"http://{host}:{port}/v1/chat/completions",
-            params=dict(
-                model=model,
-                seed=seed,
-                max_completion_tokens=max_completion_tokens,
-            ),
-            prompt=prompt,
-            timeout=timeout,
-        )
-        return options
-
-    def _get_accelerator_config(
-        self,
-        num_threads: int = _settings.processing.default_num_threads,
-    ) -> AcceleratorOptions:
-        """
-        Get the CUDA configuration.
-        Args:
-            num_threads: The number of threads to use.
-        Returns:
-            AcceleratorOptions: The CUDA configuration.
-        """
-
-        device_type = self._get_device_type()
-        return AcceleratorOptions(
-            num_threads=num_threads,
-            device=device_type,
-        )
-
-    def _get_standard_converter(
-        self,
-        do_ocr: bool = True,
-        force_full_page_ocr: bool = True,
-        do_table_structure: bool = True,
-        do_cell_matching: bool = True,
-        vlm_framework: Literal["vllm", "lms"] = "vllm",
-        vlm_model: str = None,
-    ) -> DocumentConverter:
-        """
-        Get the standard converter.
-        Args:
-            do_ocr: Whether to do OCR.
-            force_full_page_ocr: Whether to force full page OCR.
-            do_table_structure: Whether to do table structure.
-            do_cell_matching: Whether to do cell matching.
-            vlm_framework: The framework to use for picture description.
-            vlm_model: The model to use for picture description.
-        Returns:
-            DocumentConverter: The standard converter.
-        """
-
-        ocr_options = TesseractCliOcrOptions(
-            lang=_settings.processing.default_ocr_languages
-        )
-        pipeline_options = PdfPipelineOptions(
-            do_ocr=do_ocr,
-            force_full_page_ocr=force_full_page_ocr,
-            ocr_options=ocr_options,
-            do_table_structure=do_table_structure,
-            table_structure_options=TableStructureOptions(
-                do_cell_matching=do_cell_matching,
-            ),
-        )
-
-        # Add VLM picture description if model specified
-        if vlm_model is not None:
-            pipeline_options.picture_description_options = (
-                self._get_picture_annotation_with_vlm(
-                    model=vlm_model, framework=vlm_framework
-                )
-            )
-
-        converter = DocumentConverter(
-            format_options={
-                InputFormat.PDF: PdfFormatOption(
-                    pipeline_options=pipeline_options,
-                )
-            }
-        )
-        return converter
-
-    def _get_accelerator_converter(
-        self,
-        do_ocr: bool = True,
-        force_full_page_ocr: bool = True,
-        do_table_structure: bool = True,
-        do_cell_matching: bool = True,
-        num_threads: int = _settings.processing.default_num_threads,
-        ocr_batch_size: int = _settings.processing.default_ocr_batch_size,
-        layout_batch_size: int = _settings.processing.default_layout_batch_size,
-        table_batch_size: int = _settings.processing.default_table_batch_size,
-        vlm_framework: Literal["vllm", "lms"] = "vllm",
-        vlm_model: str = None,
-    ) -> DocumentConverter:
-        """
-        Get the accelerator converter.
-        Args:
-            device: The device to use.
-            num_threads: The number of threads to use.
-            ocr_batch_size: The batch size for OCR.
-            layout_batch_size: The batch size for layout.
-            table_batch_size: The batch size for table structure.
-            do_ocr: Whether to do OCR.
-            force_full_page_ocr: Whether to force full page OCR.
-            do_table_structure: Whether to do table structure.
-            do_cell_matching: Whether to do cell matching.
-            vlm_framework: The framework to use for picture description.
-            vlm_model: The model to use for picture description.
-        Returns:
-            DocumentConverter: The accelerator converter.
-        """
-
-        ocr_options = TesseractCliOcrOptions(
-            lang=_settings.processing.default_ocr_languages
-        )
-        accelerator_config = self._get_accelerator_config(num_threads=num_threads)
-        pipeline_options = ThreadedPdfPipelineOptions(
-            accelerator_options=accelerator_config,
-            ocr_batch_size=ocr_batch_size,
-            layout_batch_size=layout_batch_size,
-            table_batch_size=table_batch_size,
-            force_full_page_ocr=force_full_page_ocr,
-            do_ocr=do_ocr,
-            do_table_structure=do_table_structure,
-            table_structure_options=TableStructureOptions(
-                do_cell_matching=do_cell_matching,
-            ),
-            ocr_options=ocr_options,
-        )
-
-        # Add VLM picture description if model specified
-        if vlm_model is not None:
-            pipeline_options.picture_description_options = (
-                self._get_picture_annotation_with_vlm(
-                    model=vlm_model, framework=vlm_framework
-                )
-            )
-
-        converter = DocumentConverter(
-            format_options={
-                InputFormat.PDF: PdfFormatOption(
-                    pipeline_cls=ThreadedStandardPdfPipeline,
-                    pipeline_options=pipeline_options,
-                )
-            }
-        )
-        return converter
-
-    def _extract_document(
-        self,
-        doc_path: Path,
-        output_folder: Path = Path("temp"),
-        is_accelerator: bool = False,
-        ocr_batch_size: int = _settings.processing.default_ocr_batch_size,
-        layout_batch_size: int = _settings.processing.default_layout_batch_size,
-        table_batch_size: int = _settings.processing.default_table_batch_size,
-        do_ocr: bool = True,
-        do_table_structure: bool = True,
-        do_cell_matching: bool = True,
-        force_full_page_ocr: bool = True,
-        num_threads: int = _settings.processing.default_num_threads,
-        vlm_framework: Literal["vllm", "lms"] = "vllm",
-        vlm_model: str = None,
-    ):
-        """
-        Extract the text from the document.
-        Args:
-            doc_path: Path to the document.
-            output_folder: Path to the output folder.
-            is_accelerator: Whether to use accelerator.
-            ocr_batch_size: The batch size for OCR.
-            layout_batch_size: The batch size for layout.
-            table_batch_size: The batch size for table structure.
-            do_ocr: Whether to do OCR.
-            do_table_structure: Whether to do table structure.
-            do_cell_matching: Whether to do cell matching.
-            force_full_page_ocr: Whether to force full page OCR.
-            num_threads: The number of threads to use.
-            vlm_framework: The framework to use for picture description.
-            vlm_model: The model to use for picture description.
-        Returns:
-            str: The text from the document.
-        """
-        # Check if the document exists
         if not doc_path.exists():
-            raise FileNotFoundError(f"Document not found: {doc_path}")
+            raise InvalidRequestException(message=f"Document not found: {doc_path}")
 
-        # Check if the output folder exists
-        if not output_folder.exists():
-            output_folder.mkdir(parents=True, exist_ok=True)
-
-        if is_accelerator:
-            converter = self._get_accelerator_converter(
-                ocr_batch_size=ocr_batch_size,
-                layout_batch_size=layout_batch_size,
-                table_batch_size=table_batch_size,
-                do_ocr=do_ocr,
-                do_table_structure=do_table_structure,
-                do_cell_matching=do_cell_matching,
-                vlm_framework=vlm_framework,
-                vlm_model=vlm_model,
+        document_type = self._get_document_type(doc_path)
+        if document_type in [DocumentType.AUDIO, DocumentType.VIDEO]:
+            raise NotImplementedException(
+                f"Docling extraction is not supported for `{document_type.value}` yet."
             )
+
+        return doc_path
+
+    @staticmethod
+    def _normalize_bbox(raw_bbox: Any) -> dict[str, float] | None:
+        if raw_bbox is None:
+            return None
+
+        if isinstance(raw_bbox, dict):
+            x0 = raw_bbox.get("x0", raw_bbox.get("l", raw_bbox.get("left")))
+            y0 = raw_bbox.get("y0", raw_bbox.get("t", raw_bbox.get("top")))
+            x1 = raw_bbox.get("x1", raw_bbox.get("r", raw_bbox.get("right")))
+            y1 = raw_bbox.get("y1", raw_bbox.get("b", raw_bbox.get("bottom")))
+            if None not in (x0, y0, x1, y1):
+                return {
+                    "x0": float(x0),
+                    "y0": float(y0),
+                    "x1": float(x1),
+                    "y1": float(y1),
+                }
+            return None
+
+        for keys in [
+            ("l", "t", "r", "b"),
+            ("x0", "y0", "x1", "y1"),
+            ("left", "top", "right", "bottom"),
+        ]:
+            values = [getattr(raw_bbox, key, None) for key in keys]
+            if None not in values:
+                return {
+                    "x0": float(values[0]),
+                    "y0": float(values[1]),
+                    "x1": float(values[2]),
+                    "y1": float(values[3]),
+                }
+
+        return None
+
+    @staticmethod
+    def _extract_item_text(item: Any) -> str:
+        for attr_name in ["text", "orig", "raw_text", "content"]:
+            value = getattr(item, attr_name, None)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        if isinstance(item, dict):
+            for key in ["text", "orig", "raw_text", "content"]:
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+        return ""
+
+    @staticmethod
+    def _extract_page_no(raw_prov: Any) -> int | None:
+        for key in ["page_no", "page", "page_number"]:
+            value = getattr(raw_prov, key, None)
+            if value is None and isinstance(raw_prov, dict):
+                value = raw_prov.get(key)
+            if value is not None:
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    @staticmethod
+    def _extract_provenance(item: Any) -> list[Any]:
+        if isinstance(item, dict):
+            prov_list = item.get("prov") or item.get("provenance") or []
         else:
-            converter = self._get_standard_converter(
-                do_ocr=do_ocr,
-                force_full_page_ocr=force_full_page_ocr,
-                do_table_structure=do_table_structure,
-                do_cell_matching=do_cell_matching,
-                num_threads=num_threads,
-                vlm_framework=vlm_framework,
-                vlm_model=vlm_model,
+            prov_list = getattr(item, "prov", None) or getattr(item, "provenance", None) or []
+
+        if isinstance(prov_list, list):
+            return prov_list
+        return [prov_list]
+
+    def _convert_with_docling(self, doc_path: Path):
+        try:
+            from docling.document_converter import DocumentConverter
+        except ModuleNotFoundError as exc:
+            raise InvalidRequestException(
+                message=(
+                    "Docling is not installed. Please install `docling` in backend environment."
+                )
+            ) from exc
+
+        converter = DocumentConverter()
+        result = converter.convert(doc_path)
+        return result.document
+
+    def extract_text_blocks(self, doc_path: Path) -> list[ExtractedTextBlock]:
+        prepared_path = self._preprocess_document(doc_path)
+        document = self._convert_with_docling(prepared_path)
+
+        text_blocks: list[ExtractedTextBlock] = []
+        iterate_items = getattr(document, "iterate_items", None)
+
+        if callable(iterate_items):
+            for node_idx, node in enumerate(iterate_items()):
+                item = node[0] if isinstance(node, tuple) else node
+                text = self._extract_item_text(item)
+                if not text:
+                    continue
+
+                provenance_items = self._extract_provenance(item)
+                if provenance_items:
+                    for provenance in provenance_items:
+                        bbox = self._normalize_bbox(
+                            provenance.get("bbox")
+                            if isinstance(provenance, dict)
+                            else getattr(provenance, "bbox", None)
+                        )
+                        page_no = self._extract_page_no(provenance)
+                        text_blocks.append(
+                            ExtractedTextBlock(
+                                text=text,
+                                page_no=page_no,
+                                bbox=bbox,
+                                metadata={"source": "docling", "node_idx": node_idx},
+                            )
+                        )
+                else:
+                    bbox = self._normalize_bbox(
+                        item.get("bbox") if isinstance(item, dict) else getattr(item, "bbox", None)
+                    )
+                    page_no = self._extract_page_no(item)
+                    text_blocks.append(
+                        ExtractedTextBlock(
+                            text=text,
+                            page_no=page_no,
+                            bbox=bbox,
+                            metadata={"source": "docling", "node_idx": node_idx},
+                        )
+                    )
+
+        if text_blocks:
+            return text_blocks
+
+        markdown_text = ""
+        export_to_markdown = getattr(document, "export_to_markdown", None)
+        if callable(export_to_markdown):
+            markdown_text = export_to_markdown() or ""
+
+        if not markdown_text:
+            markdown_text = str(document)
+
+        for idx, paragraph in enumerate(markdown_text.split("\n\n")):
+            text = paragraph.strip()
+            if not text:
+                continue
+            text_blocks.append(
+                ExtractedTextBlock(
+                    text=text,
+                    page_no=None,
+                    bbox=None,
+                    metadata={"source": "fallback_markdown", "paragraph_idx": idx},
+                )
             )
 
-        doc = converter.convert(doc_path).document
-        return doc
+        logger.info(
+            "Extracted {} text blocks from {}",
+            len(text_blocks),
+            prepared_path,
+        )
+        return text_blocks
+
+
+extract_service = DoclingExtractionService()

@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Toggle } from "@/components/ui/toggle"
 import { useLocation } from "react-router-dom" // Added import
+import { toast } from "sonner"
 
 export function ChatInterface() {
     const location = useLocation() // Added useLocation hook
@@ -40,27 +41,36 @@ export function ChatInterface() {
     const handleSend = async () => {
         if (!input.trim()) return
 
+        const prompt = input
         const userMessage = {
             role: 'user' as const,
-            content: input,
+            content: prompt,
         }
 
-        addMessage(userMessage, isFileChat ? 'file' : 'normal') // Modified addMessage call
         setInput("")
+        try {
+            await addMessage(userMessage, isFileChat ? 'file' : 'normal')
+        } catch {
+            setInput(prompt)
+            toast.error('Failed to send message')
+            return
+        }
         setIsLoading(true)
 
-        // Simulate AI response
-        setTimeout(() => {
+        setTimeout(async () => {
             let responseContent = `This is a simulated response.`
             if (activeFeatures.deepResearch) responseContent += ` [Deep Research Active]`
             if (activeFeatures.webSearch) responseContent += ` [Web Search Active]`
             if (activeFeatures.genImage) responseContent += ` [Image Generation Active]`
 
-            addMessage({
-                role: 'assistant',
-                content: responseContent,
-            }, isFileChat ? 'file' : 'normal')
-            setIsLoading(false)
+            try {
+                await addMessage({
+                    role: 'assistant',
+                    content: responseContent,
+                }, isFileChat ? 'file' : 'normal')
+            } finally {
+                setIsLoading(false)
+            }
         }, 1000)
     }
 

@@ -32,6 +32,13 @@ class Message:
     MESSAGE_VALUE_ERROR = "Oops! Value error"
 
     MESSAGE_OBJECT_NOT_FOUND = "Oops! Object Not Found"
+    MESSAGE_FILE_NOT_FOUND = "Oops! File not found"
+    MESSAGE_FILE_DELETED_SUCCESSFULLY = "File deleted successfully"
+    MESSAGE_CONVERSATION_NOT_FOUND = "Oops! Conversation not found"
+    MESSAGE_CONVERSATION_DELETED_SUCCESSFULLY = "Conversation deleted successfully"
+    MESSAGE_INGESTION_STARTED = "Ingestion started"
+    MESSAGE_INGESTION_COMPLETED = "Ingestion completed"
+    MESSAGE_INGESTION_FAILED = "Ingestion failed"
 
 
 class TokenType(Enum):

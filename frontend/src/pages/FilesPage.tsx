@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { FileText, Trash2, Upload, MoreVertical, ArrowUpDown, Filter, Eye, Edit2, X } from "lucide-react"
+import { FileText, Trash2, Upload, MoreVertical, ArrowUpDown, Filter, Eye, Edit2, X, Download } from "lucide-react"
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -20,11 +20,12 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
-import { useState, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { toast } from "sonner"
 
 export default function FilesPage() {
-    const { files, removeFile, addFile } = useFileStore()
+    const { files, removeFile, fetchFiles, uploadFiles, renameFile, downloadFile, isUploading } = useFileStore()
     const navigate = useNavigate()
     const [sortOrder, setSortOrder] = useState("date-desc")
     const [filterType, setFilterType] = useState("all")
@@ -34,8 +35,18 @@ export default function FilesPage() {
     const [showUploadDialog, setShowUploadDialog] = useState(false)
     const [newFileName, setNewFileName] = useState("")
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
-    const [isUploading, setIsUploading] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
+
+    useEffect(() => {
+        const loadFiles = async () => {
+            try {
+                await fetchFiles()
+            } catch (error) {
+                toast.error(error instanceof Error ? error.message : 'Failed to load files')
+            }
+        }
+        void loadFiles()
+    }, [fetchFiles])
 
     const formatSize = (bytes: number) => {
         if (bytes === 0) return '0 Bytes'
@@ -70,31 +81,16 @@ export default function FilesPage() {
 
     const handleUploadConfirm = async () => {
         if (uploadedFiles.length > 0) {
-            setIsUploading(true)
-
             try {
-                await new Promise(resolve => setTimeout(resolve, 2000))
-
-                uploadedFiles.forEach(uploadedFile => {
-                    const newFile = {
-                        id: `file-${Date.now()}-${Math.random()}`,
-                        name: uploadedFile.name,
-                        type: uploadedFile.type,
-                        size: uploadedFile.size,
-                        uploadedAt: Date.now()
-                    }
-                    addFile(newFile)
-                })
-
+                await uploadFiles(uploadedFiles)
+                toast.success(`Uploaded ${uploadedFiles.length} file${uploadedFiles.length > 1 ? 's' : ''}`)
                 setShowUploadDialog(false)
                 setUploadedFiles([])
                 if (fileInputRef.current) {
                     fileInputRef.current.value = ''
                 }
             } catch (error) {
-                console.error('Upload failed:', error)
-            } finally {
-                setIsUploading(false)
+                toast.error(error instanceof Error ? error.message : 'Upload failed')
             }
         }
     }
@@ -120,20 +116,43 @@ export default function FilesPage() {
         setShowRenameDialog(true)
     }
 
-    const confirmRename = () => {
-        setShowRenameDialog(false)
-        setSelectedFile(null)
-        setNewFileName("")
+    const confirmRename = async () => {
+        if (!selectedFile || !newFileName.trim()) {
+            return
+        }
+        try {
+            await renameFile(selectedFile.id, newFileName.trim())
+            toast.success('File renamed')
+            setShowRenameDialog(false)
+            setSelectedFile(null)
+            setNewFileName("")
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Failed to rename file')
+        }
     }
 
-    const handleDelete = (fileId: string) => {
+    const handleDelete = async (fileId: number) => {
         if (confirm('Are you sure you want to delete this file?')) {
-            removeFile(fileId)
+            try {
+                await removeFile(fileId)
+                toast.success('File deleted')
+            } catch (error) {
+                toast.error(error instanceof Error ? error.message : 'Failed to delete file')
+            }
         }
     }
 
     const handleOpenInChat = (file: any) => {
         navigate(`/chat-file?fileId=${file.id}`)
+    }
+
+    const handleDownload = async (fileId: number) => {
+        try {
+            await downloadFile(fileId)
+            toast.success('Download started')
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Download failed')
+        }
     }
 
     const sortOptions = [
@@ -268,8 +287,12 @@ export default function FilesPage() {
                                             <FileText className="mr-2 h-4 w-4" />
                                             Open in Chat
                                         </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={() => void handleDownload(file.id)} className="cursor-pointer rounded-md">
+                                            <Download className="mr-2 h-4 w-4" />
+                                            Download
+                                        </DropdownMenuItem>
                                         <DropdownMenuSeparator />
-                                        <DropdownMenuItem onClick={() => handleDelete(file.id)} className="text-red-600 cursor-pointer rounded-md">
+                                        <DropdownMenuItem onClick={() => void handleDelete(file.id)} className="text-red-600 cursor-pointer rounded-md">
                                             <Trash2 className="mr-2 h-4 w-4" />
                                             Delete
                                         </DropdownMenuItem>
@@ -437,7 +460,7 @@ export default function FilesPage() {
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setShowRenameDialog(false)} className="rounded-lg">Cancel</Button>
-                        <Button className="bg-primary hover:bg-primary-hover text-white rounded-lg" onClick={confirmRename}>Rename</Button>
+                        <Button className="bg-primary hover:bg-primary-hover text-white rounded-lg" onClick={() => void confirmRename()}>Rename</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

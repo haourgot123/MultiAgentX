@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/dialog"
 import { UserProfile } from "./user/UserProfile"
 import { useState, useEffect } from "react"
+import { toast } from "sonner"
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
     isCollapsed?: boolean
@@ -46,17 +47,27 @@ interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export function Sidebar({ className, isCollapsed = false, toggleCollapse }: SidebarProps) {
     const location = useLocation()
-    const { setMode, createNewChat, setCurrentChat, getChatSessions, currentChatId, deleteChat, renameChat } = useChatStore()
+    const {
+        setMode,
+        createNewChat,
+        setCurrentChat,
+        getChatSessions,
+        fetchChatSessions,
+        loadConversation,
+        currentChatId,
+        deleteChat,
+        renameChat
+    } = useChatStore()
     const [showUserProfile, setShowUserProfile] = useState(false)
     const [expandedSection, setExpandedSection] = useState<'chat' | 'file' | null>(null)
     const [isCreatingChat, setIsCreatingChat] = useState(false)
-    const [renamingChatId, setRenamingChatId] = useState<string | null>(null)
+    const [renamingChatId, setRenamingChatId] = useState<number | null>(null)
     const [newChatTitle, setNewChatTitle] = useState("")
 
     // Get chat sessions based on current route
     const isFileChat = location.pathname === '/chat-file'
-    const normalSessions = getChatSessions('normal').filter(s => s.messages.length > 0)
-    const fileSessions = getChatSessions('file').filter(s => s.messages.length > 0)
+    const normalSessions = getChatSessions('normal')
+    const fileSessions = getChatSessions('file')
 
     const isActive = (path: string) => location.pathname === path
 
@@ -69,45 +80,85 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
         }
     }, [location.pathname])
 
+    useEffect(() => {
+        const loadSessions = async () => {
+            try {
+                await fetchChatSessions()
+            } catch (error) {
+                toast.error(
+                    error instanceof Error ? error.message : 'Failed to load conversations'
+                )
+            }
+        }
+        void loadSessions()
+    }, [fetchChatSessions])
+
     const toggleSection = (section: 'chat' | 'file') => {
         setExpandedSection(expandedSection === section ? null : section)
     }
 
-    const handleNewChat = () => {
+    const handleNewChat = async () => {
         setIsCreatingChat(true)
-        // Create chat with appropriate type
-        const chatType = isFileChat ? 'file' : 'normal'
-        createNewChat(chatType)
+        try {
+            const chatType = isFileChat ? 'file' : 'normal'
+            await createNewChat(chatType)
 
-        // Auto-expand history when creating new chat
-        if (isActive('/')) {
-            setExpandedSection('chat')
-        } else if (isActive('/chat-file')) {
-            setExpandedSection('file')
+            if (isActive('/')) {
+                setExpandedSection('chat')
+            } else if (isActive('/chat-file')) {
+                setExpandedSection('file')
+            }
+            toast.success('Created new conversation')
+        } catch (error) {
+            toast.error(
+                error instanceof Error ? error.message : 'Failed to create conversation'
+            )
+        } finally {
+            setIsCreatingChat(false)
         }
-        setTimeout(() => setIsCreatingChat(false), 500)
     }
 
-    const handleSelectChat = (chatId: string) => {
-        setCurrentChat(chatId)
+    const handleSelectChat = async (chatId: number) => {
+        try {
+            setCurrentChat(chatId)
+            await loadConversation(chatId)
+        } catch (error) {
+            toast.error(
+                error instanceof Error ? error.message : 'Failed to load conversation'
+            )
+        }
     }
 
-    const handleDeleteChat = (chatId: string) => {
+    const handleDeleteChat = async (chatId: number) => {
         if (confirm('Are you sure you want to delete this conversation?')) {
-            deleteChat(chatId)
+            try {
+                await deleteChat(chatId)
+                toast.success('Conversation deleted')
+            } catch (error) {
+                toast.error(
+                    error instanceof Error ? error.message : 'Failed to delete conversation'
+                )
+            }
         }
     }
 
-    const handleRenameStart = (chatId: string, currentTitle: string) => {
+    const handleRenameStart = (chatId: number, currentTitle: string) => {
         setRenamingChatId(chatId)
         setNewChatTitle(currentTitle)
     }
 
-    const handleRenameConfirm = () => {
+    const handleRenameConfirm = async () => {
         if (renamingChatId && newChatTitle.trim()) {
-            renameChat(renamingChatId, newChatTitle.trim())
-            setRenamingChatId(null)
-            setNewChatTitle("")
+            try {
+                await renameChat(renamingChatId, newChatTitle.trim())
+                setRenamingChatId(null)
+                setNewChatTitle("")
+                toast.success('Conversation renamed')
+            } catch (error) {
+                toast.error(
+                    error instanceof Error ? error.message : 'Failed to rename conversation'
+                )
+            }
         }
     }
 
@@ -172,7 +223,7 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                     "w-full justify-start h-auto py-2 px-2 pr-8 hover:bg-transparent",
                     currentChatId === session.id && "text-primary"
                 )}
-                onClick={() => handleSelectChat(session.id)}
+                onClick={() => void handleSelectChat(session.id)}
             >
                 <div className="flex flex-col items-start w-full">
                     <span className="text-xs font-medium truncate w-full text-left">{session.title}</span>
@@ -202,7 +253,7 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                         className="text-red-600 focus:text-red-600 cursor-pointer rounded-md"
-                        onClick={() => handleDeleteChat(session.id)}
+                        onClick={() => void handleDeleteChat(session.id)}
                     >
                         <Trash2 className="mr-2 h-4 w-4" />
                         Delete
@@ -260,7 +311,7 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                                             variant="ghost"
                                             size="icon"
                                             className={cn("h-8 w-8 text-primary hover:bg-primary/20 rounded-lg", isCreatingChat && "animate-spin-once")}
-                                            onClick={handleNewChat}
+                                            onClick={() => void handleNewChat()}
                                         >
                                             <Plus className="h-4 w-4" />
                                         </Button>
@@ -320,7 +371,7 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                                             variant="ghost"
                                             size="icon"
                                             className={cn("h-8 w-8 text-primary hover:bg-primary/20 rounded-lg", isCreatingChat && "animate-spin-once")}
-                                            onClick={handleNewChat}
+                                            onClick={() => void handleNewChat()}
                                         >
                                             <Plus className="h-4 w-4" />
                                         </Button>
@@ -396,14 +447,17 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                             className="mt-2 rounded-lg"
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
-                                    handleRenameConfirm()
+                                    void handleRenameConfirm()
                                 }
                             }}
                         />
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={handleRenameCancel} className="rounded-lg">Cancel</Button>
-                        <Button className="bg-primary hover:bg-primary-hover text-white rounded-lg" onClick={handleRenameConfirm}>
+                        <Button
+                            className="bg-primary hover:bg-primary-hover text-white rounded-lg"
+                            onClick={() => void handleRenameConfirm()}
+                        >
                             Rename
                         </Button>
                     </DialogFooter>

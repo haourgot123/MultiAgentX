@@ -133,6 +133,33 @@ class EmbeddingModelConfig:
 
 
 @dataclass
+class OpenAIEmbeddingConfig:
+    """OpenAI embedding configuration."""
+
+    api_key: str = os.getenv("OPENAI_API_KEY")
+    api_base: str = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+    embedding_model: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+    embedding_dimension: int = int(os.getenv("OPENAI_EMBEDDING_DIMENSION", "3072"))
+    batch_size: int = int(os.getenv("OPENAI_EMBEDDING_BATCH_SIZE", "32"))
+    timeout_seconds: int = int(os.getenv("OPENAI_EMBEDDING_TIMEOUT_SECONDS", "120"))
+
+
+@dataclass
+class MilvusConfig:
+    """Milvus configuration settings."""
+
+    host: str = os.getenv("MILVUS_HOST", "localhost")
+    port: str = os.getenv("MILVUS_PORT", "19530")
+    user: str = os.getenv("MILVUS_USER", "")
+    password: str = os.getenv("MILVUS_PASSWORD", "")
+    collection_name: str = os.getenv("MILVUS_COLLECTION_NAME", "document_chunks")
+    metric_type: str = os.getenv("MILVUS_METRIC_TYPE", "COSINE")
+    index_type: str = os.getenv("MILVUS_INDEX_TYPE", "IVF_FLAT")
+    nlist: int = int(os.getenv("MILVUS_INDEX_NLIST", "1024"))
+    consistency_level: str = os.getenv("MILVUS_CONSISTENCY_LEVEL", "Strong")
+
+
+@dataclass
 class LoggingConfig:
     """Logging configuration settings."""
 
@@ -242,6 +269,5 @@ class ProcessingConfig:
         """Initialize default values that can't be set as class variables."""
         if self.default_ocr_languages is None:
             self.default_ocr_languages = ["auto"]
-
 
 
