@@ -8,6 +8,7 @@ from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 from backend.config.settings import _settings
 from backend.databases.db import Base, engine
+from backend.utils.logging import configure_logging
 
 BASE_DIR = Path(__file__).resolve().parent.parent  # MultiAgentX/
 ALEMBIC_PATH = BASE_DIR / "alembic.ini"
@@ -38,12 +39,25 @@ def chatfile_server():
 
 @chatfile_server.command("start")
 def server_start():
-    uvicorn.run("app.main:app", port=8300, host="0.0.0.0")
+    configure_logging()
+    uvicorn.run(
+        "app.main:app",
+        port=8300,
+        host="0.0.0.0",
+        log_level=_settings.logging.log_level.lower(),
+    )
 
 
 @chatfile_server.command("develop")
 def server_develop():
-    uvicorn.run("app.main:socket_app", reload=True, port=8000, host="0.0.0.0")
+    configure_logging()
+    uvicorn.run(
+        "app.main:socket_app",
+        reload=True,
+        port=8000,
+        host="0.0.0.0",
+        log_level=_settings.logging.log_level.lower(),
+    )
 
 
 @chatfile_database.command("init")

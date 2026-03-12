@@ -9,13 +9,15 @@ from fastapi import UploadFile
 from loguru import logger
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-
+from fastapi import Request
 from backend.api.files.model import StoredFile
 from backend.api.data_ingestion.model import IngestionStatus
 from backend.config.settings import _settings
 from backend.databases.db import get_utc_now
 from backend.exceptions.model import InvalidRequestException, ObjectNotFoundException
 from backend.utils.constants import Message
+
+service_logger = logger.bind(service="file-service")
 
 
 class FileService:
@@ -40,40 +42,69 @@ class FileService:
         }
 
     @staticmethod
+    def _get_request_logger(request: Request | None = None, user_id: int | None = None):
+        return service_logger.bind(
+            request_id=getattr(getattr(request, "state", None), "request_id", "-"),
+            user_id=user_id
+            if user_id is not None
+            else getattr(getattr(request, "state", None), "user_id", "-"),
+        )
+
+    @staticmethod
     def _normalize_filename(filename: str | None) -> str:
         cleaned_name = Path(filename or "untitled").name.strip()
         if not cleaned_name:
             cleaned_name = "untitled"
         return cleaned_name[:255]
 
-    def _get_user_file(self, db_session: Session, user_id: int, file_id: int) -> StoredFile:
+    def _get_user_file(
+        self,
+        db_session: Session,
+        user_id: int,
+        file_id: int,
+        request_logger,
+    ) -> StoredFile:
         stored_file = (
             db_session.query(StoredFile)
             .filter(StoredFile.id == file_id, StoredFile.user_id == user_id)
             .first()
         )
         if not stored_file:
+            request_logger.warning("File not found")
             raise ObjectNotFoundException(message=Message.MESSAGE_FILE_NOT_FOUND)
         return stored_file
 
-    def list_files(self, db_session: Session, user_id: int) -> list[StoredFile]:
-        return (
+    def list_files(self, request: Request, db_session: Session, user_id: int) -> list[StoredFile]:
+        request_logger = self._get_request_logger(request, user_id)
+        files = (
             db_session.query(StoredFile)
             .filter(StoredFile.user_id == user_id)
             .order_by(StoredFile.created_at.desc())
             .all()
         )
+        request_logger.debug(
+            "Listed files successfully, count={}",
+            len(files),
+        )
+        return files
 
-    def get_file(self, db_session: Session, user_id: int, file_id: int) -> StoredFile:
-        stored_file = self._get_user_file(db_session, user_id, file_id)
+    def get_file(
+        self, request: Request, db_session: Session, user_id: int, file_id: int
+    ) -> StoredFile:
+        request_logger = self._get_request_logger(request, user_id)
+        stored_file = self._get_user_file(db_session, user_id, file_id, request_logger)
         if not Path(stored_file.storage_path).exists():
+            request_logger.warning(
+                "File metadata exists but storage path is missing: {}",
+                stored_file.storage_path,
+            )
             raise ObjectNotFoundException(message=Message.MESSAGE_FILE_NOT_FOUND)
         return stored_file
 
     def _should_convert_to_pdf(self, path: Path) -> bool:
         return path.suffix.lower() in self._office_suffixes
 
-    def _convert_to_pdf(self, input_path: Path) -> tuple[Path, str, str]:
+    def _convert_to_pdf(self, input_path: Path, request_logger) -> tuple[Path, str, str]:
         soffice_path = shutil.which("soffice") or shutil.which("libreoffice")
         if not soffice_path:
             raise InvalidRequestException(
@@ -98,7 +129,7 @@ class FileService:
             check=False,
         )
         if result.returncode != 0:
-            logger.error(
+            request_logger.error(
                 "LibreOffice conversion failed. command={} stderr={}",
                 " ".join(convert_command),
                 result.stderr.strip(),
@@ -114,13 +145,20 @@ class FileService:
             )
 
         converted_name = f"{input_path.stem}.pdf"
+        request_logger.debug("Converted office file to PDF: {}", converted_name)
         return converted_path, converted_name, "application/pdf"
 
     async def upload_files(
-        self, db_session: Session, user_id: int, uploaded_files: Sequence[UploadFile]
+        self,
+        request: Request,
+        db_session: Session,
+        user_id: int,
+        uploaded_files: Sequence[UploadFile],
     ) -> list[StoredFile]:
+        request_logger = self._get_request_logger(request, user_id)
         if not uploaded_files:
             raise InvalidRequestException(message=Message.MESSAGE_INVALID_REQUEST)
+        request_logger.info("Uploading files, count={}", len(uploaded_files))
 
         upload_dir = self.upload_root / str(user_id)
         upload_dir.mkdir(parents=True, exist_ok=True)
@@ -138,6 +176,10 @@ class FileService:
                 with storage_path.open("wb") as output:
                     shutil.copyfileobj(uploaded_file.file, output)
                 written_paths.append(storage_path)
+                request_logger.debug(
+                    "Saved uploaded file to temporary storage: {}",
+                    storage_path,
+                )
 
                 mime_type = uploaded_file.content_type or mimetypes.guess_type(
                     original_name
@@ -147,8 +189,9 @@ class FileService:
                 final_mime_type = mime_type or "application/octet-stream"
 
                 if self._should_convert_to_pdf(storage_path):
+                    request_logger.debug("Detected office file, converting to PDF")
                     converted_path, converted_name, converted_mime_type = (
-                        self._convert_to_pdf(storage_path)
+                        self._convert_to_pdf(storage_path, request_logger)
                     )
                     final_storage_path = converted_path
                     final_name = converted_name
@@ -176,18 +219,30 @@ class FileService:
                 )
                 db_session.add(db_file)
                 created_files.append(db_file)
+                request_logger.debug(
+                    "Prepared DB row for uploaded file name={} mime_type={} size={}",
+                    final_name,
+                    final_mime_type,
+                    file_size,
+                )
 
             db_session.commit()
             for db_file in created_files:
                 db_session.refresh(db_file)
+            request_logger.info(
+                "Upload completed successfully, created_file_ids={}",
+                [created_file.id for created_file in created_files],
+            )
             return created_files
         except PermissionError as e:
+            request_logger.exception("Permission error while uploading files")
             db_session.rollback()
             for path in written_paths:
                 if path.exists():
                     path.unlink(missing_ok=True)
             raise e
         except SQLAlchemyError as e:
+            request_logger.exception("Database error while uploading files")
             db_session.rollback()
             for path in written_paths:
                 if path.exists():
@@ -198,19 +253,35 @@ class FileService:
                 await uploaded_file.close()
 
     def rename_file(
-        self, db_session: Session, user_id: int, file_id: int, new_name: str
+        self,
+        request: Request,
+        db_session: Session,
+        user_id: int,
+        file_id: int,
+        new_name: str,
     ) -> StoredFile:
-        stored_file = self._get_user_file(db_session, user_id, file_id)
+        request_logger = self._get_request_logger(request, user_id)
+        stored_file = self._get_user_file(db_session, user_id, file_id, request_logger)
+        original_name = stored_file.name
         stored_file.name = self._normalize_filename(new_name)
         stored_file.updated_at = get_utc_now()
         db_session.commit()
         db_session.refresh(stored_file)
+        request_logger.info(
+            "Renamed file from '{}' to '{}'",
+            original_name,
+            stored_file.name,
+        )
         return stored_file
 
-    def delete_file(self, db_session: Session, user_id: int, file_id: int) -> dict:
-        stored_file = self._get_user_file(db_session, user_id, file_id)
+    def delete_file(
+        self, request: Request, db_session: Session, user_id: int, file_id: int
+    ) -> dict:
+        request_logger = self._get_request_logger(request, user_id)
+        stored_file = self._get_user_file(db_session, user_id, file_id, request_logger)
         storage_path = Path(stored_file.storage_path)
         deleting_file_id = stored_file.id
+        request_logger.info("Deleting file and vectors")
 
         db_session.delete(stored_file)
         db_session.commit()
@@ -218,9 +289,13 @@ class FileService:
         try:
             from backend.api.data_ingestion.service import data_ingestion_service
 
-            data_ingestion_service.delete_file_vectors(user_id=user_id, file_id=deleting_file_id)
+            data_ingestion_service.delete_file_vectors(
+                user_id=user_id,
+                file_id=deleting_file_id,
+                request=request,
+            )
         except Exception as e:
-            logger.warning(
+            request_logger.warning(
                 "Failed to remove vectors in Milvus for file_id={}: {}",
                 deleting_file_id,
                 e,
@@ -230,7 +305,13 @@ class FileService:
             try:
                 storage_path.unlink(missing_ok=True)
             except OSError as e:
-                logger.warning(f"Unable to remove file from disk: {storage_path}. {e}")
+                request_logger.warning(
+                    "Unable to remove file from disk: {}. {}",
+                    storage_path,
+                    e,
+                )
+
+        request_logger.info("Deleted file successfully")
 
         return {"message": Message.MESSAGE_FILE_DELETED_SUCCESSFULLY}
 

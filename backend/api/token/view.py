@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends, status
+from fastapi import APIRouter, Body, Depends, Request, status
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException
 
@@ -51,8 +51,10 @@ def generate_access_token(
     response_model=LoginResponse,
     description="Login a user",
 )
-async def login(login_request: LoginRequest, db_session: Session = Depends(get_db)):
-    response = user_service.login_user(db_session, login_request)
+async def login(
+    request: Request, login_request: LoginRequest, db_session: Session = Depends(get_db)
+):
+    response = user_service.login_user(request, db_session, login_request)
     return response
 
 
@@ -63,7 +65,9 @@ async def login(login_request: LoginRequest, db_session: Session = Depends(get_d
     description="Register a user",
 )
 async def register(
-    register_request: UserCreateRequest, db_session: Session = Depends(get_db)
+    request: Request,
+    register_request: UserCreateRequest,
+    db_session: Session = Depends(get_db),
 ):
     if register_request.roles is not None:
         role_types = [role.value for role in RoleType]
@@ -81,5 +85,5 @@ async def register(
             )
     else:
         register_request.roles = [RoleType.USER.value]
-    response = user_service.create_new_user(db_session, register_request)
+    response = user_service.create_new_user(request, db_session, register_request)
     return response

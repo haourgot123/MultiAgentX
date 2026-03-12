@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useChatStore } from "@/store/chat-store"
+import { useFileStore } from "@/store/file-store"
 import { MessageBubble } from "./MessageBubble"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
@@ -13,12 +14,55 @@ import { toast } from "sonner"
 
 export function ChatInterface() {
     const location = useLocation() // Added useLocation hook
-    const { getCurrentMessages, input, setInput, addMessage, isLoading, setIsLoading } = useChatStore()
+    const {
+        getCurrentMessages,
+        input,
+        setInput,
+        addMessage,
+        isLoading,
+        setIsLoading,
+        currentChatId,
+        chatSessions,
+    } = useChatStore()
+    const files = useFileStore((state) => state.files)
     const messages = getCurrentMessages()
     const scrollRef = useRef<HTMLDivElement>(null)
 
     // Detect if we're in file chat mode
     const isFileChat = location.pathname === '/chat-file' // Added logic to detect chat type
+    const currentFileSession =
+        isFileChat && currentChatId
+            ? chatSessions.find(
+                (session) => session.id === currentChatId && session.chatType === 'file'
+            ) || null
+            : null
+    const attachedFiles = currentFileSession
+        ? files.filter((file) => currentFileSession.fileIds.includes(file.id))
+        : []
+    const completedFiles = attachedFiles.filter(
+        (file) => file.ingestionStatus === 'completed'
+    )
+    const hasActiveIngestion = attachedFiles.some((file) =>
+        ['pending', 'parsing', 'chunking', 'embedding', 'indexing', 'processing'].includes(
+            file.ingestionStatus
+        )
+    )
+    const allAttachedFilesFailed =
+        attachedFiles.length > 0 &&
+        attachedFiles.every((file) => file.ingestionStatus === 'failed')
+    const fileChatBlocked =
+        isFileChat &&
+        (!currentFileSession || attachedFiles.length === 0 || completedFiles.length === 0)
+    const fileChatBlockReason = !currentFileSession || attachedFiles.length === 0
+        ? 'Attach at least one file to this conversation before chatting.'
+        : hasActiveIngestion
+            ? 'Ingestion is still running. Wait until at least one file is Completed.'
+            : allAttachedFilesFailed
+                ? 'All attached files failed ingestion. Upload another file or retry ingestion.'
+                : 'At least one attached file must be Completed before chatting.'
+    const inputPlaceholder = fileChatBlocked
+        ? fileChatBlockReason
+        : "Ask anything..."
 
     // Feature Toggles
     const [activeFeatures, setActiveFeatures] = useState({
@@ -39,6 +83,10 @@ export function ChatInterface() {
     }, [messages])
 
     const handleSend = async () => {
+        if (fileChatBlocked) {
+            toast.error(fileChatBlockReason)
+            return
+        }
         if (!input.trim()) return
 
         const prompt = input
@@ -126,7 +174,8 @@ export function ChatInterface() {
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={handleKeyDown}
-                            placeholder="Ask anything..."
+                            placeholder={inputPlaceholder}
+                            disabled={isLoading || fileChatBlocked}
                             className="min-h-[40px] max-h-[200px] w-full resize-none border-0 bg-transparent p-2 placeholder:text-text-muted focus-visible:ring-0 focus-visible:ring-offset-0 text-base"
                             rows={1}
                             style={{ height: 'auto', minHeight: '44px' }}
@@ -224,7 +273,7 @@ export function ChatInterface() {
                                 </Button>
                                 <Button
                                     onClick={handleSend}
-                                    disabled={!input.trim() || isLoading}
+                                    disabled={!input.trim() || isLoading || fileChatBlocked}
                                     size="icon"
                                     className={cn(
                                         "h-8 w-8 rounded-full transition-all duration-200",
@@ -236,6 +285,11 @@ export function ChatInterface() {
                             </div>
                         </div>
                     </div>
+                    {isFileChat && fileChatBlocked && (
+                        <div className="mt-2 text-center text-xs text-amber-700">
+                            {fileChatBlockReason}
+                        </div>
+                    )}
                     <div className="mt-2 text-center text-xs text-text-muted">
                         MultiAgentX can make mistakes. Check important info.
                     </div>

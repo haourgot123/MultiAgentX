@@ -26,7 +26,7 @@ def _check_admin_permission(request: Request, db_session: Session):
     """
     from backend.api.user.service import user_service
     
-    roles = user_service.get_user_roles_by_id(db_session, request.state.user_id)
+    roles = user_service.get_user_roles_by_id(request, db_session, request.state.user_id)
     role_ids = [role.id for role in roles]
     if RoleType.ADMIN.value not in role_ids:
         raise HTTPException(

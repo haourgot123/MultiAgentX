@@ -16,10 +16,12 @@ interface User {
 }
 
 interface AuthState {
+  hasHydrated: boolean
   isAuthenticated: boolean
   user: User | null
   accessToken: string | null
   refreshToken: string | null
+  setHasHydrated: (hydrated: boolean) => void
 
   login: (
     username: string,
@@ -58,10 +60,12 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       /* ===== STATE ===== */
+      hasHydrated: false,
       isAuthenticated: false,
       user: null,
       accessToken: null,
       refreshToken: null,
+      setHasHydrated: (hydrated) => set({ hasHydrated: hydrated }),
 
       /* ===== UPDATE PROFILE ===== */
       updateProfile: async (fullName: string, dateOfBirth: string, gender: string, country: string, phoneNumber: string) => {
@@ -209,7 +213,7 @@ export const useAuthStore = create<AuthState>()(
             }
 
             return { success: true, message: "Password changed successfully" }
-        } catch (err) {
+        } catch {
             return {
             success: false,
             message: "Network error. Please try again.",
@@ -228,7 +232,7 @@ export const useAuthStore = create<AuthState>()(
 
         try {
           const res = await fetch(
-            "http://localhost:8000/api/authentication/refresh",
+            "http://localhost:8000/api/authentication/access",
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -242,7 +246,17 @@ export const useAuthStore = create<AuthState>()(
           }
 
           const data = await res.json()
-          set({ accessToken: data.accessToken })
+          const nextAccessToken = data.access_token
+          if (!nextAccessToken) {
+            await get().logout()
+            return false
+          }
+
+          set({
+            isAuthenticated: true,
+            accessToken: nextAccessToken,
+            refreshToken: data.refresh_token ?? refreshToken,
+          })
 
           return true
         } catch (err) {
@@ -277,7 +291,7 @@ export const useAuthStore = create<AuthState>()(
             accessToken: null,
             refreshToken: null,
           })
-        } catch (err) {
+        } catch {
           console.warn("Logout API failed, force logout")
           set({
             isAuthenticated: false,
@@ -296,6 +310,9 @@ export const useAuthStore = create<AuthState>()(
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
       }),
+      onRehydrateStorage: () => (state) => {
+        state?.setHasHydrated(true)
+      },
     }
   )
 )

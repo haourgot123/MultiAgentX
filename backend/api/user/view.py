@@ -14,7 +14,7 @@ from backend.api.user.model import (
 )
 from backend.api.user.permissions import check_admin_role, check_user_permission
 from backend.api.user.service import user_service
-from backend.utils.constants import Message
+from backend.utils.constants import Message, RoleType
 from backend.utils.dependency import get_current_user, get_db
 
 router = APIRouter(
@@ -30,7 +30,7 @@ router = APIRouter(
 async def logout(request: Request, user_id: int, db_session: Session = Depends(get_db)):
     """Logout a user."""
     check_user_permission(request, user_id)
-    user_service.logout_user(db_session, user_id)
+    user_service.logout_user(request, db_session, user_id)
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content={"message": Message.MESSAGE_USER_LOGGED_OUT_SUCCESSFULLY},
@@ -43,7 +43,7 @@ async def get_self_user(
 ):
     """Get self user information."""
     check_user_permission(request, user_id)
-    user = user_service.get_user_by_id(db_session, user_id)
+    user = user_service.get_user_by_id(request, db_session, user_id)
     return user
 
 
@@ -70,7 +70,7 @@ async def update_self_user(
 
     # Change password
     response = user_service.change_password_user(
-        db_session, user_id, user_update_request
+        request, db_session, user_id, user_update_request
     )
     return JSONResponse(
         status_code=status.HTTP_200_OK,
@@ -94,7 +94,7 @@ async def update_self_user_information(
 
     # Update self user information
     response = user_service.update_self_user_information(
-        db_session, user_id, user_update_request
+        request, db_session, user_id, user_update_request
     )
     return JSONResponse(
         status_code=status.HTTP_200_OK,
@@ -111,7 +111,7 @@ async def get_user(
     check_admin_role(request, db_session)
     
     # Get user by ID
-    user = user_service.get_user_by_id(db_session, user_id)
+    user = user_service.get_user_by_id(request, db_session, user_id)
     return user
 
 
@@ -138,7 +138,7 @@ async def update_user(
     check_admin_role(request, db_session)
 
     # Check roles of user to be updated (prevent updating other admins)
-    user_roles = user_service.get_user_roles_by_id(db_session, user_id)
+    user_roles = user_service.get_user_roles_by_id(request, db_session, user_id)
     user_role_ids = [role.id for role in user_roles]
     if RoleType.ADMIN.value in user_role_ids:
         raise HTTPException(
@@ -148,7 +148,7 @@ async def update_user(
 
     # Update user by ID
     logger.info(f"Updating user by ID: {user_id} with request: {user_update_request}")
-    user = user_service.update_user_by_id(db_session, user_id, user_update_request)
+    user = user_service.update_user_by_id(request, db_session, user_id, user_update_request)
     return user
 
 
@@ -164,7 +164,7 @@ async def delete_user(
     check_admin_role(request, db_session)
 
     # Check roles of user to be deleted (prevent deleting other admins)
-    user_roles = user_service.get_user_roles_by_id(db_session, user_id)
+    user_roles = user_service.get_user_roles_by_id(request, db_session, user_id)
     user_role_ids = [role.id for role in user_roles]
     if RoleType.ADMIN.value in user_role_ids:
         raise HTTPException(
@@ -174,7 +174,7 @@ async def delete_user(
         
     # Delete user by ID
     logger.info(f"Deleting user by ID: {user_id}")
-    user_service.delete_user_by_id(db_session, user_id)
+    user_service.delete_user_by_id(request, db_session, user_id)
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content={"message": Message.MESSAGE_USER_DELETED_SUCCESSFULLY},

@@ -56,13 +56,16 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
         loadConversation,
         currentChatId,
         deleteChat,
-        renameChat
+        renameChat,
+        requestFileChatNew
     } = useChatStore()
     const [showUserProfile, setShowUserProfile] = useState(false)
     const [expandedSection, setExpandedSection] = useState<'chat' | 'file' | null>(null)
     const [isCreatingChat, setIsCreatingChat] = useState(false)
     const [renamingChatId, setRenamingChatId] = useState<number | null>(null)
     const [newChatTitle, setNewChatTitle] = useState("")
+    const [deletingChatId, setDeletingChatId] = useState<number | null>(null)
+    const [deletingChatTitle, setDeletingChatTitle] = useState("")
 
     // Get chat sessions based on current route
     const isFileChat = location.pathname === '/chat-file'
@@ -98,15 +101,20 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
     }
 
     const handleNewChat = async () => {
+        if (isFileChat) {
+            setCurrentChat(null)
+            requestFileChatNew()
+            setExpandedSection('file')
+            toast.info('Upload file to start a new file conversation')
+            return
+        }
+
         setIsCreatingChat(true)
         try {
-            const chatType = isFileChat ? 'file' : 'normal'
-            await createNewChat(chatType)
+            await createNewChat('normal')
 
             if (isActive('/')) {
                 setExpandedSection('chat')
-            } else if (isActive('/chat-file')) {
-                setExpandedSection('file')
             }
             toast.success('Created new conversation')
         } catch (error) {
@@ -129,17 +137,30 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
         }
     }
 
-    const handleDeleteChat = async (chatId: number) => {
-        if (confirm('Are you sure you want to delete this conversation?')) {
-            try {
-                await deleteChat(chatId)
-                toast.success('Conversation deleted')
-            } catch (error) {
-                toast.error(
-                    error instanceof Error ? error.message : 'Failed to delete conversation'
-                )
-            }
+    const handleDeleteChat = (chatId: number, chatTitle: string) => {
+        setDeletingChatId(chatId)
+        setDeletingChatTitle(chatTitle)
+    }
+
+    const handleDeleteConfirm = async () => {
+        if (!deletingChatId) return
+
+        try {
+            await deleteChat(deletingChatId)
+            toast.success('Conversation deleted')
+        } catch (error) {
+            toast.error(
+                error instanceof Error ? error.message : 'Failed to delete conversation'
+            )
+        } finally {
+            setDeletingChatId(null)
+            setDeletingChatTitle("")
         }
+    }
+
+    const handleDeleteCancel = () => {
+        setDeletingChatId(null)
+        setDeletingChatTitle("")
     }
 
     const handleRenameStart = (chatId: number, currentTitle: string) => {
@@ -213,20 +234,25 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
     const ChatHistoryItem = ({ session }: { session: any }) => (
         <div
             className={cn(
-                "group relative rounded-md hover:bg-surface transition-all",
+                "group grid grid-cols-[1fr_auto] items-center gap-1 rounded-md hover:bg-surface transition-all",
                 currentChatId === session.id && "bg-primary/10"
             )}
         >
             <Button
                 variant="ghost"
                 className={cn(
-                    "w-full justify-start h-auto py-2 px-2 pr-8 hover:bg-transparent",
+                    "min-w-0 justify-start h-auto py-2 px-2 hover:bg-transparent overflow-hidden",
                     currentChatId === session.id && "text-primary"
                 )}
                 onClick={() => void handleSelectChat(session.id)}
             >
-                <div className="flex flex-col items-start w-full">
-                    <span className="text-xs font-medium truncate w-full text-left">{session.title}</span>
+                <div className="flex flex-col items-start min-w-0 w-full">
+                    <span
+                        className="text-xs font-medium truncate w-full text-left"
+                        title={session.title}
+                    >
+                        {session.title}
+                    </span>
                     <span className="text-[10px] text-text-muted">{formatDate(session.updatedAt)}</span>
                 </div>
             </Button>
@@ -236,7 +262,10 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                     <Button
                         variant="ghost"
                         size="icon"
-                        className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 opacity-0 group-hover:opacity-100 text-text-muted hover:text-primary hover:bg-primary/10 transition-all rounded-md"
+                        className={cn(
+                            "h-7 w-7 mr-1 shrink-0 text-text-muted hover:text-primary hover:bg-primary/10 transition-all rounded-md",
+                            "opacity-100"
+                        )}
                         onClick={(e) => e.stopPropagation()}
                     >
                         <MoreVertical className="h-3 w-3" />
@@ -253,7 +282,7 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                         className="text-red-600 focus:text-red-600 cursor-pointer rounded-md"
-                        onClick={() => void handleDeleteChat(session.id)}
+                        onClick={() => handleDeleteChat(session.id, session.title)}
                     >
                         <Trash2 className="mr-2 h-4 w-4" />
                         Delete
@@ -459,6 +488,30 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                             onClick={() => void handleRenameConfirm()}
                         >
                             Rename
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Delete Confirmation Dialog */}
+            <Dialog open={deletingChatId !== null} onOpenChange={(open) => !open && handleDeleteCancel()}>
+                <DialogContent className="bg-white rounded-xl">
+                    <DialogHeader>
+                        <DialogTitle>Delete Conversation</DialogTitle>
+                        <DialogDescription>
+                            Are you sure you want to delete
+                            {deletingChatTitle ? ` "${deletingChatTitle}"` : " this conversation"}?
+                            This action cannot be undone.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={handleDeleteCancel} className="rounded-lg">Cancel</Button>
+                        <Button
+                            variant="destructive"
+                            className="rounded-lg"
+                            onClick={() => void handleDeleteConfirm()}
+                        >
+                            Delete
                         </Button>
                     </DialogFooter>
                 </DialogContent>

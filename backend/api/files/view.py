@@ -1,10 +1,9 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from fastapi.requests import Request
 from fastapi.responses import FileResponse as FastAPIFileResponse
 from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse
 
-from backend.api.data_ingestion.service import data_ingestion_service
 from backend.api.files.model import FileRenameRequest, FileResponse
 from backend.api.files.service import file_service
 from backend.utils.dependency import get_current_user, get_db
@@ -17,7 +16,7 @@ router = APIRouter(
 @router.get("", response_model=list[FileResponse], status_code=status.HTTP_200_OK)
 def get_files(request: Request, db_session: Session = Depends(get_db)):
     user_id = request.state.user_id
-    return file_service.list_files(db_session, user_id)
+    return file_service.list_files(request, db_session, user_id)
 
 
 @router.post(
@@ -25,18 +24,11 @@ def get_files(request: Request, db_session: Session = Depends(get_db)):
 )
 async def upload_files(
     request: Request,
-    background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     db_session: Session = Depends(get_db),
 ):
     user_id = request.state.user_id
-    stored_files = await file_service.upload_files(db_session, user_id, files)
-    for stored_file in stored_files:
-        background_tasks.add_task(
-            data_ingestion_service.ingest_file_by_id,
-            user_id,
-            stored_file.id,
-        )
+    stored_files = await file_service.upload_files(request, db_session, user_id, files)
     return stored_files
 
 
@@ -50,7 +42,9 @@ def rename_file(
     db_session: Session = Depends(get_db),
 ):
     user_id = request.state.user_id
-    return file_service.rename_file(db_session, user_id, file_id, rename_request.name)
+    return file_service.rename_file(
+        request, db_session, user_id, file_id, rename_request.name
+    )
 
 
 @router.get("/{file_id}/download", status_code=status.HTTP_200_OK)
@@ -58,7 +52,7 @@ def download_file(
     request: Request, file_id: int, db_session: Session = Depends(get_db)
 ):
     user_id = request.state.user_id
-    file_info = file_service.get_file(db_session, user_id, file_id)
+    file_info = file_service.get_file(request, db_session, user_id, file_id)
     return FastAPIFileResponse(
         path=file_info.storage_path,
         filename=file_info.name,
@@ -71,5 +65,5 @@ def delete_file(
     request: Request, file_id: int, db_session: Session = Depends(get_db)
 ):
     user_id = request.state.user_id
-    response = file_service.delete_file(db_session, user_id, file_id)
+    response = file_service.delete_file(request, db_session, user_id, file_id)
     return JSONResponse(status_code=status.HTTP_200_OK, content=response)

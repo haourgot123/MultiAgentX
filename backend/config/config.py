@@ -7,6 +7,36 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _env(*keys: str, default=None):
+    for key in keys:
+        value = os.getenv(key)
+        if value not in (None, ""):
+            return value
+    return default
+
+
+def _env_bool(*keys: str, default: bool = False) -> bool:
+    value = _env(*keys, default=None)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(*keys: str, default: int) -> int:
+    value = _env(*keys, default=None)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_csv(*keys: str, default: str = "") -> List[str]:
+    raw = _env(*keys, default=default) or ""
+    return [item.strip() for item in str(raw).split(",") if item.strip()]
+
+
 @dataclass
 class QdrantConfig:
     """Database configuration settings."""
@@ -115,11 +145,36 @@ class CeleryConfig:
 class AzureChatOpenAIConfig:
     """Azure Chat OpenAI configuration settings."""
 
-    api_key: str = os.getenv("AZURE_OPENAI_KEY")
-    api_endpoint: str = os.getenv("AZURE_OPENAI_ENDPOINT")
-    api_version: str = "2025-01-01-preview"
-    deployment_name_gpt_4_1: str = "gpt-4.1"
-    deployment_name_gpt_4_1_mini: str = "gpt-4.1-mini"
+    api_key: str = _env(
+        "AZURE-OPENAI-GPT51-API-KEY",
+        "AZURE_OPENAI_GPT51_API_KEY",
+        "AZURE_OPENAI_KEY",
+    )
+    api_endpoint: str = _env(
+        "AZURE-OPENAI-GPT51-ENDPOINT",
+        "AZURE_OPENAI_GPT51_ENDPOINT",
+        "AZURE_OPENAI_ENDPOINT",
+    )
+    api_version: str = _env(
+        "AZURE-OPENAI-GPT51-API-VERSION",
+        "AZURE_OPENAI_GPT51_API_VERSION",
+        "AZURE_OPENAI_API_VERSION",
+        default="2025-04-01-preview",
+    )
+    deployment_name_gpt_5_1: str = _env(
+        "AZURE-OPENAI-GPT51-DEPLOYMENT-NAME",
+        "AZURE_OPENAI_GPT51_DEPLOYMENT_NAME",
+        "AZURE_OPENAI_DEPLOYMENT_NAME",
+        default="gpt-5.1",
+    )
+    deployment_name_gpt_4_1: str = _env(
+        "AZURE_OPENAI_GPT41_DEPLOYMENT_NAME",
+        default="gpt-4.1",
+    )
+    deployment_name_gpt_4_1_mini: str = _env(
+        "AZURE_OPENAI_GPT41_MINI_DEPLOYMENT_NAME",
+        default="gpt-4.1-mini",
+    )
     temperature: float = 0.0
 
 
@@ -136,12 +191,30 @@ class EmbeddingModelConfig:
 class OpenAIEmbeddingConfig:
     """OpenAI embedding configuration."""
 
-    api_key: str = os.getenv("OPENAI_API_KEY")
-    api_base: str = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-    embedding_model: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
-    embedding_dimension: int = int(os.getenv("OPENAI_EMBEDDING_DIMENSION", "3072"))
-    batch_size: int = int(os.getenv("OPENAI_EMBEDDING_BATCH_SIZE", "32"))
-    timeout_seconds: int = int(os.getenv("OPENAI_EMBEDDING_TIMEOUT_SECONDS", "120"))
+    api_key: str = _env(
+        "AZURE-OPENAI-EMBEDDING-KEY",
+        "AZURE_OPENAI_EMBEDDING_KEY",
+        "OPENAI_API_KEY",
+    )
+    endpoint: str = _env(
+        "AZURE-OPENAI-EMBEDDING-ENDPOINT",
+        "AZURE_OPENAI_EMBEDDING_ENDPOINT",
+    )
+    api_version: str = _env(
+        "AZURE-OPENAI-EMBEDDING-API-VERSION",
+        "AZURE_OPENAI_EMBEDDING_API_VERSION",
+        default="2023-05-15",
+    )
+    api_base: str = _env("OPENAI_API_BASE", default="https://api.openai.com/v1")
+    embedding_model: str = _env(
+        "AZURE-OPENAI-EMBEDDING-DEPLOYMENT-NAME",
+        "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME",
+        "OPENAI_EMBEDDING_MODEL",
+        default="text-embedding-3-large",
+    )
+    embedding_dimension: int = int(_env("OPENAI_EMBEDDING_DIMENSION", default="3072"))
+    batch_size: int = int(_env("OPENAI_EMBEDDING_BATCH_SIZE", default="32"))
+    timeout_seconds: int = int(_env("OPENAI_EMBEDDING_TIMEOUT_SECONDS", default="120"))
 
 
 @dataclass
@@ -163,10 +236,16 @@ class MilvusConfig:
 class LoggingConfig:
     """Logging configuration settings."""
 
-    log_level: str = "INFO"
-    log_file: str = "logs/langgraph.log"
-    log_format: str = (
-        "{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}"
+    log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
+    log_file: str = os.getenv("LOG_FILE", "logs/backend.log")
+    log_format: str = os.getenv(
+        "LOG_FORMAT",
+        (
+            "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | service={extra[service]} "
+            "request_id={extra[request_id]} "
+            "user_id={extra[user_id]} | {name}:{function}:{line} | "
+            "{message}"
+        ),
     )
 
 
@@ -191,13 +270,6 @@ class TavilySearchConfig:
 
 
 @dataclass
-class WebConfig:
-    be_base_url: str = "https://be.ugate.vn"
-    authen_token: str = os.getenv("BE_CALLBACK_TOKEN")
-    fe_url: str = "https://ugate.vn"
-
-
-@dataclass
 class APIConfig:
     """API configuration settings."""
 
@@ -208,6 +280,42 @@ class APIConfig:
     title: str = "Ugate Agent"
     version: str = "1.0"
     docs_enabled: bool = True
+
+
+@dataclass
+class MiddlewareConfig:
+    """HTTP middleware configuration settings."""
+
+    request_logging_enabled: bool = _env_bool(
+        "MIDDLEWARE_REQUEST_LOGGING_ENABLED",
+        default=True,
+    )
+    rate_limit_enabled: bool = _env_bool(
+        "MIDDLEWARE_RATE_LIMIT_ENABLED",
+        default=True,
+    )
+    rate_limit_requests: int = _env_int(
+        "MIDDLEWARE_RATE_LIMIT_REQUESTS",
+        default=120,
+    )
+    rate_limit_window_seconds: int = _env_int(
+        "MIDDLEWARE_RATE_LIMIT_WINDOW_SECONDS",
+        default=60,
+    )
+    rate_limit_excluded_paths: List[str] = field(
+        default_factory=lambda: _env_csv(
+            "MIDDLEWARE_RATE_LIMIT_EXCLUDED_PATHS",
+            default="/docs,/redoc,/openapi.json,/socket.io,/healthz",
+        )
+    )
+    rate_limit_trust_x_forwarded_for: bool = _env_bool(
+        "MIDDLEWARE_RATE_LIMIT_TRUST_X_FORWARDED_FOR",
+        default=True,
+    )
+    security_headers_enabled: bool = _env_bool(
+        "MIDDLEWARE_SECURITY_HEADERS_ENABLED",
+        default=True,
+    )
 
 
 @dataclass
@@ -269,5 +377,3 @@ class ProcessingConfig:
         """Initialize default values that can't be set as class variables."""
         if self.default_ocr_languages is None:
             self.default_ocr_languages = ["auto"]
-
-

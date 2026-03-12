@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import { apiFetch } from '@/lib/api'
 
 export type Message = {
@@ -49,6 +50,7 @@ type ChatStore = {
     currentChatId: number | null
     chatSessions: ChatSession[]
     messagesByChat: Record<number, Message[]>
+    fileChatNewRequestId: number
     input: string
     isLoading: boolean
     mode: 'normal' | 'file' | 'deepResearch' | 'webSearch'
@@ -67,6 +69,7 @@ type ChatStore = {
     setInput: (input: string) => void
     setIsLoading: (loading: boolean) => void
     setMode: (mode: ChatStore['mode']) => void
+    requestFileChatNew: () => void
     getCurrentMessages: () => Message[]
     getChatSessions: (chatType?: 'normal' | 'file') => ChatSession[]
     deleteChat: (id: number) => Promise<void>
@@ -93,13 +96,16 @@ const mapConversationResponse = (
     messageCount: conversation.message_count,
 })
 
-export const useChatStore = create<ChatStore>((set, get) => ({
-    currentChatId: null,
-    chatSessions: [],
-    messagesByChat: {},
-    input: '',
-    isLoading: false,
-    mode: 'normal',
+export const useChatStore = create<ChatStore>()(
+    persist(
+        (set, get) => ({
+            currentChatId: null,
+            chatSessions: [],
+            messagesByChat: {},
+            fileChatNewRequestId: 0,
+            input: '',
+            isLoading: false,
+            mode: 'normal',
 
     setCurrentChat: (id) => set({ currentChatId: id }),
 
@@ -169,13 +175,23 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }
         }
 
+        const payload: {
+            chat_type: 'normal' | 'file'
+            file_ids: number[]
+            title?: string
+        } = {
+            chat_type: chatType,
+            file_ids: options.fileIds || [],
+        }
+
+        // File chat must not send custom title; backend will generate default title.
+        if (chatType !== 'file' && options.title?.trim()) {
+            payload.title = options.title.trim()
+        }
+
         const response = await apiFetch<ConversationApiResponse>('/conversations', {
             method: 'POST',
-            body: JSON.stringify({
-                chat_type: chatType,
-                title: options.title,
-                file_ids: options.fileIds || [],
-            }),
+            body: JSON.stringify(payload),
         })
         const newChat = mapConversationResponse(response)
 
@@ -222,12 +238,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const mappedMessage = mapMessageResponse(response.message)
 
         set((state) => ({
-            chatSessions: [
-                mappedConversation,
-                ...state.chatSessions.filter(
-                    (session) => session.id !== mappedConversation.id
-                ),
-            ],
+            // Keep existing title stable for file-chat; title changes should happen via rename endpoint only.
+            ...(function () {
+                const existingSession = state.chatSessions.find(
+                    (session) => session.id === mappedConversation.id
+                )
+                const stableConversation =
+                    mappedConversation.chatType === 'file' && existingSession
+                        ? { ...mappedConversation, title: existingSession.title }
+                        : mappedConversation
+
+                return {
+                    chatSessions: [
+                        stableConversation,
+                        ...state.chatSessions.filter(
+                            (session) => session.id !== stableConversation.id
+                        ),
+                    ],
+                }
+            })(),
             messagesByChat: {
                 ...state.messagesByChat,
                 [currentChatId]: [
@@ -241,6 +270,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     setInput: (input) => set({ input }),
     setIsLoading: (isLoading) => set({ isLoading }),
     setMode: (mode) => set({ mode }),
+    requestFileChatNew: () =>
+        set((state) => ({ fileChatNewRequestId: state.fileChatNewRequestId + 1 })),
 
     getCurrentMessages: () => {
         const state = get()
@@ -290,20 +321,44 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         }))
     },
 
-    updateConversationFiles: async (id, fileIds) => {
-        const updatedSession = await apiFetch<ConversationApiResponse>(
-            `/conversations/${id}/files`,
-            {
-                method: 'PUT',
-                body: JSON.stringify({ file_ids: fileIds }),
-            }
-        )
-        const mappedSession = mapConversationResponse(updatedSession)
+            updateConversationFiles: async (id, fileIds) => {
+                const updatedSession = await apiFetch<ConversationApiResponse>(
+                    `/conversations/${id}/files`,
+                    {
+                        method: 'PUT',
+                        body: JSON.stringify({ file_ids: fileIds }),
+                    }
+                )
+                const mappedSession = mapConversationResponse(updatedSession)
 
-        set((state) => ({
-            chatSessions: state.chatSessions.map((session) =>
-                session.id === id ? mappedSession : session
-            ).sort((a, b) => b.updatedAt - a.updatedAt),
-        }))
-    },
-}))
+                set((state) => ({
+                    ...(function () {
+                        const existingSession = state.chatSessions.find(
+                            (session) => session.id === id
+                        )
+                        const stableSession =
+                            mappedSession.chatType === 'file' && existingSession
+                                ? { ...mappedSession, title: existingSession.title }
+                                : mappedSession
+
+                        return {
+                            chatSessions: state.chatSessions
+                                .map((session) =>
+                                    session.id === id ? stableSession : session
+                                )
+                                .sort((a, b) => b.updatedAt - a.updatedAt),
+                        }
+                    })(),
+                }))
+            },
+        }),
+        {
+            name: 'chat-storage',
+            storage: createJSONStorage(() => sessionStorage),
+            partialize: (state) => ({
+                currentChatId: state.currentChatId,
+                mode: state.mode,
+            }),
+        }
+    )
+)

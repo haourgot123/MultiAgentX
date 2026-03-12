@@ -24,6 +24,8 @@ PyJWT>=2.9.0,<3.0.0
 phonenumbers>=8.13.44,<9.0.0
 click>=8.1.7,<9.0.0
 six>=1.16.0,<2.0.0
+python-socketio>=5.11.4,<6.0.0
+redis>=5.0.8,<6.0.0
 
 # RAG ingestion stack
 openai>=1.54.0,<2.0.0
@@ -35,3 +37,8 @@ pytest>=7.4.0,<9.0.0
 pytest-cov>=4.1.0,<7.0.0
 pytest-asyncio>=0.21.0,<1.0.0
 httpx>=0.24.1,<1.0.0
+
+# Data ingestion dependencies (Docling + OpenAI embedding + Milvus)
+docling>=2.26.0
+openai>=1.54.0
+pymilvus>=2.5.0

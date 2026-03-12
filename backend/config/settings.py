@@ -10,6 +10,7 @@ from .config import (
     EmbeddingModelConfig,
     JWTConfig,
     LoggingConfig,
+    MiddlewareConfig,
     MilvusConfig,
     OpenAIEmbeddingConfig,
     PostgresConfig,
@@ -18,7 +19,6 @@ from .config import (
     RedisConfig,
     S3Config,
     TavilySearchConfig,
-    WebConfig,
     VLMConfig,
     ProcessingConfig,
 )
@@ -39,8 +39,8 @@ class Settings(BaseSettings):
     azure_chat_openai: AzureChatOpenAIConfig = AzureChatOpenAIConfig()
     tavily_search: TavilySearchConfig = TavilySearchConfig()
     logging: LoggingConfig = LoggingConfig()
+    middleware: MiddlewareConfig = MiddlewareConfig()
     api: APIConfig = APIConfig()
-    web: WebConfig = WebConfig()
     chunk: ChunkConfig = ChunkConfig()
     process_file: ProcessFileConfig = ProcessFileConfig()
     conversation_chat: ConversationChatConfig = ConversationChatConfig()

@@ -34,6 +34,15 @@ class IngestionStatus(str, Enum):
     FAILED = "failed"
 
 
+class IngestionPipelineStatus(str, Enum):
+    PENDING = "Pending"
+    PARSING = "Parsing"
+    CHUNKING = "Chunking"
+    INDEXING = "Indexing"
+    COMPLETED = "Completed"
+    FAILED = "Failed"
+
+
 class ExtractedTextBlock(BaseModel):
     text: str = Field(..., description="Extracted text")
     page_no: Optional[int] = Field(None, description="Page number")
@@ -77,3 +86,53 @@ class IngestionRunResponse(BaseModel):
     status: str = Field(..., description="Ingestion status after run")
     chunks: int = Field(0, description="Ingested chunk count")
     error: Optional[str] = Field(None, description="Error details")
+
+
+class IngestionSocketEvent(BaseModel):
+    file_id: int = Field(..., description="File id")
+    status: str = Field(..., description="Ingestion status")
+    stage: str = Field(..., description="Current ingestion stage")
+    progress: int = Field(..., ge=0, le=100, description="Progress percent")
+    chunks: int = Field(0, description="Chunk count currently known")
+    error: Optional[str] = Field(None, description="Error details")
+    updated_at: datetime = Field(..., description="Status update timestamp")
+    ingested_at: Optional[datetime] = Field(None, description="Ingested timestamp")
+
+
+class MilvusCollectionInfoResponse(BaseModel):
+    name: str = Field(..., description="Milvus collection name")
+    num_entities: int = Field(0, description="Number of entities in collection")
+    has_index: bool = Field(False, description="Whether vector index exists")
+
+
+class IngestionChunkRecordResponse(BaseModel):
+    id: str = Field(..., description="Chunk primary id")
+    user_id: int = Field(..., description="Owner user id")
+    file_id: int = Field(..., description="Source file id")
+    chunk_index: int = Field(..., description="Chunk order index")
+    page_no: Optional[int] = Field(None, description="Source page number")
+    file_name: Optional[str] = Field(None, description="Source file name")
+    mime_type: Optional[str] = Field(None, description="Source MIME type")
+    text: str = Field(..., description="Chunk text")
+    bbox: Optional[dict[str, Any] | list[dict[str, Any]]] = Field(
+        None,
+        description="Bounding box payload",
+    )
+    metadata: Optional[dict[str, Any]] = Field(
+        None,
+        description="Additional chunk metadata for filtering",
+    )
+    created_unix: Optional[int] = Field(None, description="Created unix timestamp")
+
+
+class IngestionChunkListResponse(BaseModel):
+    collection_name: str = Field(..., description="Milvus collection name")
+    user_id: int = Field(..., description="Filtered user id")
+    file_id: Optional[int] = Field(None, description="Filtered file id")
+    limit: int = Field(..., description="Page size")
+    offset: int = Field(..., description="Offset")
+    has_more: bool = Field(False, description="Whether there are more records")
+    items: list[IngestionChunkRecordResponse] = Field(
+        default_factory=list,
+        description="Chunk records",
+    )

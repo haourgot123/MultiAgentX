@@ -20,7 +20,7 @@ def check_admin_role(request: Request, db_session: Session) -> None:
     """
     from backend.api.user.service import user_service
     
-    roles = user_service.get_user_roles_by_id(db_session, request.state.user_id)
+    roles = user_service.get_user_roles_by_id(request, db_session, request.state.user_id)
     role_ids = [role.id for role in roles]
     admin_role_id = RoleType.ADMIN.value
     

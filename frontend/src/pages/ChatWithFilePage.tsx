@@ -32,8 +32,10 @@ export default function ChatWithFilePage() {
         createNewChat,
         currentChatId,
         chatSessions,
+        messagesByChat,
         loadConversation,
         updateConversationFiles,
+        fileChatNewRequestId,
     } = useChatStore()
 
     const [selectedFile, setSelectedFile] = useState<FileItem | null>(null)
@@ -43,7 +45,6 @@ export default function ChatWithFilePage() {
     const [hasStartedChat, setHasStartedChat] = useState(false)
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
     const [showAllFiles, setShowAllFiles] = useState(false)
-    const [previousChatId, setPreviousChatId] = useState<number | null>(null)
     const [isStartingChat, setIsStartingChat] = useState(false)
     const [handledUrlFile, setHandledUrlFile] = useState(false)
     const [previewType, setPreviewType] = useState<'none' | 'pdf' | 'image' | 'text' | 'unsupported'>('none')
@@ -53,17 +54,6 @@ export default function ChatWithFilePage() {
     const [isPreviewLoading, setIsPreviewLoading] = useState(false)
     const [previewReloadVersion, setPreviewReloadVersion] = useState(0)
     const fileInputRef = useRef<HTMLInputElement>(null)
-
-    const buildFileConversationTitle = (conversationFiles: FileItem[]) => {
-        if (conversationFiles.length === 0) {
-            return 'New Chat'
-        }
-        const firstFileName = conversationFiles[0].name
-        if (conversationFiles.length === 1) {
-            return firstFileName
-        }
-        return `${firstFileName} +${conversationFiles.length - 1}`
-    }
 
     useEffect(() => {
         const loadFiles = async () => {
@@ -77,37 +67,107 @@ export default function ChatWithFilePage() {
     }, [fetchFiles])
 
     useEffect(() => {
-        if (currentChatId && currentChatId !== previousChatId) {
-            const currentSession = chatSessions.find((session) => session.id === currentChatId)
-
-            if (currentSession?.chatType === 'file') {
-                setHasStartedChat(true)
-                const attachedFiles = files.filter((file) =>
-                    currentSession.fileIds.includes(file.id)
-                )
-                setAvailableFiles(attachedFiles)
-                setSelectedFile(attachedFiles[0] || null)
-                void loadConversation(currentChatId)
-            } else if (!fileIdFromUrl && !isStartingChat) {
+        if (!currentChatId) {
+            if (!fileIdFromUrl && !isStartingChat) {
                 setHasStartedChat(false)
                 setAvailableFiles([])
                 setSelectedFile(null)
             }
+            return
+        }
 
-            setPreviousChatId(currentChatId)
+        const currentSession = chatSessions.find((session) => session.id === currentChatId)
+
+        if (currentSession?.chatType === 'file') {
+            const attachedFiles = files.filter((file) =>
+                currentSession.fileIds.includes(file.id)
+            )
+            const canStartChat = attachedFiles.length > 0
+            setHasStartedChat(canStartChat)
+            setAvailableFiles(attachedFiles)
+            setSelectedFile((previousSelectedFile) =>
+                attachedFiles.find((file) => file.id === previousSelectedFile?.id) ||
+                attachedFiles[0] ||
+                null
+            )
+            const hasConversationLoaded = messagesByChat[currentChatId] !== undefined
+            if (canStartChat && !hasConversationLoaded) {
+                void loadConversation(currentChatId)
+            }
             if (isStartingChat) {
                 setIsStartingChat(false)
             }
+            return
+        }
+
+        if (!fileIdFromUrl && !isStartingChat) {
+            setHasStartedChat(false)
+            setAvailableFiles([])
+            setSelectedFile(null)
         }
     }, [
         currentChatId,
-        previousChatId,
         chatSessions,
+        messagesByChat,
         files,
         fileIdFromUrl,
         isStartingChat,
         loadConversation,
     ])
+
+    useEffect(() => {
+        if (!currentChatId && !fileIdFromUrl && !isStartingChat) {
+            setHasStartedChat(false)
+            setAvailableFiles([])
+            setSelectedFile(null)
+        }
+    }, [currentChatId, fileIdFromUrl, isStartingChat])
+
+    useEffect(() => {
+        if (files.length === 0) {
+            return
+        }
+        const fileMap = new Map(files.map((file) => [file.id, file]))
+
+        setAvailableFiles((previousFiles) => {
+            if (previousFiles.length === 0) {
+                return previousFiles
+            }
+
+            const syncedFiles = previousFiles
+                .map((file) => fileMap.get(file.id))
+                .filter((file): file is FileItem => Boolean(file))
+
+            const hasChanged =
+                syncedFiles.length !== previousFiles.length ||
+                syncedFiles.some((file, index) => file !== previousFiles[index])
+
+            return hasChanged ? syncedFiles : previousFiles
+        })
+
+        setSelectedFile((previousSelectedFile) => {
+            if (!previousSelectedFile) {
+                return previousSelectedFile
+            }
+            return fileMap.get(previousSelectedFile.id) || null
+        })
+    }, [files])
+
+    useEffect(() => {
+        if (fileChatNewRequestId === 0) {
+            return
+        }
+        setHasStartedChat(false)
+        setAvailableFiles([])
+        setSelectedFile(null)
+        setShowAllFiles(false)
+        setUploadedFiles([])
+        setShowUploadDialog(false)
+        setShowLibraryDialog(false)
+        if (fileInputRef.current) {
+            fileInputRef.current.value = ''
+        }
+    }, [fileChatNewRequestId])
 
     useEffect(() => {
         if (!fileIdFromUrl || handledUrlFile) {
@@ -130,7 +190,6 @@ export default function ChatWithFilePage() {
                 setHasStartedChat(true)
                 setIsStartingChat(true)
                 await createNewChat('file', {
-                    title: buildFileConversationTitle([file]),
                     fileIds: [file.id],
                 })
                 setHandledUrlFile(true)
@@ -290,7 +349,6 @@ export default function ChatWithFilePage() {
                 setIsStartingChat(true)
                 setHasStartedChat(true)
                 await createNewChat('file', {
-                    title: buildFileConversationTitle(availableFiles),
                     fileIds: availableFiles.map((file) => file.id),
                 })
                 toast.success('File conversation created')
@@ -436,6 +494,38 @@ export default function ChatWithFilePage() {
         return 'bg-gray-50 text-gray-600'
     }
 
+    const getIngestionLabel = (file: FileItem) => {
+        if (file.ingestionStatus === 'completed') {
+            return 'Completed'
+        }
+        if (file.ingestionStatus === 'failed') {
+            return 'Failed'
+        }
+        if (
+            file.ingestionStatus === 'embedding' ||
+            file.ingestionStatus === 'parsing' ||
+            file.ingestionStatus === 'chunking' ||
+            file.ingestionStatus === 'indexing' ||
+            file.ingestionStatus === 'processing'
+        ) {
+            return 'Processing'
+        }
+        return 'Pending'
+    }
+
+    const getIngestionTextClass = (file: FileItem) => {
+        if (file.ingestionStatus === 'completed') return 'text-emerald-600'
+        if (file.ingestionStatus === 'failed') return 'text-red-600'
+        if (
+            file.ingestionStatus === 'embedding' ||
+            file.ingestionStatus === 'parsing' ||
+            file.ingestionStatus === 'chunking' ||
+            file.ingestionStatus === 'indexing' ||
+            file.ingestionStatus === 'processing'
+        ) return 'text-amber-600'
+        return 'text-slate-500'
+    }
+
     const formatSize = (bytes: number) => {
         if (bytes === 0) return '0 Bytes'
         const k = 1024
@@ -510,6 +600,9 @@ export default function ChatWithFilePage() {
                                             <div className="flex-1 min-w-0">
                                                 <div className="font-medium text-sm truncate">{file.name}</div>
                                                 <div className="text-xs text-text-muted">{formatSize(file.size)}</div>
+                                                <div className={`text-[11px] ${getIngestionTextClass(file)}`}>
+                                                    {getIngestionLabel(file)}
+                                                </div>
                                             </div>
                                             <Button
                                                 variant="ghost"
@@ -558,6 +651,9 @@ export default function ChatWithFilePage() {
                                                     <div className="flex-1 min-w-0 text-left">
                                                         <div className="font-medium text-xs truncate">{file.name}</div>
                                                         <div className="text-[10px] text-text-muted">{formatSize(file.size)}</div>
+                                                        <div className={`text-[10px] ${getIngestionTextClass(file)}`}>
+                                                            {getIngestionLabel(file)}
+                                                        </div>
                                                     </div>
                                                     {isSelected && (
                                                         <div className="text-xs text-primary font-medium">✓</div>
@@ -627,6 +723,9 @@ export default function ChatWithFilePage() {
                                                         <div className="font-medium text-sm truncate">{file.name}</div>
                                                         <div className="text-xs text-text-muted">
                                                             {formatSize(file.size)} • Uploaded {new Date(file.uploadedAt).toLocaleDateString()}
+                                                        </div>
+                                                        <div className={`text-xs ${getIngestionTextClass(file)}`}>
+                                                            {getIngestionLabel(file)}
                                                         </div>
                                                     </div>
                                                     {isSelected && (
@@ -775,6 +874,9 @@ export default function ChatWithFilePage() {
                                             </div>
                                             <div className="text-left">
                                                 <div className="font-medium text-sm truncate max-w-[150px]">{selectedFile.name}</div>
+                                                <div className={`text-[10px] ${getIngestionTextClass(selectedFile)}`}>
+                                                    {getIngestionLabel(selectedFile)}
+                                                </div>
                                             </div>
                                         </>
                                     ) : (
@@ -796,6 +898,9 @@ export default function ChatWithFilePage() {
                                         <div className="flex-1 min-w-0">
                                             <div className="font-medium text-sm truncate">{file.name}</div>
                                             <div className="text-xs text-text-muted">{formatSize(file.size)}</div>
+                                            <div className={`text-[11px] ${getIngestionTextClass(file)}`}>
+                                                {getIngestionLabel(file)}
+                                            </div>
                                         </div>
                                     </DropdownMenuItem>
                                 ))}
@@ -940,6 +1045,9 @@ export default function ChatWithFilePage() {
                                                     <div className="font-medium text-sm truncate">{file.name}</div>
                                                     <div className="text-xs text-text-muted">
                                                         {formatSize(file.size)} • Uploaded {new Date(file.uploadedAt).toLocaleDateString()}
+                                                    </div>
+                                                    <div className={`text-xs ${getIngestionTextClass(file)}`}>
+                                                        {getIngestionLabel(file)}
                                                     </div>
                                                 </div>
                                                 {isSelected && (

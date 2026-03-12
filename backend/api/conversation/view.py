@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 from fastapi.requests import Request
 from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse
@@ -18,6 +18,9 @@ from backend.api.conversation.model import (
     ConversationResponse,
 )
 from backend.api.conversation.service import conversation_service
+from backend.api.data_ingestion.model import IngestionStatus
+from backend.api.data_ingestion.service import data_ingestion_service
+from backend.api.files.model import StoredFile
 from backend.utils.dependency import get_current_user, get_db
 
 router = APIRouter(
@@ -49,6 +52,28 @@ def _to_message_response(message: ConversationMessage) -> ConversationMessageRes
     )
 
 
+def _enqueue_ingestion_for_conversation_files(
+    background_tasks: BackgroundTasks,
+    request: Request,
+    *,
+    user_id: int,
+    files: list[StoredFile],
+) -> None:
+    candidate_ids = {
+        file.id
+        for file in files
+        if (file.ingestion_status or "").lower()
+        in {IngestionStatus.PENDING.value, IngestionStatus.FAILED.value}
+    }
+    for file_id in candidate_ids:
+        data_ingestion_service.emit_queued_status(
+            user_id=user_id,
+            file_id=file_id,
+            request=request,
+        )
+        background_tasks.add_task(data_ingestion_service.ingest_file_by_id, user_id, file_id)
+
+
 @router.get("", response_model=list[ConversationResponse], status_code=status.HTTP_200_OK)
 def list_conversations(
     request: Request,
@@ -56,20 +81,30 @@ def list_conversations(
     db_session: Session = Depends(get_db),
 ):
     user_id = request.state.user_id
-    conversations = conversation_service.list_conversations(db_session, user_id, chat_type)
+    conversations = conversation_service.list_conversations(
+        request, db_session, user_id, chat_type
+    )
     return [_to_conversation_response(conversation) for conversation in conversations]
 
 
 @router.post("", response_model=ConversationResponse, status_code=status.HTTP_201_CREATED)
 def create_conversation(
     request: Request,
+    background_tasks: BackgroundTasks,
     create_request: ConversationCreateRequest,
     db_session: Session = Depends(get_db),
 ):
     user_id = request.state.user_id
     conversation = conversation_service.create_conversation(
-        db_session, user_id, create_request
+        request, db_session, user_id, create_request
     )
+    if conversation.chat_type == "file" and conversation.files:
+        _enqueue_ingestion_for_conversation_files(
+            background_tasks,
+            request,
+            user_id=user_id,
+            files=conversation.files,
+        )
     return _to_conversation_response(conversation)
 
 
@@ -84,7 +119,9 @@ def get_conversation(
     db_session: Session = Depends(get_db),
 ):
     user_id = request.state.user_id
-    conversation = conversation_service.get_conversation(db_session, user_id, conversation_id)
+    conversation = conversation_service.get_conversation(
+        request, db_session, user_id, conversation_id
+    )
     return ConversationDetailResponse(
         **_to_conversation_response(conversation).model_dump(),
         messages=[_to_message_response(message) for message in conversation.messages],
@@ -104,7 +141,7 @@ def rename_conversation(
 ):
     user_id = request.state.user_id
     conversation = conversation_service.rename_conversation(
-        db_session, user_id, conversation_id, rename_request
+        request, db_session, user_id, conversation_id, rename_request
     )
     return _to_conversation_response(conversation)
 
@@ -116,7 +153,9 @@ def delete_conversation(
     db_session: Session = Depends(get_db),
 ):
     user_id = request.state.user_id
-    response = conversation_service.delete_conversation(db_session, user_id, conversation_id)
+    response = conversation_service.delete_conversation(
+        request, db_session, user_id, conversation_id
+    )
     return JSONResponse(status_code=status.HTTP_200_OK, content=response)
 
 
@@ -128,13 +167,21 @@ def delete_conversation(
 def update_conversation_files(
     request: Request,
     conversation_id: int,
+    background_tasks: BackgroundTasks,
     files_request: ConversationFilesUpdateRequest,
     db_session: Session = Depends(get_db),
 ):
     user_id = request.state.user_id
     conversation = conversation_service.update_conversation_files(
-        db_session, user_id, conversation_id, files_request
+        request, db_session, user_id, conversation_id, files_request
     )
+    if conversation.chat_type == "file" and conversation.files:
+        _enqueue_ingestion_for_conversation_files(
+            background_tasks,
+            request,
+            user_id=user_id,
+            files=conversation.files,
+        )
     return _to_conversation_response(conversation)
 
 
@@ -151,7 +198,7 @@ def add_message(
 ):
     user_id = request.state.user_id
     message, conversation = conversation_service.add_message(
-        db_session, user_id, conversation_id, message_request
+        request, db_session, user_id, conversation_id, message_request
     )
     return ConversationMessageCreateResponse(
         message=_to_message_response(message),

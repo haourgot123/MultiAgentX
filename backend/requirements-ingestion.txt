@@ -1,4 +1,0 @@
-# Data ingestion dependencies (Docling + OpenAI embedding + Milvus)
-docling>=2.26.0
-openai>=1.54.0
-pymilvus>=2.5.0

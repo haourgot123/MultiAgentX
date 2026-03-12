@@ -1,7 +1,7 @@
 from loguru import logger
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-
+from fastapi import Request
 from backend.api.token.service import generate_tokens
 from backend.api.user.model import (
     ChangePasswordRequest,
@@ -19,9 +19,19 @@ from backend.databases.db import get_by_id, get_utc_now, insert_row
 from backend.exceptions.model import InvalidRequestException, ObjectNotFoundException
 from backend.utils.constants import Message
 
+service_logger = logger.bind(service="user-service")
+
 
 class UserService:
     """Service class for managing user-related operations."""
+    @staticmethod
+    def _get_request_logger(request: Request | None = None, user_id: int | None = None):
+        return service_logger.bind(
+            request_id=getattr(getattr(request, "state", None), "request_id", "-"),
+            user_id=user_id
+            if user_id is not None
+            else getattr(getattr(request, "state", None), "user_id", "-"),
+        )
 
     def get_user_by_email(self, db_session: Session, email: str):
         """Retrieve a user by their email address.
@@ -53,7 +63,7 @@ class UserService:
             raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         return user
 
-    def get_user_by_id(self, db_session: Session, user_id: int):
+    def get_user_by_id(self, request: Request | None, db_session: Session, user_id: int):
         """Retrieve a user by their ID.
 
         Args:
@@ -65,10 +75,13 @@ class UserService:
         """
         user = get_by_id(db_session, User, user_id)
         if not user:
+            self._get_request_logger(request, user_id).warning("User not found by id")
             raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         return user
 
-    def get_user_roles_by_id(self, db_session: Session, user_id: int):
+    def get_user_roles_by_id(
+        self, request: Request | None, db_session: Session, user_id: int
+    ):
         """Retrieve the roles assigned to a user.
 
         Args:
@@ -78,10 +91,12 @@ class UserService:
         Returns:
             list: List of roles assigned to the user.
         """
-        user = self.get_user_by_id(db_session, user_id)
+        user = self.get_user_by_id(request, db_session, user_id)
         return user.roles
 
-    def create_new_user(self, db_session: Session, user_in: UserCreateRequest):
+    def create_new_user(
+        self, request: Request | None, db_session: Session, user_in: UserCreateRequest
+    ):
         """Create a new user in the database.
 
         Args:
@@ -96,6 +111,10 @@ class UserService:
             db_session.query(User).filter(User.email == user_in.email.lower()).first()
         )
         if existing_user_email:
+            self._get_request_logger(request).warning(
+                "Create user rejected: duplicated email={}",
+                user_in.email,
+            )
             raise InvalidRequestException(
                 message=Message.MESSAGE_USER_EMAIL_ALREADY_EXISTS
             )
@@ -106,6 +125,10 @@ class UserService:
             .first()
         )
         if existing_user_username:
+            self._get_request_logger(request).warning(
+                "Create user rejected: duplicated username={}",
+                user_in.username,
+            )
             raise InvalidRequestException(
                 message=Message.MESSAGE_USERNAME_ALREADY_EXISTS
             )
@@ -127,6 +150,7 @@ class UserService:
         new_user.updated_at = get_utc_now()
         try:
             new_user = insert_row(db_session, new_user)
+            self._get_request_logger(request, new_user.id).info("Created user successfully")
             return new_user
         except PermissionError as e:
             db_session.rollback()
@@ -136,7 +160,11 @@ class UserService:
             raise e
 
     def update_user_by_id(
-        self, db_session: Session, user_id: int, user_update: UserUpdateRequest
+        self,
+        request: Request | None,
+        db_session: Session,
+        user_id: int,
+        user_update: UserUpdateRequest,
     ):
         """Update an existing user's information.
 
@@ -149,9 +177,10 @@ class UserService:
             User: Updated user object.
         """
 
-        logger.info(f"Updating user by id: {user_update}")
+        request_logger = self._get_request_logger(request, user_id)
+        request_logger.info("Updating user profile")
 
-        user = self.get_user_by_id(db_session, user_id)
+        user = self.get_user_by_id(request, db_session, user_id)
 
         # Update password if provided
         if user_update.password:
@@ -187,6 +216,7 @@ class UserService:
         try:
             db_session.commit()
             db_session.refresh(user)
+            request_logger.info("Updated user successfully")
             return user
         except PermissionError as e:
             db_session.rollback()
@@ -195,7 +225,9 @@ class UserService:
             db_session.rollback()
             raise e
 
-    def delete_user_by_id(self, db_session: Session, user_id: int):
+    def delete_user_by_id(
+        self, request: Request | None, db_session: Session, user_id: int
+    ):
         """Soft delete a user by setting their deleted flag to True.
 
         Args:
@@ -205,11 +237,13 @@ class UserService:
         Returns:
             User: Updated user object with deleted flag set to True.
         """
-        user = self.get_user_by_id(db_session, user_id)
+        request_logger = self._get_request_logger(request, user_id)
+        user = self.get_user_by_id(request, db_session, user_id)
         user.deleted = True
         try:
             db_session.commit()
             db_session.refresh(user)
+            request_logger.info("Soft deleted user")
             return user
         except PermissionError as e:
             db_session.rollback()
@@ -218,7 +252,9 @@ class UserService:
             db_session.rollback()
             raise e
 
-    def login_user(self, db_session: Session, login_request: LoginRequest):
+    def login_user(
+        self, request: Request | None, db_session: Session, login_request: LoginRequest
+    ):
         """Authenticate a user and generate access tokens.
 
         Args:
@@ -237,6 +273,10 @@ class UserService:
             except ObjectNotFoundException:
                 raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         if not user.check_password(login_request.password):
+            self._get_request_logger(request).warning(
+                "Login failed due to invalid password for {}",
+                login_request.username,
+            )
             raise InvalidRequestException(message=Message.MESSAGE_INVALID_PASSWORD)
         if not user.first_login:
             user.first_login = get_utc_now()
@@ -245,6 +285,7 @@ class UserService:
         try:
             db_session.commit()
             db_session.refresh(user)
+            self._get_request_logger(request, user.id).info("User login successful")
             return LoginResponse(
                 user=user, refresh_token=refresh_token, access_token=access_token
             )
@@ -255,7 +296,7 @@ class UserService:
             db_session.rollback()
             raise e
 
-    def logout_user(self, db_session: Session, user_id: int):
+    def logout_user(self, request: Request | None, db_session: Session, user_id: int):
         """Log out a user by updating their last login timestamp.
 
         Args:
@@ -265,13 +306,15 @@ class UserService:
         Returns:
             User: Updated user object.
         """
-        user = self.get_user_by_id(db_session, user_id)
+        request_logger = self._get_request_logger(request, user_id)
+        user = self.get_user_by_id(request, db_session, user_id)
         user.last_login = get_utc_now()
         try:
             # Commit transaction
             db_session.commit()
             # Refresh user
             db_session.refresh(user)
+            request_logger.info("User logout successful")
             return user
         except PermissionError as e:
             # Rollback transaction
@@ -283,6 +326,7 @@ class UserService:
 
     def change_password_user(
         self,
+        request: Request | None,
         db_session: Session,
         user_id: int,
         change_password_request: ChangePasswordRequest,
@@ -297,13 +341,14 @@ class UserService:
         Returns:
             ChangePasswordResponse: Response object containing success message.
         """
-
-        user = self.get_user_by_id(db_session, user_id)
+        request_logger = self._get_request_logger(request, user_id)
+        user = self.get_user_by_id(request, db_session, user_id)
         if user.check_password(change_password_request.old_password):
             user.change_password(change_password_request.new_password)
             try:
                 db_session.commit()
                 db_session.refresh(user)
+                request_logger.info("Password changed successfully")
                 return ChangePasswordResponse(
                     message=Message.MESSAGE_PASSWORD_CHANGED_SUCCESSFULLY
                 )
@@ -314,10 +359,12 @@ class UserService:
                 db_session.rollback()
                 raise e
         else:
+            request_logger.warning("Password change rejected: old password invalid")
             raise InvalidRequestException(message=Message.MESSAGE_INVALID_PASSWORD)
 
     def update_self_user_information(
         self,
+        request: Request | None,
         db_session: Session,
         user_id: int,
         user_update_request: SelfUserInformationUpdateRequest,
@@ -332,7 +379,8 @@ class UserService:
         Returns:
             SelfUserInformationUpdateResponse: Response object containing success message.
         """
-        user = self.get_user_by_id(db_session, user_id)
+        request_logger = self._get_request_logger(request, user_id)
+        user = self.get_user_by_id(request, db_session, user_id)
 
         if user.deleted:
             raise InvalidRequestException(message=Message.MESSAGE_USER_DELETED)
@@ -351,6 +399,7 @@ class UserService:
         try:
             db_session.commit()
             db_session.refresh(user)
+            request_logger.info("Updated self user information")
             return SelfUserInformationUpdateResponse(
                 message=Message.MESSAGE_USER_INFORMATION_UPDATED_SUCCESSFULLY
             )

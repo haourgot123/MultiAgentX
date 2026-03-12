@@ -35,6 +35,8 @@ export default function FilesPage() {
     const [showUploadDialog, setShowUploadDialog] = useState(false)
     const [newFileName, setNewFileName] = useState("")
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
+    const [deletingFile, setDeletingFile] = useState<{ id: number; name: string } | null>(null)
+    const [isDeletingFile, setIsDeletingFile] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
 
     useEffect(() => {
@@ -54,6 +56,44 @@ export default function FilesPage() {
         const sizes = ['Bytes', 'KB', 'MB', 'GB']
         const i = Math.floor(Math.log(bytes) / Math.log(k))
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+    }
+
+    const getIngestionLabel = (file: any) => {
+        if (file.ingestionStatus === 'completed') {
+            return 'Completed'
+        }
+        if (file.ingestionStatus === 'failed') {
+            return 'Failed'
+        }
+        if (
+            file.ingestionStatus === 'embedding' ||
+            file.ingestionStatus === 'parsing' ||
+            file.ingestionStatus === 'chunking' ||
+            file.ingestionStatus === 'indexing' ||
+            file.ingestionStatus === 'processing'
+        ) {
+            return 'Processing'
+        }
+        return 'Pending'
+    }
+
+    const getIngestionClassName = (file: any) => {
+        if (file.ingestionStatus === 'completed') {
+            return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+        }
+        if (file.ingestionStatus === 'failed') {
+            return 'bg-red-50 text-red-700 border-red-200'
+        }
+        if (
+            file.ingestionStatus === 'embedding' ||
+            file.ingestionStatus === 'parsing' ||
+            file.ingestionStatus === 'chunking' ||
+            file.ingestionStatus === 'indexing' ||
+            file.ingestionStatus === 'processing'
+        ) {
+            return 'bg-amber-50 text-amber-700 border-amber-200'
+        }
+        return 'bg-slate-50 text-slate-700 border-slate-200'
     }
 
     const sortedFiles = [...files]
@@ -131,15 +171,31 @@ export default function FilesPage() {
         }
     }
 
-    const handleDelete = async (fileId: number) => {
-        if (confirm('Are you sure you want to delete this file?')) {
-            try {
-                await removeFile(fileId)
-                toast.success('File deleted')
-            } catch (error) {
-                toast.error(error instanceof Error ? error.message : 'Failed to delete file')
-            }
+    const handleDelete = (fileId: number, fileName: string) => {
+        setDeletingFile({ id: fileId, name: fileName })
+    }
+
+    const handleDeleteConfirm = async () => {
+        if (!deletingFile) {
+            return
         }
+        setIsDeletingFile(true)
+        try {
+            await removeFile(deletingFile.id)
+            toast.success('File deleted')
+            setDeletingFile(null)
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Failed to delete file')
+        } finally {
+            setIsDeletingFile(false)
+        }
+    }
+
+    const handleDeleteCancel = () => {
+        if (isDeletingFile) {
+            return
+        }
+        setDeletingFile(null)
     }
 
     const handleOpenInChat = (file: any) => {
@@ -292,7 +348,7 @@ export default function FilesPage() {
                                             Download
                                         </DropdownMenuItem>
                                         <DropdownMenuSeparator />
-                                        <DropdownMenuItem onClick={() => void handleDelete(file.id)} className="text-red-600 cursor-pointer rounded-md">
+                                        <DropdownMenuItem onClick={() => handleDelete(file.id, file.name)} className="text-red-600 cursor-pointer rounded-md">
                                             <Trash2 className="mr-2 h-4 w-4" />
                                             Delete
                                         </DropdownMenuItem>
@@ -300,6 +356,11 @@ export default function FilesPage() {
                                 </DropdownMenu>
                             </CardHeader>
                             <CardContent>
+                                <div className="mb-2">
+                                    <span className={`inline-flex items-center rounded-md border px-2 py-1 text-[10px] font-semibold uppercase ${getIngestionClassName(file)}`}>
+                                        {getIngestionLabel(file)}
+                                    </span>
+                                </div>
                                 <div className="text-xs text-text-muted mt-2 flex items-center justify-between">
                                     <span>Uploaded {new Date(file.uploadedAt).toLocaleDateString()}</span>
                                     <span className="uppercase text-[10px] font-semibold bg-surface px-1.5 py-0.5 rounded-md border border-border">
@@ -461,6 +522,41 @@ export default function FilesPage() {
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setShowRenameDialog(false)} className="rounded-lg">Cancel</Button>
                         <Button className="bg-primary hover:bg-primary-hover text-white rounded-lg" onClick={() => void confirmRename()}>Rename</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Delete File Confirmation Dialog */}
+            <Dialog
+                open={deletingFile !== null}
+                onOpenChange={(open) => !open && handleDeleteCancel()}
+            >
+                <DialogContent className="bg-white rounded-xl">
+                    <DialogHeader>
+                        <DialogTitle>Delete File</DialogTitle>
+                        <DialogDescription>
+                            Are you sure you want to delete
+                            {deletingFile ? ` "${deletingFile.name}"` : " this file"} from the system?
+                            This action cannot be undone.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button
+                            variant="outline"
+                            className="rounded-lg"
+                            onClick={handleDeleteCancel}
+                            disabled={isDeletingFile}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            variant="destructive"
+                            className="rounded-lg"
+                            onClick={() => void handleDeleteConfirm()}
+                            disabled={isDeletingFile}
+                        >
+                            {isDeletingFile ? 'Deleting...' : 'Delete'}
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
