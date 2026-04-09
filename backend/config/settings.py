@@ -4,23 +4,27 @@ from .config import (
     APIConfig,
     AzureChatOpenAIConfig,
     AzureDocumentIntelligenceConfig,
+    AzureImageGenerationConfig,
     CeleryConfig,
     ChunkConfig,
     ConversationChatConfig,
     EmbeddingModelConfig,
     JWTConfig,
     LoggingConfig,
+    Mem0Config,
     MiddlewareConfig,
     MilvusConfig,
     OpenAIEmbeddingConfig,
     PostgresConfig,
     ProcessFileConfig,
     QdrantConfig,
+    RAGConfig,
     RedisConfig,
     S3Config,
     TavilySearchConfig,
     VLMConfig,
     ProcessingConfig,
+    GGSearch,
 )
 
 
@@ -37,7 +41,10 @@ class Settings(BaseSettings):
     redis: RedisConfig = RedisConfig()
     celery: CeleryConfig = CeleryConfig()
     azure_chat_openai: AzureChatOpenAIConfig = AzureChatOpenAIConfig()
+    azure_image_generation: AzureImageGenerationConfig = AzureImageGenerationConfig()
     tavily_search: TavilySearchConfig = TavilySearchConfig()
+    gg_search: GGSearch = GGSearch()
+    rag: RAGConfig = RAGConfig()
     logging: LoggingConfig = LoggingConfig()
     middleware: MiddlewareConfig = MiddlewareConfig()
     api: APIConfig = APIConfig()
@@ -47,6 +54,7 @@ class Settings(BaseSettings):
     jwt: JWTConfig = JWTConfig()
     vlm: VLMConfig = VLMConfig()
     processing: ProcessingConfig = ProcessingConfig()
+    mem0: Mem0Config = Mem0Config()
 
     def __str__(self) -> str:
         return f"""

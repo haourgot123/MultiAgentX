@@ -15,6 +15,12 @@ This repository includes:
 - Conversation management
   - Normal chat
   - File chat (attach files to conversations)
+- **Long-term Memory with Mem0** 🧠
+  - Persistent memory across sessions
+  - Automatic fact extraction from conversations
+  - Semantic search for relevant memories
+  - User-scoped memory isolation
+  - Integration with Milvus vector database
 - File management
   - Upload, list, rename, download, delete
   - Office files (`.docx`, `.xlsx`, `.pptx`, etc.) are converted to PDF via LibreOffice (`soffice`)
@@ -25,6 +31,12 @@ This repository includes:
   - Embedding with OpenAI `text-embedding-3-large`
   - Store vectors in Milvus
 - Ingestion status tracking per file (`pending`, `processing`, `completed`, `failed`)
+- Multi-agent support
+  - General agent with intelligent routing
+  - Web search agent
+  - RAG agent
+  - Deep research agent
+  - Image generation agent
 
 ## System Architecture
 
@@ -33,14 +45,18 @@ Frontend (React/Vite/Zustand)
         |
         v
 Backend API (FastAPI)
-  |        |                 \
-  |        |                  \
-  v        v                   v
-PostgreSQL Local file storage  Milvus
-(transactional) (tmp/uploads)  (vector DB)
+  |        |                 \           \
+  |        |                  \           \
+  v        v                   v           v
+PostgreSQL Local file storage  Milvus   Azure OpenAI
+(transactional) (tmp/uploads)  (vector DB)  (LLM)
 
-Background ingestion flow (after upload):
-File -> Docling parse (text+bbox) -> Chunking -> OpenAI Embedding -> Milvus upsert
+Agent Memory Flow:
+User Message -> Memory Node -> Mem0 Search (Milvus) -> Route -> Answer -> Mem0 Store (async)
+
+Memory Collections in Milvus:
+- document_chunks: RAG retrieval
+- user_memories: Long-term agent memory
 ```
 
 ## Repository Structure
@@ -146,6 +162,14 @@ MILVUS_METRIC_TYPE=COSINE
 MILVUS_INDEX_TYPE=IVF_FLAT
 MILVUS_INDEX_NLIST=1024
 MILVUS_CONSISTENCY_LEVEL=Strong
+
+# Mem0 Long-term Memory
+MEM0_ENABLE_LONG_TERM_MEMORY=true
+MEM0_VECTOR_STORE_PROVIDER=milvus
+MEM0_MILVUS_COLLECTION=user_memories
+MEM0_MEMORY_TOP_K=10
+MEM0_MEMORY_SCORE_THRESHOLD=0.5
+MEM0_HISTORY_DB_PATH=~/.mem0/history.db
 ```
 
 ### 3) Start infrastructure services
@@ -234,6 +258,13 @@ Base prefix: `/api`
 - `/user/*` endpoints (token required)
 - `/revision/*` endpoints (admin only)
 
+### Memory Management (Mem0 Integration)
+- `GET /memories` - Get all user memories
+- `POST /memories/search` - Search memories
+- `DELETE /memories/clear` - Clear all user memories
+
+See [docs/mem0-integration.md](docs/mem0-integration.md) for detailed documentation.
+
 ## Upload and Ingestion Flow
 
 1. User uploads one or more files via `POST /api/files/upload`
@@ -266,6 +297,49 @@ Stored fields include:
 - `metadata_json` (JSON metadata for filter/rerank contexts, including `user_id`, `file_id`, `file_name`, `mime_type`, `chunk_index`, `page_no`)
 - `created_unix`
 - `vector` (float vector, dim=3072 by default)
+
+## Mem0 Long-term Memory
+
+MultiAgentX integrates with **Mem0** for persistent, cross-session long-term memory, enabling agents to remember user preferences, facts, and context across conversations.
+
+### Memory Collections in Milvus
+
+| Collection | Purpose | Dimensions | Usage |
+|------------|---------|------------|-------|
+| `document_chunks` | RAG document retrieval | 3072 | File-based Q&A |
+| `user_memories` | Long-term agent memory | 3072 | Cross-session context |
+
+### How It Works
+
+1. **Memory Storage**: When a conversation ends, Mem0 uses Azure OpenAI GPT-5.1 to extract facts
+2. **Vector Embedding**: Facts are embedded using `text-embedding-3-large` (3072 dims)
+3. **Storage**: Embeddings stored in Milvus `user_memories` collection with user scope
+4. **Retrieval**: On new messages, semantic search retrieves relevant past memories
+5. **Context**: Memories injected into agent context for personalized responses
+
+### Example Flow
+
+```
+Conversation 1:
+User: "My name is Alex and I like pizza"
+Assistant: "Nice to meet you, Alex!"
+[Mem0 stores: "User's name is Alex", "User likes pizza"]
+
+Conversation 2 (new session):
+User: "What do you know about me?"
+[Mem0 retrieves relevant facts]
+Assistant: "Your name is Alex and you enjoy pizza!"
+```
+
+### Features
+
+- ✅ **Persistent Memory**: Survives across sessions
+- ✅ **Semantic Search**: Find relevant memories
+- ✅ **User Isolation**: Per-user memory scope
+- ✅ **Auto Extraction**: LLM extracts facts automatically
+- ✅ **Graceful Degradation**: Works without memory if needed
+
+See [docs/mem0-integration.md](docs/mem0-integration.md) for full documentation.
 
 ## Development Commands
 

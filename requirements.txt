@@ -42,3 +42,15 @@ httpx>=0.24.1,<1.0.0
 docling>=2.26.0
 openai>=1.54.0
 pymilvus>=2.5.0
+
+# LangGraph Agent
+langgraph>=0.0.30
+langchain-core>=0.1.40
+langchain-openai>=0.1.1
+langchain-community>=0.0.30
+tavily-python>=0.3.3
+langchain-google-community>=0.0.30
+langchain>=1.2.12
+
+# Mem0 Long-term Memory
+mem0ai>=0.1.0

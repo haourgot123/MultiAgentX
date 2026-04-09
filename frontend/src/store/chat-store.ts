@@ -1,12 +1,18 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import { apiFetch } from '@/lib/api'
+import { apiFetch, apiFetchStream, StreamEvent } from '@/lib/api'
 
 export type Message = {
     id: number
     role: 'user' | 'assistant'
     content: string
     timestamp: number
+}
+
+export type PlanRequest = {
+    sessionId: string
+    plan: string[]
+    message: string
 }
 
 export type ChatSession = {
@@ -53,7 +59,9 @@ type ChatStore = {
     fileChatNewRequestId: number
     input: string
     isLoading: boolean
+    statusSteps: string[]
     mode: 'normal' | 'file' | 'deepResearch' | 'webSearch'
+    pendingPlan: PlanRequest | null
 
     setCurrentChat: (id: number | null) => void
     fetchChatSessions: (chatType?: 'normal' | 'file') => Promise<ChatSession[]>
@@ -75,6 +83,27 @@ type ChatStore = {
     deleteChat: (id: number) => Promise<void>
     renameChat: (id: number, newTitle: string) => Promise<void>
     updateConversationFiles: (id: number, fileIds: number[]) => Promise<void>
+    setPendingPlan: (plan: PlanRequest | null) => void
+    
+    streamChat: (
+        message: Omit<Message, 'id' | 'timestamp'>,
+        chatType?: 'normal' | 'file',
+        options?: {
+            is_web_search_enabled?: boolean
+            is_deep_research_enabled?: boolean
+            is_generate_image_enabled?: boolean
+        }
+    ) => Promise<void>
+    
+    createDeepResearchPlan: (
+        conversationId: number,
+        userQuestion: string
+    ) => Promise<PlanRequest>
+    
+    approveDeepResearchPlan: (
+        sessionId: string,
+        approvedPlan: string[]
+    ) => Promise<void>
 }
 
 const mapMessageResponse = (message: MessageApiResponse): Message => ({
@@ -105,9 +134,13 @@ export const useChatStore = create<ChatStore>()(
             fileChatNewRequestId: 0,
             input: '',
             isLoading: false,
+            statusSteps: [],
             mode: 'normal',
+            pendingPlan: null,
 
     setCurrentChat: (id) => set({ currentChatId: id }),
+    
+    setPendingPlan: (plan) => set({ pendingPlan: plan }),
 
     fetchChatSessions: async (chatType) => {
         const queryString = chatType ? `?chat_type=${chatType}` : ''
@@ -267,6 +300,137 @@ export const useChatStore = create<ChatStore>()(
         }))
     },
 
+    streamChat: async (message, chatType = 'normal', options = {}) => {
+        const state = get()
+        let currentChatId = state.currentChatId
+
+        if (!currentChatId) {
+            currentChatId = await get().createNewChat(chatType)
+        }
+        if (!currentChatId) {
+            return
+        }
+
+        // Optimistically add user message
+        const optimisticUserMessage: Message = {
+            id: Date.now(),
+            role: message.role,
+            content: message.content,
+            timestamp: Date.now(),
+        }
+
+        set((state) => ({
+            messagesByChat: {
+                ...state.messagesByChat,
+                [currentChatId as number]: [
+                    ...(state.messagesByChat[currentChatId as number] || []),
+                    optimisticUserMessage,
+                ],
+            },
+            isLoading: true,
+        }))
+
+        // Used to track if the assistant message is created
+        let assistantMessageCreated = false;
+
+        try {
+            await apiFetchStream(
+                '/conversations/chat',
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        conversation_id: currentChatId,
+                        chat_type: chatType,
+                        user_question: message.content,
+                        ...options,
+                    }),
+                },
+                (evt: StreamEvent) => {
+                    if (evt.event === 'status') {
+                        const message = typeof evt.data === 'string' ? evt.data : evt.data?.message
+                        if (!message) return
+
+                        set((state) => ({
+                            statusSteps: [...state.statusSteps, message],
+                            isLoading: true,
+                        }))
+                        return
+                    }
+
+                    if (evt.event === 'token') {
+                        const delta: string =
+                            typeof evt.data === 'string' ? evt.data : evt.data?.delta || ''
+                        if (!delta) return
+
+                        set((state) => {
+                            const messages = state.messagesByChat[currentChatId as number] || []
+                            const newState: any = {}
+
+                            if (!assistantMessageCreated) {
+                                assistantMessageCreated = true
+                                newState.statusSteps = []
+                                newState.isLoading = false
+                                newState.messagesByChat = {
+                                    ...state.messagesByChat,
+                                    [currentChatId as number]: [
+                                        ...messages,
+                                        {
+                                            id: Date.now() + 1,
+                                            role: 'assistant',
+                                            content: delta,
+                                            timestamp: Date.now() + 1,
+                                        },
+                                    ],
+                                }
+                            } else {
+                                const lastMessage = messages[messages.length - 1]
+                                if (lastMessage && lastMessage.role === 'assistant') {
+                                    const updatedMessages = [...messages]
+                                    updatedMessages[updatedMessages.length - 1] = {
+                                        ...lastMessage,
+                                        content: lastMessage.content + delta,
+                                    }
+                                    newState.messagesByChat = {
+                                        ...state.messagesByChat,
+                                        [currentChatId as number]: updatedMessages,
+                                    }
+                                }
+                            }
+
+                            return newState
+                        })
+                        return
+                    }
+
+                    if (evt.event === 'done') {
+                        set((state) => ({
+                            ...state,
+                            statusSteps: [],
+                            isLoading: false,
+                        }))
+                        return
+                    }
+
+                    if (evt.event === 'error') {
+                        const message =
+                            typeof evt.data === 'string' ? evt.data : evt.data?.message || 'Error'
+                        console.error('Streaming error event:', message)
+                        set({ isLoading: false })
+                    }
+                }
+            )
+            
+            // Reload conversation in the background to sync real IDs from the backend
+            get().loadConversation(currentChatId)
+            
+        } catch (error) {
+            console.error('Streaming error:', error)
+            // Error handling could be expanded here to update the assistant message to an error state
+        } finally {
+            set({ isLoading: false })
+        }
+    },
+
     setInput: (input) => set({ input }),
     setIsLoading: (isLoading) => set({ isLoading }),
     setMode: (mode) => set({ mode }),
@@ -319,6 +483,162 @@ export const useChatStore = create<ChatStore>()(
                 session.id === id ? mappedSession : session
             ).sort((a, b) => b.updatedAt - a.updatedAt),
         }))
+    },
+
+    createDeepResearchPlan: async (conversationId, userQuestion) => {
+        // Don't add status here - backend will emit status events
+        useChatStore.setState({ isLoading: true })
+
+        try {
+            const response = await apiFetch<{
+                session_id: string
+                plan: string[]
+                message: string
+            }>('/conversations/deep-research/plan', {
+                method: 'POST',
+                body: JSON.stringify({
+                    conversation_id: conversationId,
+                    user_question: userQuestion,
+                }),
+            })
+
+            return {
+                sessionId: response.session_id,
+                plan: response.plan,
+                message: response.message,
+            }
+        } catch (error) {
+            useChatStore.setState({ isLoading: false })
+            throw error
+        }
+    },
+
+    approveDeepResearchPlan: async (sessionId, approvedPlan) => {
+        const state = get()
+        const currentChatId = state.currentChatId
+
+        if (!currentChatId) {
+            throw new Error('No active conversation')
+        }
+
+        // Add user message about approved plan
+        const userMessage: Message = {
+            id: Date.now(),
+            role: 'user',
+            content: `Research plan approved:\n${approvedPlan.map((q, i) => `${i + 1}. ${q}`).join('\n')}`,
+            timestamp: Date.now(),
+        }
+
+        // Clear status and set loading - backend will emit status events
+        useChatStore.setState((state) => ({
+            messagesByChat: {
+                ...state.messagesByChat,
+                [currentChatId]: [
+                    ...(state.messagesByChat[currentChatId] || []),
+                    userMessage,
+                ],
+            },
+            isLoading: true,
+            statusSteps: [],
+            pendingPlan: null,
+        }))
+
+        let assistantMessageCreated = false
+
+        try {
+            await apiFetchStream(
+                '/conversations/deep-research/approve',
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        approved_plan: approvedPlan,
+                    }),
+                },
+                (evt: StreamEvent) => {
+                    if (evt.event === 'status') {
+                        const message = typeof evt.data === 'string' ? evt.data : evt.data?.message
+                        if (!message) return
+
+                        set((state) => ({
+                            statusSteps: [...state.statusSteps, message],
+                            isLoading: true,
+                        }))
+                        return
+                    }
+
+                    if (evt.event === 'token') {
+                        const delta: string =
+                            typeof evt.data === 'string' ? evt.data : evt.data?.delta || ''
+                        if (!delta) return
+
+                        set((state) => {
+                            const messages = state.messagesByChat[currentChatId] || []
+                            const newState: any = {}
+
+                            if (!assistantMessageCreated) {
+                                assistantMessageCreated = true
+                                newState.statusSteps = []
+                                newState.isLoading = false
+                                newState.messagesByChat = {
+                                    ...state.messagesByChat,
+                                    [currentChatId]: [
+                                        ...messages,
+                                        {
+                                            id: Date.now() + 1,
+                                            role: 'assistant',
+                                            content: delta,
+                                            timestamp: Date.now() + 1,
+                                        },
+                                    ],
+                                }
+                            } else {
+                                const lastMessage = messages[messages.length - 1]
+                                if (lastMessage && lastMessage.role === 'assistant') {
+                                    const updatedMessages = [...messages]
+                                    updatedMessages[updatedMessages.length - 1] = {
+                                        ...lastMessage,
+                                        content: lastMessage.content + delta,
+                                    }
+                                    newState.messagesByChat = {
+                                        ...state.messagesByChat,
+                                        [currentChatId]: updatedMessages,
+                                    }
+                                }
+                            }
+
+                            return newState
+                        })
+                        return
+                    }
+
+                    if (evt.event === 'done') {
+                        set((state) => ({
+                            ...state,
+                            statusSteps: [],
+                            isLoading: false,
+                        }))
+                        return
+                    }
+
+                    if (evt.event === 'error') {
+                        const message =
+                            typeof evt.data === 'string' ? evt.data : evt.data?.message || 'Error'
+                        console.error('Streaming error event:', message)
+                        set({ isLoading: false })
+                    }
+                }
+            )
+
+            // Note: Don't reload conversation here to avoid overwriting the streamed message
+            // The message will be persisted on the backend and will be available on next load
+            // get().loadConversation(currentChatId)
+
+        } catch (error) {
+            console.error('Deep research streaming error:', error)
+        } finally {
+            set({ isLoading: false })
+        }
     },
 
             updateConversationFiles: async (id, fileIds) => {

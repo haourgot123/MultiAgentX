@@ -1,3 +1,4 @@
+from ctypes import Union
 import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
@@ -179,6 +180,45 @@ class AzureChatOpenAIConfig:
 
 
 @dataclass
+class AzureImageGenerationConfig:
+    """Azure Image Generation configuration settings."""
+
+    api_key: str = _env(
+        "AZURE-OPENAI-IMAGE-API-KEY",
+        "AZURE_OPENAI_IMAGE_KEY",
+        "AZURE_OPENAI_KEY",
+        default="",
+    )
+    api_endpoint: str = _env(
+        "AZURE-OPENAI-IMAGE-ENDPOINT",
+        "AZURE_OPENAI_IMAGE_ENDPOINT",
+        default="",
+    )
+    api_version: str = _env(
+        "AZURE-OPENAI-IMAGE-API-VERSION",
+        default="2024-02-15-preview",
+    )
+    deployment_name: str = _env(
+        "AZURE_OPENAI_IMAGE_DEPLOYMENT",
+        default="gpt-image-1",
+    )
+    default_size: str = "1024x1024"
+    default_quality: str = "standard"
+    default_n: int = 1
+
+
+@dataclass
+class RAGConfig:
+    """RAG configuration settings."""
+
+    hybrid_alpha: float = 0.7
+    vector_top_k: int = 10
+    bm25_top_k: int = 10
+    rerank_top_n: int = 5
+    max_context_tokens: int = 4000
+
+
+@dataclass
 class EmbeddingModelConfig:
     """Embedding model configuration settings."""
 
@@ -253,21 +293,22 @@ class LoggingConfig:
 class TavilySearchConfig:
     """Tavily Search configuration settings."""
 
-    api_key: str = os.getenv("TAVILY_SEARCH_API_KEY")
-    api_endpoint: str = os.getenv("TAVILY_SEARCH_API_ENDPOINT")
-    max_results: int = 10
+    api_key: str = _env("TAVILY-SEARCH-API-KEY", "TAVILY_SEARCH_API_KEY")
+    api_endpoint: str = _env("TAVILY-SEARCH-API-ENDPOINT", "TAVILY_SEARCH_API_ENDPOINT")
     include_answer: bool = False
     search_depth: str = "advanced"
-    allowed_domains: List[str] = field(
-        default_factory=lambda: [
-            "https://www.siemens.com",
-            "https://www.mitsubishi-electric.vn",
-            "https://www.se.com/",
-            "https://udata.ai/",
-        ]
-    )
     exclude_domains: List[str] = field(default_factory=list)
 
+from typing import Optional
+
+class GGSearch:
+    gg_search_url: Optional[str]
+    gg_search_engine_id: Optional[str]
+    current_key_index: int
+
+    def __init__(self) -> None:
+        self.gg_search_url = os.getenv("GOOGLE-SEARCH-URL", "")
+        self.gg_search_engine_id = os.getenv("GOOGLE-SEARCHENGINE-ID", "")
 
 @dataclass
 class APIConfig:
@@ -377,3 +418,33 @@ class ProcessingConfig:
         """Initialize default values that can't be set as class variables."""
         if self.default_ocr_languages is None:
             self.default_ocr_languages = ["auto"]
+
+
+@dataclass
+class Mem0Config:
+    """Mem0 long-term memory configuration."""
+    
+    # Vector store (Milvus - reuse existing infrastructure)
+    vector_store_provider: str = os.getenv("MEM0_VECTOR_STORE_PROVIDER", "milvus")
+    milvus_host: str = os.getenv("MILVUS_HOST", "localhost")
+    milvus_port: str = os.getenv("MILVUS_PORT", "19530")
+    memory_collection_name: str = os.getenv("MEM0_MILVUS_COLLECTION", "user_memories")
+    
+    # Embedding dimensions (match existing Milvus config)
+    embedding_dims: int = int(os.getenv("OPENAI_EMBEDDING_DIMENSION", "3072"))
+    
+    # History storage
+    history_db_path: str = os.getenv(
+        "MEM0_HISTORY_DB_PATH",
+        os.path.expanduser("~/.mem0/history.db")
+    )
+    
+    # Memory retrieval settings
+    memory_top_k: int = int(os.getenv("MEM0_MEMORY_TOP_K", "10"))
+    memory_score_threshold: float = float(os.getenv("MEM0_MEMORY_SCORE_THRESHOLD", "0.5"))
+    
+    # Feature toggle
+    enable_long_term_memory: bool = _env_bool(
+        "MEM0_ENABLE_LONG_TERM_MEMORY",
+        default=True
+    )

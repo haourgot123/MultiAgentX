@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal, Optional, List
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, Table, UnicodeText
@@ -122,3 +122,32 @@ class ConversationMessageCreateResponse(BaseModel):
     conversation: ConversationResponse = Field(
         ..., description="Updated conversation snapshot"
     )
+
+
+class ChatRequest(BaseModel):
+    chat_type: Literal["normal", "file"] = Field(..., description="Chat type")
+    conversation_id: int = Field(..., description="Conversation ID")
+    user_question: str = Field(..., description="User question")
+    is_web_search_enabled: Optional[bool] = Field(False, description="Is web search enabled")
+    is_deep_research_enabled: Optional[bool] = Field(False, description="Is deep research enabled")
+    is_generate_image_enabled: Optional[bool] = Field(False, description="Is generate image enabled")
+    is_rag_enabled: Optional[bool] = Field(False, description="Is RAG enabled")
+    file_ids: Optional[List[int]] = Field(default_factory=list, description="File IDs for RAG")
+    approved_research_plan: Optional[List[str]] = Field(None, description="Approved research plan for deep research (optional)")
+    deep_research_session_id: Optional[str] = Field(None, description="Deep research session ID for resuming (optional)")
+
+
+class DeepResearchPlanRequest(BaseModel):
+    conversation_id: int = Field(..., description="Conversation ID")
+    user_question: str = Field(..., description="User question for deep research")
+
+
+class DeepResearchApproveRequest(BaseModel):
+    session_id: str = Field(..., description="Research session ID")
+    approved_plan: List[str] = Field(..., description="Approved research plan sub-questions")
+
+
+class DeepResearchPlanResponse(BaseModel):
+    session_id: str = Field(..., description="Research session ID")
+    plan: List[str] = Field(..., description="Generated research plan sub-questions")
+    message: str = Field(..., description="Status message")

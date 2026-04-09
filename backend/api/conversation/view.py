@@ -1,10 +1,10 @@
 from typing import Optional
-
+from loguru import logger
 from fastapi import APIRouter, BackgroundTasks, Depends, status
 from fastapi.requests import Request
 from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse
-
+from fastapi.responses import StreamingResponse
 from backend.api.conversation.model import (
     Conversation,
     ConversationCreateRequest,
@@ -16,11 +16,17 @@ from backend.api.conversation.model import (
     ConversationMessageResponse,
     ConversationRenameRequest,
     ConversationResponse,
+    ChatRequest,
+    DeepResearchPlanRequest,
+    DeepResearchApproveRequest,
+    DeepResearchPlanResponse,
 )
 from backend.api.conversation.service import conversation_service
 from backend.api.data_ingestion.model import IngestionStatus
 from backend.api.data_ingestion.service import data_ingestion_service
 from backend.api.files.model import StoredFile
+from backend.exceptions.model import InvalidRequestException
+from backend.utils.constants import Message
 from backend.utils.dependency import get_current_user, get_db
 
 router = APIRouter(
@@ -203,4 +209,86 @@ def add_message(
     return ConversationMessageCreateResponse(
         message=_to_message_response(message),
         conversation=_to_conversation_response(conversation),
+    )
+
+
+@router.post(
+    "/chat",
+    status_code=status.HTTP_201_CREATED,
+)
+async def chat(
+    request: Request,
+    chat_request: ChatRequest,
+    db_session: Session = Depends(get_db),
+):
+    logger.info(f"Chat request: {chat_request}")
+    if chat_request.chat_type == "normal":
+        # Streaming response
+        return StreamingResponse(
+            conversation_service.normal_chat(
+                request, 
+                db_session, 
+                request.state.user_id, 
+                chat_request.conversation_id, 
+                chat_request.user_question,
+                chat_request.is_web_search_enabled,
+                chat_request.is_deep_research_enabled,
+                chat_request.is_generate_image_enabled
+            ),
+            media_type="text/event-stream",
+        )
+    elif chat_request.chat_type == "file":
+        return StreamingResponse(
+            conversation_service.file_chat(
+                request, 
+                db_session, 
+                request.state.user_id, 
+                chat_request.conversation_id, 
+            ),
+            media_type="text/event-stream",
+        )
+    else:
+        raise InvalidRequestException(message = Message.MESSAGE_INVALID_REQUEST)
+
+
+@router.post(
+    "/deep-research/plan",
+    response_model=DeepResearchPlanResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def create_deep_research_plan(
+    request: Request,
+    plan_request: DeepResearchPlanRequest,
+    db_session: Session = Depends(get_db),
+):
+    logger.info(f"Deep research plan request: {plan_request}")
+    result = await conversation_service.create_deep_research_plan(
+        request,
+        db_session,
+        request.state.user_id,
+        plan_request.conversation_id,
+        plan_request.user_question,
+    )
+    return result
+
+
+@router.post(
+    "/deep-research/approve",
+    status_code=status.HTTP_201_CREATED,
+)
+async def approve_deep_research_plan(
+    request: Request,
+    approve_request: DeepResearchApproveRequest,
+    db_session: Session = Depends(get_db),
+):
+    logger.info(f"Deep research approve request: {approve_request}")
+    return StreamingResponse(
+        conversation_service.approve_deep_research_plan(
+            request,
+            db_session,
+            request.state.user_id,
+            approve_request.session_id,
+            approve_request.approved_plan,
+        ),
+        media_type="text/event-stream",
     )

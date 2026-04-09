@@ -1,35 +1,41 @@
 import { useEffect, useRef, useState } from "react"
 import { useChatStore } from "@/store/chat-store"
 import { useFileStore } from "@/store/file-store"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { MessageBubble } from "./MessageBubble"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { Send, Paperclip, Image as ImageIcon, Mic, Search, Globe, Aperture, X, Video } from "lucide-react"
+import { Send, Paperclip, Image as ImageIcon, Mic, Search, Globe, Aperture, X, Video, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Toggle } from "@/components/ui/toggle"
-import { useLocation } from "react-router-dom" // Added import
+import { useLocation } from "react-router-dom"
 import { toast } from "sonner"
+import { PlanApprovalModal } from "./PlanApprovalModal"
+import { apiFetch } from "@/lib/api"
 
 export function ChatInterface() {
-    const location = useLocation() // Added useLocation hook
+    const location = useLocation()
     const {
         getCurrentMessages,
         input,
         setInput,
-        addMessage,
         isLoading,
-        setIsLoading,
+        statusSteps,
         currentChatId,
         chatSessions,
+        pendingPlan,
+        createNewChat,
+        createDeepResearchPlan,
+        approveDeepResearchPlan,
+        setPendingPlan,
     } = useChatStore()
     const files = useFileStore((state) => state.files)
     const messages = getCurrentMessages()
     const scrollRef = useRef<HTMLDivElement>(null)
 
-    // Detect if we're in file chat mode
-    const isFileChat = location.pathname === '/chat-file' // Added logic to detect chat type
+    const isFileChat = location.pathname === '/chat-file'
     const currentFileSession =
         isFileChat && currentChatId
             ? chatSessions.find(
@@ -64,7 +70,6 @@ export function ChatInterface() {
         ? fileChatBlockReason
         : "Ask anything..."
 
-    // Feature Toggles
     const [activeFeatures, setActiveFeatures] = useState({
         deepResearch: false,
         webSearch: false,
@@ -94,32 +99,109 @@ export function ChatInterface() {
             role: 'user' as const,
             content: prompt,
         }
+        
+        // Clear previous status steps when starting new message
+        useChatStore.setState({ statusSteps: [] })
+        
+// Optimistically add user message to chat for Deep Research
+        if (activeFeatures.deepResearch) {
+            let chatId = currentChatId
+            if (!chatId) {
+                chatId = await createNewChat('normal')
+            }
+            if (!chatId) return
+
+            // Clear previous status and set loading
+            useChatStore.setState({ 
+                statusSteps: [], 
+                isLoading: true,
+            })
+
+            // Add user message to chat immediately (optimistic)
+            const optimisticUserMessage = {
+                id: Date.now(),
+                role: 'user' as const,
+                content: prompt,
+                timestamp: Date.now(),
+            }
+            
+            useChatStore.setState((state) => ({
+                messagesByChat: {
+                    ...state.messagesByChat,
+                    [chatId as number]: [
+                        ...(state.messagesByChat[chatId as number] || []),
+                        optimisticUserMessage,
+                    ],
+                },
+            }))
+
+            setInput("")
+            
+            try {
+                // Save user message to database WITHOUT adding to store again (already added optimistically)
+                try {
+                    const chatIdForMessage = currentChatId || chatId
+                    if (chatIdForMessage) {
+                        await apiFetch(`/conversations/${chatIdForMessage}/messages`, {
+                            method: 'POST',
+                            body: JSON.stringify({
+                                role: 'user',
+                                content: prompt,
+                            }),
+                        })
+                    }
+                } catch (saveError) {
+                    console.error('Failed to save user message:', saveError)
+                    // Continue even if save fails - message is already in UI
+                }
+                
+                // Create research plan - backend will emit status events
+                const planRequest = await createDeepResearchPlan(chatId, prompt)
+                
+                // Show plan approval modal
+                setPendingPlan(planRequest)
+            } catch (error) {
+                toast.error('Failed to create research plan')
+                console.error(error)
+                setInput(prompt)
+            } finally {
+                useChatStore.setState({ isLoading: false })
+            }
+            return
+        }
 
         setInput("")
+        
         try {
-            await addMessage(userMessage, isFileChat ? 'file' : 'normal')
+            // Normal chat flow
+            await useChatStore.getState().streamChat(
+                userMessage,
+                isFileChat ? 'file' : 'normal',
+                {
+                    is_web_search_enabled: activeFeatures.webSearch,
+                    is_deep_research_enabled: activeFeatures.deepResearch,
+                    is_generate_image_enabled: activeFeatures.genImage,
+                }
+            )
         } catch {
             setInput(prompt)
             toast.error('Failed to send message')
-            return
         }
-        setIsLoading(true)
+    }
 
-        setTimeout(async () => {
-            let responseContent = `This is a simulated response.`
-            if (activeFeatures.deepResearch) responseContent += ` [Deep Research Active]`
-            if (activeFeatures.webSearch) responseContent += ` [Web Search Active]`
-            if (activeFeatures.genImage) responseContent += ` [Image Generation Active]`
+    const handlePlanApprove = async (approvedPlan: string[], sessionId: string) => {
+        try {
+            await approveDeepResearchPlan(sessionId, approvedPlan)
+            toast.success('Research started with approved plan')
+        } catch (error) {
+            toast.error('Failed to start research')
+            console.error(error)
+        }
+    }
 
-            try {
-                await addMessage({
-                    role: 'assistant',
-                    content: responseContent,
-                }, isFileChat ? 'file' : 'normal')
-            } finally {
-                setIsLoading(false)
-            }
-        }, 1000)
+    const handlePlanCancel = () => {
+        setPendingPlan(null)
+        toast.info('Research cancelled')
     }
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -152,14 +234,49 @@ export function ChatInterface() {
                             {messages.map((msg) => (
                                 <MessageBubble key={msg.id} message={msg} />
                             ))}
-                            {isLoading && (
-                                <div className="flex w-full gap-4 p-4">
-                                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center animate-pulse">
-                                        <div className="h-4 w-4 bg-primary rounded-full" />
+                            {/* Loading indicator for Deep Research - show spinner when creating plan or researching */}
+                            {activeFeatures.deepResearch && isLoading && statusSteps.length === 0 && (
+                                <div className="flex items-center gap-3 p-4 animate-in fade-in duration-300">
+                                    <div className="flex h-5 w-5 items-center justify-center">
+                                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
                                     </div>
-                                    <div className="flex items-center">
-                                        <span className="text-sm text-text-muted">Thinking...</span>
+                                    <span className="text-sm font-medium text-text-muted">
+                                        {pendingPlan ? 'Creating research plan...' : 'Processing...'}
+                                    </span>
+                                </div>
+                            )}
+                            {/* Show status steps in Chat only when NOT using Deep Research */}
+                            {(isLoading || statusSteps.length > 0) && !activeFeatures.deepResearch && (
+                                <div className="flex flex-col gap-2 p-4 animate-in fade-in duration-300">
+                                    {statusSteps.length > 0 ? (
+                                        statusSteps.map((step, idx) => (
+                                            <div key={idx} className="flex items-center gap-3">
+                                                <div className="flex h-5 w-5 items-center justify-center">
+                                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                                                </div>
+                                                <span className="text-sm font-medium text-text-muted">
+                                                    {step}
+                                                </span>
+                                            </div>
+                                        ))
+) : (
+                                        <div className="text-sm text-text-muted">
+                                            {isLoading && pendingPlan === null ? 'Processing...' : 
+                                             pendingPlan ? 'Review plan before starting...' : 
+                                             'Waiting for input...'}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            {/* Show loading spinner when creating plan or researching */}
+                            {activeFeatures.deepResearch && isLoading && (
+                                <div className="flex items-center gap-3 p-4 animate-in fade-in duration-300">
+                                    <div className="flex h-5 w-5 items-center justify-center">
+                                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
                                     </div>
+                                    <span className="text-sm font-medium text-text-muted">
+                                        {pendingPlan ? 'Processing...' : 'Creating research plan...'}
+                                    </span>
                                 </div>
                             )}
                             <div ref={scrollRef} />
@@ -208,7 +325,10 @@ export function ChatInterface() {
                                             <Toggle
                                                 pressed={activeFeatures.deepResearch}
                                                 onPressedChange={() => toggleFeature('deepResearch')}
-                                                className="h-8 px-2 gap-2 data-[state=on]:bg-primary/10 data-[state=on]:text-primary"
+                                                className={cn(
+                                                    "h-8 px-2 gap-2",
+                                                    activeFeatures.deepResearch && "!bg-[#22c55e] !text-white hover:!bg-[#16a34a]"
+                                                )}
                                             >
                                                 <Search className="h-4 w-4" />
                                                 <span className="text-xs font-medium">Deep Research</span>
@@ -225,7 +345,10 @@ export function ChatInterface() {
                                                 pressed={activeFeatures.webSearch}
                                                 onPressedChange={() => toggleFeature('webSearch')}
                                                 size="sm"
-                                                className="h-8 w-8 p-0 data-[state=on]:bg-primary/10 data-[state=on]:text-primary"
+                                                className={cn(
+                                                    "h-8 w-8 p-0",
+                                                    activeFeatures.webSearch && "!bg-[#22c55e] !text-white hover:!bg-[#16a34a]"
+                                                )}
                                             >
                                                 <Globe className="h-4 w-4" />
                                             </Toggle>
@@ -241,7 +364,10 @@ export function ChatInterface() {
                                                 pressed={activeFeatures.genImage}
                                                 onPressedChange={() => toggleFeature('genImage')}
                                                 size="sm"
-                                                className="h-8 w-8 p-0 data-[state=on]:bg-secondary/10 data-[state=on]:text-secondary"
+                                                className={cn(
+                                                    "h-8 w-8 p-0",
+                                                    activeFeatures.genImage && "!bg-[#22c55e] !text-white hover:!bg-[#16a34a]"
+                                                )}
                                             >
                                                 <ImageIcon className="h-4 w-4" />
                                             </Toggle>
@@ -257,7 +383,10 @@ export function ChatInterface() {
                                                 pressed={activeFeatures.videoAnalysis}
                                                 onPressedChange={() => toggleFeature('videoAnalysis')}
                                                 size="sm"
-                                                className="h-8 w-8 p-0 data-[state=on]:bg-secondary/10 data-[state=on]:text-secondary"
+                                                className={cn(
+                                                    "h-8 w-8 p-0",
+                                                    activeFeatures.videoAnalysis && "!bg-[#22c55e] !text-white hover:!bg-[#16a34a]"
+                                                )}
                                             >
                                                 <Video className="h-4 w-4" />
                                             </Toggle>
@@ -311,10 +440,46 @@ export function ChatInterface() {
                     <div className="p-4 space-y-4 overflow-auto flex-1">
                         <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
                             <div className="text-xs font-medium text-primary mb-2 uppercase tracking-wider">Current Task</div>
-                            <div className="text-sm text-text-primary">Waiting for input...</div>
+                            {statusSteps.length > 0 ? (
+                                <div className="space-y-2">
+                                    {statusSteps.map((step, idx) => (
+                                        <div key={idx} className="text-sm text-text-primary animate-in fade-in duration-300 flex items-start gap-2">
+                                            <Loader2 className="h-4 w-4 animate-spin text-primary mt-0.5 flex-shrink-0" />
+                                            <span>{step}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="text-sm text-text-muted">
+                                    {isLoading && pendingPlan === null ? 'Processing...' : 
+                                     pendingPlan ? 'Review plan before starting...' : 
+                                     'Waiting for input...'}
+                                </div>
+                            )}
                         </div>
+                        {pendingPlan && !isLoading && (
+                            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200">
+                                <div className="text-xs font-medium text-amber-700 mb-2 uppercase tracking-wider">
+                                    Plan Ready
+                                </div>
+                                <div className="text-sm text-amber-900">
+                                    A research plan has been created. Review and approve it to start the research.
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
+            )}
+
+            {/* Plan Approval Modal */}
+            {pendingPlan && (
+                <PlanApprovalModal
+                    isOpen={!!pendingPlan}
+                    plan={pendingPlan.plan}
+                    sessionId={pendingPlan.sessionId}
+                    onApprove={handlePlanApprove}
+                    onCancel={handlePlanCancel}
+                />
             )}
         </div>
     )

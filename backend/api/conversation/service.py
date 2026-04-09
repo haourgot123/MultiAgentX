@@ -1,4 +1,8 @@
-from typing import Optional
+from time import time_ns
+from typing import Optional, List
+from datetime import datetime, timezone
+import json
+import uuid
 
 from fastapi import Request
 from loguru import logger
@@ -13,9 +17,16 @@ from backend.api.conversation.model import (
     ConversationRenameRequest,
 )
 from backend.api.files.model import StoredFile
+from backend.api.conversation.model import DeepResearchPlanResponse
 from backend.databases.db import get_utc_now
 from backend.exceptions.model import InvalidRequestException, ObjectNotFoundException
 from backend.utils.constants import Message
+from backend.agents.general_agent.state import GeneralAgentState
+from backend.agents.general_agent.graph import GeneralAgentGraph
+from backend.agents.deep_research_agent.state import DeepResearchAgentState
+from backend.agents.deep_research_agent.graph import DeepResearchAgentGraph
+from backend.memory.mem0_client import mem0_client
+from backend.utils.research_session import research_session_manager
 
 service_logger = logger.bind(service="conversation-service")
 
@@ -258,6 +269,335 @@ class ConversationService:
         )
         request_logger.info("Added message id={} role={}", message.id, message.role)
         return message, updated_conversation
+    
+    @staticmethod
+    def _format_sse_event(event: str, data: dict) -> str:
+        """
+        Format a Server-Sent Events (SSE) line with JSON data.
+        """
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    async def normal_chat(
+        self,
+        request: Request,
+        db_session: Session,
+        user_id: int,
+        conversation_id: int,
+        user_question: str,
+        is_web_search_enabled: Optional[bool] = False,
+        is_deep_research_enabled: Optional[bool] = False,
+        is_generate_image_enabled: Optional[bool] = False,
+        is_rag_enabled: Optional[bool] = False,
+        file_ids: Optional[List[int]] = None,
+    ):
+        request_logger = self._get_request_logger(request, user_id)
+        conversation = self._get_user_conversation(
+            db_session, user_id, conversation_id, request_logger
+        )
+        #  Create chat details
+        _, _ = self.add_message(
+            request,
+            db_session,
+            user_id,
+            conversation_id,
+            ConversationMessageCreateRequest(role="user", content=user_question),
+        )
+        
+        if conversation.chat_type != "normal":
+            raise InvalidRequestException(message=Message.MESSAGE_INVALID_REQUEST)
+        
+        # Get last 10 messages from conversation
+        messages = conversation.messages[-10:] if len(conversation.messages) > 10 else conversation.messages
+        time_now = get_utc_now().strftime("%Y-%m-%d %H:%M:%S")
+        # Initialize general agent state
+        state = GeneralAgentState(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            memories=messages,
+            user_question=user_question,
+            time_now=time_now,
+            is_web_search_enabled=is_web_search_enabled,
+            is_deep_research_enabled=is_deep_research_enabled,
+            is_generate_image_enabled=is_generate_image_enabled,
+            is_rag_enabled=is_rag_enabled,
+            file_ids=file_ids or [],
+            websearch_results=[],
+            route="",
+        )
+        
+        # We need to collect the chunks to save the assistant's final response to the database
+        full_response = ""
+        
+        # Initialize general agent graph
+        try: 
+            graph = GeneralAgentGraph()
+            async for event in graph.stream(
+                state.model_dump()
+            ):
+                event_type = event.get("type")
+
+                # Stream token chunks to client
+                if event_type == "token":
+                    delta = event.get("delta", "")
+                    if not delta:
+                        continue
+                    full_response += delta
+                    yield self._format_sse_event("token", {"delta": delta})
+
+                # Stream status updates
+                elif event_type == "status":
+                    payload = {
+                        "step": event.get("step"),
+                        "message": event.get("message", ""),
+                    }
+                    yield self._format_sse_event("status", payload)
+                
+            # After successful generation, store assistant message
+            if full_response:
+                _, _ = self.add_message(
+                    request,
+                    db_session,
+                    user_id,
+                    conversation_id,
+                    ConversationMessageCreateRequest(
+                        role="assistant",
+                        content=full_response,
+                    ),
+                )
+                
+                # NEW: Store conversation in Mem0 for long-term memory
+                try:
+                    request_logger.info("Storing conversation in Mem0 long-term memory")
+                    
+                    messages_for_mem0 = [
+                        {"role": "user", "content": user_question},
+                        {"role": "assistant", "content": full_response}
+                    ]
+                    
+                    await mem0_client.add_memory(
+                        messages=messages_for_mem0,
+                        user_id=str(user_id),
+                        metadata={
+                            "conversation_id": conversation_id,
+                            "chat_type": conversation.chat_type,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "route": state.route,
+                        }
+                    )
+                    
+                    request_logger.debug("Successfully stored memory in Mem0 (Milvus)")
+                    
+                except Exception as e:
+                    # Graceful degradation - don't fail the request
+                    request_logger.error(f"Failed to store memory in Mem0: {e}")
+                    # Continue execution
+                
+                # Notify client that streaming is done
+                yield self._format_sse_event("done", {"output": full_response})
+
+        except Exception as e:
+            request_logger.error("Error streaming general agent: {}", e)
+            error_assistant_message = Message.MESSAGE_GENERAL_AGENT_ERROR
+            _, _ = self.add_message(
+                request,
+                db_session,
+                user_id,
+                conversation_id,
+                ConversationMessageCreateRequest(
+                    role="assistant",
+                    content=error_assistant_message,
+                ),
+            )
+            yield self._format_sse_event(
+                "error", {"message": error_assistant_message}
+            )
+            
+        finally:
+            del graph
+            
+    async def file_chat(
+        self,
+        request: Request,
+        db_session: Session,
+        user_id: int,
+        conversation_id: int,
+    ):
+        pass
+
+    async def create_deep_research_plan(
+        self,
+        request: Request,
+        db_session: Session,
+        user_id: int,
+        conversation_id: int,
+        user_question: str,
+    ) -> DeepResearchPlanResponse:
+        """Create a research plan for deep research"""
+        request_logger = self._get_request_logger(request, user_id)
+        conversation = self._get_user_conversation(
+            db_session, user_id, conversation_id, request_logger
+        )
+        
+        if conversation.chat_type != "normal":
+            raise InvalidRequestException(message=Message.MESSAGE_INVALID_REQUEST)
+        
+        # Get last 10 messages from conversation
+        messages = conversation.messages[-10:] if len(conversation.messages) > 10 else conversation.messages
+        
+        # Initialize deep research agent state
+        research_state = DeepResearchAgentState(
+            user_question=user_question,
+            memories=messages,
+            max_iterations=3,
+        )
+        
+        # Create plan using DeepResearchAgentGraph
+        try:
+            graph = DeepResearchAgentGraph(plan_only=True)
+            plan_result = None
+            
+            async for event in graph.stream(research_state.model_dump()):
+                if event.get("type") == "plan_request":
+                    plan_result = event
+                    break
+            
+            if not plan_result or "plan" not in plan_result:
+                raise InvalidRequestException(message="Failed to generate research plan")
+            
+            # Generate unique session ID
+            session_id = str(uuid.uuid4())
+            
+            # Save session
+            research_session_manager.create_session(
+                session_id=session_id,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                user_question=user_question,
+                memories=[str(m) for m in messages],
+                research_plan=plan_result["plan"],
+            )
+            
+            return DeepResearchPlanResponse(
+                session_id=session_id,
+                plan=plan_result["plan"],
+                message=plan_result.get("message", "Research plan created. Please review and approve."),
+            )
+            
+        except Exception as e:
+            request_logger.error(f"Error creating research plan: {e}")
+            raise InvalidRequestException(message=f"Failed to create research plan: {str(e)}")
+        finally:
+            if 'graph' in locals():
+                del graph
+
+    async def approve_deep_research_plan(
+        self,
+        request: Request,
+        db_session: Session,
+        user_id: int,
+        session_id: str,
+        approved_plan: List[str],
+    ):
+        """Execute deep research with approved plan"""
+        request_logger = self._get_request_logger(request, user_id)
+        
+        # Emit starting research event
+        yield self._format_sse_event("status", {
+            "step": "deep_research_start",
+            "message": "🚀 Starting research with approved plan...",
+        })
+        
+        # Get session
+        session = research_session_manager.get_session(session_id)
+        if not session:
+            raise InvalidRequestException(message="Research session not found or expired")
+        
+        if session["user_id"] != user_id:
+            raise InvalidRequestException(message="Unauthorized access to research session")
+        
+        conversation_id = session.get("conversation_id")
+        
+        # Save user message about approved plan
+        if conversation_id:
+            try:
+                user_plan_message = f"Research Plan Approved:\n" + "\n".join([f"{i+1}. {q}" for i, q in enumerate(approved_plan)])
+                self.add_message(
+                    request,
+                    db_session,
+                    user_id,
+                    conversation_id,
+                    ConversationMessageCreateRequest(
+                        role="user",
+                        content=user_plan_message,
+                    ),
+                )
+                request_logger.info("Saved approved plan as user message")
+            except Exception as e:
+                request_logger.error(f"Failed to save user message: {e}")
+        
+        # Update session with approved plan
+        research_session_manager.update_approved_plan(session_id, approved_plan)
+        
+        # Initialize deep research agent state with approved plan
+        research_state = DeepResearchAgentState(
+            user_question=session["user_question"],
+            memories=session.get("memories", []),
+            research_plan=approved_plan,
+            approved_plan=approved_plan,
+            plan_approved=True,
+            max_iterations=3,
+        )
+        
+        # Execute research
+        try:
+            graph = DeepResearchAgentGraph()
+            full_response = ""
+            
+            async for event in graph.stream(research_state.model_dump()):
+                event_type = event.get("type")
+                
+                if event_type == "token":
+                    delta = event.get("delta", "")
+                    if delta:
+                        full_response += delta
+                        yield self._format_sse_event("token", {"delta": delta})
+                
+                elif event_type == "status":
+                    payload = {
+                        "step": event.get("step"),
+                        "message": event.get("message", ""),
+                    }
+                    yield self._format_sse_event("status", payload)
+            
+            # Save result to conversation
+            conversation_id = session.get("conversation_id")
+            if conversation_id and full_response:
+                try:
+                    self.add_message(
+                        request,
+                        db_session,
+                        user_id,
+                        conversation_id,
+                        ConversationMessageCreateRequest(
+                            role="assistant",
+                            content=full_response,
+                        ),
+                    )
+                    request_logger.info("Saved deep research result to conversation")
+                except Exception as e:
+                    request_logger.error(f"Failed to save result to conversation: {e}")
+            
+            yield self._format_sse_event("done", {"output": full_response})
+            
+            # Cleanup session
+            research_session_manager.delete_session(session_id)
+            
+        except Exception as e:
+            request_logger.error(f"Error executing deep research: {e}")
+            yield self._format_sse_event("error", {"message": str(e)})
+        finally:
+            if 'graph' in locals():
+                del graph
 
 
 conversation_service = ConversationService()

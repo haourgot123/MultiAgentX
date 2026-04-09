@@ -39,6 +39,8 @@ class Message:
     MESSAGE_INGESTION_STARTED = "Ingestion started"
     MESSAGE_INGESTION_COMPLETED = "Ingestion completed"
     MESSAGE_INGESTION_FAILED = "Ingestion failed"
+    
+    MESSAGE_GENERAL_AGENT_ERROR = "Oops! Something didn't work as expected while processing your request. Please try again in a moment."
 
 
 class TokenType(Enum):
