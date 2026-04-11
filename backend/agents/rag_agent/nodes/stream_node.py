@@ -20,7 +20,7 @@ class StreamNode(Runnable):
             "status",
             {
                 "step": "rag_stream",
-                "message": "📤 Preparing final response...",
+                "message": "Preparing final response...",
             },
         )
 
@@ -33,7 +33,7 @@ class StreamNode(Runnable):
             "status",
             {
                 "step": "rag_stream",
-                "message": "✅ Response ready.",
+                "message": "Response ready.",
             },
         )
 

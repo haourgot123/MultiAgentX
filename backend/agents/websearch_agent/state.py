@@ -8,3 +8,4 @@ class WebsearchAgentState(BaseModel):
     memories: List[Any] = []
     transformed_queries: List[str] = []
     search_results: List[SearchResults] = []
+    output: str = ""

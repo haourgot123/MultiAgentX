@@ -34,6 +34,7 @@ class DeepResearchAgentState(BaseModel):
     analysis_notes: List[str] = []
     need_more_research: bool = True
     final_report: str = ""
+    output: str = ""
     current_task: str = ""
 
 
@@ -44,7 +45,6 @@ class Node(Enum):
     deep_research_agent_analyze_node = auto()
     deep_research_agent_should_continue_node = auto()
     deep_research_agent_synthesize_node = auto()
-    deep_research_agent_stream_node = auto()
 
 
 class Tag(Enum):

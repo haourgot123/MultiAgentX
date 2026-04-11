@@ -43,7 +43,7 @@ class SearchNode(Runnable):
             "status",
             {
                 "step": "websearch_search",
-                "message": f"🌐 Starting web search with {len(state.transformed_queries)} query variations...",
+                "message": f"Starting web search with {len(state.transformed_queries)} query variations...",
             },
         )
 
@@ -59,7 +59,7 @@ class SearchNode(Runnable):
                 "status",
                 {
                     "step": "websearch_search",
-                    "message": f"🔎 [{progress_pct}%] Searching: `{query}`",
+                    "message": f"[{progress_pct}%] Searching: `{query}`",
                 },
             )
 
@@ -78,7 +78,7 @@ class SearchNode(Runnable):
                     "status",
                     {
                         "step": "websearch_search",
-                        "message": f"⚠️ Search error for query {i + 1}, continuing...",
+                        "message": f"Search error for query {i + 1}, continuing...",
                     },
                 )
 
@@ -92,7 +92,7 @@ class SearchNode(Runnable):
                 "status",
                 {
                     "step": "websearch_search",
-                    "message": f"🧹 Removed {duplicates_removed} duplicate sources",
+                    "message": f"Removed {duplicates_removed} duplicate sources",
                 },
             )
 
@@ -104,7 +104,7 @@ class SearchNode(Runnable):
             "status",
             {
                 "step": "websearch_search",
-                "message": f"✅ Search complete: {len(unique_results)} unique sources from {successful_queries} queries",
+                "message": f"Search complete: {len(unique_results)} unique sources from {successful_queries} queries",
             },
         )
 
@@ -113,7 +113,7 @@ class SearchNode(Runnable):
                 "status",
                 {
                     "step": "websearch_search",
-                    "message": f"⚠️ Note: {failed_queries} query(s) encountered errors",
+                    "message": f"Note: {failed_queries} query(s) encountered errors",
                 },
             )
 

@@ -21,7 +21,7 @@ from backend.api.conversation.model import DeepResearchPlanResponse
 from backend.databases.db import get_utc_now
 from backend.exceptions.model import InvalidRequestException, ObjectNotFoundException
 from backend.utils.constants import Message
-from backend.agents.general_agent.state import GeneralAgentState
+from backend.agents.general_agent.state import GeneralAgentState, Tag
 from backend.agents.general_agent.graph import GeneralAgentGraph
 from backend.agents.deep_research_agent.state import DeepResearchAgentState
 from backend.agents.deep_research_agent.graph import DeepResearchAgentGraph
@@ -287,8 +287,6 @@ class ConversationService:
         is_web_search_enabled: Optional[bool] = False,
         is_deep_research_enabled: Optional[bool] = False,
         is_generate_image_enabled: Optional[bool] = False,
-        is_rag_enabled: Optional[bool] = False,
-        file_ids: Optional[List[int]] = None,
     ):
         request_logger = self._get_request_logger(request, user_id)
         conversation = self._get_user_conversation(
@@ -319,8 +317,6 @@ class ConversationService:
             is_web_search_enabled=is_web_search_enabled,
             is_deep_research_enabled=is_deep_research_enabled,
             is_generate_image_enabled=is_generate_image_enabled,
-            is_rag_enabled=is_rag_enabled,
-            file_ids=file_ids or [],
             websearch_results=[],
             route="",
         )
@@ -451,14 +447,20 @@ class ConversationService:
             max_iterations=3,
         )
         
-        # Create plan using DeepResearchAgentGraph
+        # Create plan using DeepResearchAgentGraph in plan_only mode
         try:
             graph = DeepResearchAgentGraph(plan_only=True)
+            config = graph._config_graph()
             plan_result = None
             
-            async for event in graph.stream(research_state.model_dump()):
-                if event.get("type") == "plan_request":
-                    plan_result = event
+            # Use astream_events to capture plan_request custom events
+            async for event in graph.compiled_graph.astream_events(
+                input=research_state.model_dump(),
+                config=config,
+                version="v2",
+            ):
+                if event["event"] == "on_custom_event" and event.get("name") == "plan_request":
+                    plan_result = event.get("data", {})
                     break
             
             if not plan_result or "plan" not in plan_result:
@@ -498,13 +500,14 @@ class ConversationService:
         session_id: str,
         approved_plan: List[str],
     ):
-        """Execute deep research with approved plan"""
+        """Execute deep research with approved plan — uses astream_events directly
+        for real-time token streaming from the SynthesizeNode's LLM."""
         request_logger = self._get_request_logger(request, user_id)
         
         # Emit starting research event
         yield self._format_sse_event("status", {
             "step": "deep_research_start",
-            "message": "🚀 Starting research with approved plan...",
+            "message": "Starting research with approved plan...",
         })
         
         # Get session
@@ -548,29 +551,42 @@ class ConversationService:
             max_iterations=3,
         )
         
-        # Execute research
+        # Execute research using astream_events directly for smooth streaming
         try:
             graph = DeepResearchAgentGraph()
+            config = graph._config_graph()
             full_response = ""
             
-            async for event in graph.stream(research_state.model_dump()):
-                event_type = event.get("type")
+            async for event in graph.compiled_graph.astream_events(
+                input=research_state.model_dump(),
+                config=config,
+                version="v2",
+            ):
+                kind = event["event"]
+                tags = event.get("tags", [])
                 
-                if event_type == "token":
-                    delta = event.get("delta", "")
-                    if delta:
+                # Real-time LLM token streaming from SynthesizeNode
+                if kind == "on_chat_model_stream" and Tag.streaming_node.name in tags:
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        delta = chunk.content
                         full_response += delta
                         yield self._format_sse_event("token", {"delta": delta})
                 
-                elif event_type == "status":
-                    payload = {
-                        "step": event.get("step"),
-                        "message": event.get("message", ""),
-                    }
-                    yield self._format_sse_event("status", payload)
+                # Status events from all nodes (plan, search, analyze, etc.)
+                elif kind == "on_custom_event":
+                    event_name = event.get("name", "")
+                    event_data = event.get("data", {})
+                    
+                    if event_name == "status":
+                        msg = event_data.get("message", "")
+                        if msg:
+                            yield self._format_sse_event("status", {
+                                "step": event_data.get("step"),
+                                "message": msg,
+                            })
             
             # Save result to conversation
-            conversation_id = session.get("conversation_id")
             if conversation_id and full_response:
                 try:
                     self.add_message(

@@ -20,7 +20,7 @@ class HumanApprovalNode(Runnable):
             "status",
             {
                 "step": "deep_research_approval",
-                "message": "⚠️ Awaiting human approval for research plan...",
+                "message": "Awaiting human approval for research plan...",
             },
         )
 
@@ -42,7 +42,7 @@ class HumanApprovalNode(Runnable):
                 "status",
                 {
                     "step": "deep_research_approval",
-                    "message": f"✅ Research plan approved. Starting investigation.",
+                    "message": "Research plan approved. Starting investigation.",
                 },
             )
             return {

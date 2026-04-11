@@ -1,8 +1,6 @@
-import asyncio
-from typing import AsyncGenerator, List, Any, Optional, Dict
+from typing import List, Any, Optional, Dict
 from langgraph.graph import StateGraph, END, START
 from langchain_core.runnables import RunnableConfig
-from pydantic import BaseModel
 
 from backend.agents.general_agent.tools.websearch import SearchResults
 from backend.agents.websearch_agent.nodes.transform_query_node import TransformQueryNode
@@ -35,8 +33,6 @@ class WebSearchAgentGraph:
         )
 
     def _add_graph_nodes(self):
-        # Add memory constructor node
-        # self.graph.add_node(Node.locator_node.name, HeadquarterLocatorNode().ainvoke)
         self.graph.add_node(Node.websearch_agent_transform_query_node.name, TransformQueryNode().ainvoke)
         self.graph.add_node(Node.websearch_agent_search_node.name, SearchNode().ainvoke)
         self.graph.add_node(Node.websearch_agent_stream_node.name, StreamNode().ainvoke)
@@ -64,49 +60,3 @@ class WebSearchAgentGraph:
     ) -> Optional[str]:
         if visualization_type == "ascii":
             self.compiled_graph.get_graph().print_ascii()
-
-    async def stream(self, inputs: dict) -> AsyncGenerator[str, None]:
-        config = self._config_graph()
-        graph = self.compiled_graph
-        try:
-            async for event in graph.astream_events(
-                input=inputs,
-                config=config,
-                version="v2",
-            ):
-                kind = event["event"]
-                tags = event.get("tags", [])
-
-                # Handle end of chain
-                if kind == "on_chain_end" and any(
-                    tag in [tag_name.name for tag_name in Tag] for tag in tags
-                ):
-                    if any(
-                        tag
-                        in [
-                            tag_name.name
-                            for tag_name in [Tag.explanation_node, Tag.retrieval_progress_node]
-                        ]
-                        for tag in tags
-                    ):
-                        list_data = event["data"]["output"].split(" ")
-                        for token in list_data: 
-                            yield token + " "
-                            await asyncio.sleep(0.01)
-                    elif any(
-                        tag in [tag_name.name for tag_name in [Tag.direct_response_node]]
-                        for tag in tags
-                    ):
-                        list_data = event["data"]["output"].split(" ")
-                        for token in list_data:
-                            yield token + " "
-                            await asyncio.sleep(0.005)
-                    else:
-                        yield event["data"]["output"]
-
-                # Handle streaming chunk
-                if kind == "on_chat_model_stream" and Tag.streaming_node.name in tags:
-                    yield event["data"]["chunk"].content
-        finally:
-            # Explicit cleanup
-            del graph

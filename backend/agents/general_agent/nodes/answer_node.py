@@ -20,7 +20,13 @@ class AnswerNode(Runnable):
         pass
 
     async def ainvoke(self, state: GeneralAgentState, **kwargs):
-        system_prompt = DIRECT_ANSWER_SYSTEM_MESSAGE.format(time_now=state.time_now)
+        # Build the system prompt with time and long-term memory context
+        long_term_ctx = state.long_term_memory_context or "No long-term memories available."
+        
+        system_prompt = DIRECT_ANSWER_SYSTEM_MESSAGE.format(
+            time_now=state.time_now,
+            long_term_memory_context=long_term_ctx,
+        )
         
         messages = [
             SystemMessage(content=system_prompt),
@@ -33,6 +39,8 @@ class AnswerNode(Runnable):
         ]
         
         logger.info(f"AnswerNode processing direct response for question: '{state.user_question}'")
+        if long_term_ctx and long_term_ctx != "No long-term memories available.":
+            logger.info(f"AnswerNode using long-term memory context ({len(long_term_ctx)} chars)")
         
         # Attach streaming tag so outer graph can capture on_chat_model_stream events
         config = kwargs.get("config", {}) or {}

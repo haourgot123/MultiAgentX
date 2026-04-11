@@ -5,6 +5,7 @@ import type { Message } from "@/store/chat-store"
 import { Bot, User, Globe, FileText } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import rehypeRaw from "rehype-raw"
 import { useMemo } from "react"
 
 interface MessageBubbleProps {
@@ -44,16 +45,77 @@ const sourceUrlMap: Record<string, string> = {
     'Sapphire Ventures': 'https://sapphireventures.com',
 }
 
+// Parse ## Sources section to build citation map: number -> { url, title }
+function parseCitationMap(content: string): Map<number, { url: string; title: string }> {
+    const map = new Map<number, { url: string; title: string }>()
+    // Find ## Sources or ## References section
+    const sectionMatch = content.match(/^##\s+(?:Sources|References)\s*$/m)
+    if (!sectionMatch || sectionMatch.index === undefined) return map
+    
+    const sectionContent = content.slice(sectionMatch.index)
+    // Match lines like: [1] [Title](url)  or  [1] Title - url  or  [1] url
+    const lineRegex = /^\[(\d+)\]\s+(?:\[([^\]]+)\]\(([^)]+)\)|(.+))/gm
+    let m
+    while ((m = lineRegex.exec(sectionContent)) !== null) {
+        const num = parseInt(m[1])
+        if (m[3]) {
+            // markdown link form: [1] [Title](url)
+            map.set(num, { url: m[3], title: m[2] || m[3] })
+        } else if (m[4]) {
+            // plain text form: [1] Some text (maybe a URL)
+            const rawText = m[4].trim()
+            const urlMatch = rawText.match(/https?:\/\/\S+/)
+            map.set(num, { url: urlMatch ? urlMatch[0] : '', title: rawText })
+        }
+    }
+    return map
+}
+
+// Process citations in content to make them styled HTML elements
+function processCitations(content: string): string {
+    // First, add spacing between consecutive citations like [1][2][3] -> [1] [2] [3]
+    let processed = content.replace(/\]\s*\[/g, '] [')
+    
+    // Convert citation patterns [1], [2], etc. to styled superscript links
+    // Only match standalone citations, not markdown links [text](url)
+    processed = processed.replace(/\[(\d+)\](?!\()/g, (_match, num) => {
+        return `<a href="#citation-${num}" class="citation-badge" data-citation="${num}">${num}</a>`
+    })
+    
+    return processed
+}
+
 function extractSources(content: string): { sources: Source[]; contentWithoutSources: string } {
+    // First process citations
+    let processed = processCitations(content)
+    
     const sources: Source[] = []
     const seenUrls = new Set<string>()
+    
+    // Check if content has a References or Sources section - links there should remain clickable
+    const referencesIndex = content.indexOf('## References')
+    const sourcesIndex = content.indexOf('## Sources')
+    const sectionStartIndex = referencesIndex !== -1 || sourcesIndex !== -1
+        ? Math.min(
+            referencesIndex !== -1 ? referencesIndex : Infinity,
+            sourcesIndex !== -1 ? sourcesIndex : Infinity
+          )
+        : -1
+    const hasReferencesSection = sectionStartIndex !== -1
     
     // 1. Extract markdown links: [title](url)
     const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g
     let match
     
     while ((match = linkRegex.exec(content)) !== null) {
-        const [fullMatch, title, url] = match
+        const [, title, url] = match
+        const matchIndex = match.index
+        
+        // Skip extraction if link is in References/Sources section
+        if (hasReferencesSection && matchIndex > sectionStartIndex) {
+            continue
+        }
+        
         if (!seenUrls.has(url) && url.startsWith('http')) {
             seenUrls.add(url)
             sources.push({
@@ -70,7 +132,14 @@ function extractSources(content: string): { sources: Source[]; contentWithoutSou
     let citationMatch
     
     while ((citationMatch = citationRegex.exec(content)) !== null) {
-        const [fullMatch, sourceNames] = citationMatch
+        const [, sourceNames] = citationMatch
+        const matchIndex = citationMatch.index
+        
+        // Skip extraction if citation is in References/Sources section
+        if (hasReferencesSection && matchIndex > sectionStartIndex) {
+            continue
+        }
+        
         // Tách các source name nếu có nhiều (phân cách bởi dấu phẩy hoặc "và")
         const names = sourceNames.split(/,\s*|\s+and\s+/).map(n => n.trim()).filter(Boolean)
         
@@ -90,8 +159,20 @@ function extractSources(content: string): { sources: Source[]; contentWithoutSou
         }
     }
     
-    // Loại bỏ markdown links khỏi content
-    let contentWithoutSources = content.replace(linkRegex, '$1')
+    // Loại bỏ markdown links khỏi content (but preserve links in References/Sources section)
+    let contentWithoutSources = processed
+    if (hasReferencesSection) {
+        // Split content at References/Sources section
+        const beforeSection = processed.substring(0, sectionStartIndex)
+        const sectionContent = processed.substring(sectionStartIndex)
+        
+        // Only replace links before References/Sources section
+        const beforeProcessed = beforeSection.replace(linkRegex, '$1')
+        // Keep References/Sources section as-is (links remain clickable)
+        contentWithoutSources = beforeProcessed + sectionContent
+    } else {
+        contentWithoutSources = processed.replace(linkRegex, '$1')
+    }
     // Loại bỏ citation tags khỏi content
     contentWithoutSources = contentWithoutSources.replace(citationRegex, '')
     
@@ -105,7 +186,7 @@ function SourceIcons({ sources }: { sources: Source[] }) {
     
     return (
         <div className="flex items-center gap-1 mt-2">
-            {visibleSources.map((source, index) => (
+            {visibleSources.map((source) => (
                 <TooltipProvider key={source.url} delayDuration={100}>
                     <Tooltip>
                         <TooltipTrigger asChild>
@@ -158,11 +239,13 @@ function SourceIcons({ sources }: { sources: Source[] }) {
 export function MessageBubble({ message }: MessageBubbleProps) {
     const isUser = message.role === 'user'
     
-    const { sources, contentWithoutSources } = useMemo(() => {
+    const { sources, contentWithoutSources, citationMap } = useMemo(() => {
         if (isUser) {
-            return { sources: [], contentWithoutSources: message.content }
+            return { sources: [], contentWithoutSources: message.content, citationMap: new Map<number, { url: string; title: string }>() }
         }
-        return extractSources(message.content)
+        const extracted = extractSources(message.content)
+        const cMap = parseCitationMap(message.content)
+        return { ...extracted, citationMap: cMap }
     }, [message.content, isUser])
 
     return (
@@ -203,14 +286,42 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                     ) : (
                         <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
+                            rehypePlugins={[rehypeRaw]}
                             components={{
                                 p: ({ children }) => <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>,
-                                a: ({ href, children, ...props }) => {
-                                    // Nếu là link trong sources, chỉ hiển thị text
+                                a: ({ href, children, className, ...props }) => {
+                                    // Citation badge links - styled inline numbered badges
+                                    if (className === 'citation-badge' || href?.startsWith('#citation-')) {
+                                        const citationNum = href ? parseInt(href.replace('#citation-', '')) : NaN
+                                        const citationInfo = !isNaN(citationNum) ? citationMap.get(citationNum) : undefined
+                                        const handleClick = (e: React.MouseEvent) => {
+                                            e.preventDefault()
+                                            if (citationInfo?.url) {
+                                                window.open(citationInfo.url, '_blank', 'noreferrer')
+                                            }
+                                        }
+                                        const tooltipText = citationInfo
+                                            ? `${citationInfo.title}${citationInfo.url ? `\n${citationInfo.url}` : ''}`
+                                            : `Source ${children}`
+                                        return (
+                                            <a
+                                                href={citationInfo?.url || '#'}
+                                                target={citationInfo?.url ? '_blank' : undefined}
+                                                rel="noreferrer"
+                                                onClick={handleClick}
+                                                className="inline-flex items-center justify-center min-w-[1.25rem] h-5 text-[10px] font-bold text-white bg-primary hover:bg-primary/80 rounded-full px-1.5 no-underline cursor-pointer transition-all duration-200 hover:scale-110 shadow-sm mx-0.5 align-super"
+                                                title={tooltipText}
+                                                {...props}
+                                            >
+                                                {children}
+                                            </a>
+                                        )
+                                    }
+                                    // Extracted source links - show as styled text
                                     if (sources.some(s => s.url === href)) {
                                         return <span className="underline decoration-primary/60 hover:decoration-primary cursor-pointer">{children}</span>
                                     }
-                                    // Link khác vẫn render bình thường
+                                    // Regular external links
                                     return (
                                         <a
                                             href={href}

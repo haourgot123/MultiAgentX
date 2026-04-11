@@ -38,8 +38,12 @@ class TransformQueryNode(Runnable):
             },
         )
 
+        # Inject current date into the system prompt for time-aware query generation
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        system_prompt = TRANSFORM_QUERY_SYSTEM_MESSAGE.format(current_date=current_date)
+
         messages = [
-            SystemMessage(content=TRANSFORM_QUERY_SYSTEM_MESSAGE),
+            SystemMessage(content=system_prompt),
             *state.memories,
             HumanMessage(
                 content=TRANSFORM_QUERY_USER_MESSAGE.format(
@@ -54,6 +58,18 @@ class TransformQueryNode(Runnable):
         response = await llm_with_structured_output.ainvoke(messages)
 
         transformed_queries = response.transformed_queries
+        
+        # Deduplicate queries (case-insensitive)
+        seen = set()
+        unique_queries = []
+        for q in transformed_queries:
+            q_lower = q.strip().lower()
+            if q_lower not in seen:
+                seen.add(q_lower)
+                unique_queries.append(q.strip())
+        transformed_queries = unique_queries[:3]  # Cap at 3 queries
+
+        logger.info(f"TransformQueryNode generated {len(transformed_queries)} unique queries: {transformed_queries}")
 
         dispatch_custom_event(
             "status",

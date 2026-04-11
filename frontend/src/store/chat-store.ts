@@ -62,6 +62,7 @@ type ChatStore = {
     statusSteps: string[]
     mode: 'normal' | 'file' | 'deepResearch' | 'webSearch'
     pendingPlan: PlanRequest | null
+    researchPhase: 'idle' | 'planning' | 'researching'
 
     setCurrentChat: (id: number | null) => void
     fetchChatSessions: (chatType?: 'normal' | 'file') => Promise<ChatSession[]>
@@ -137,6 +138,7 @@ export const useChatStore = create<ChatStore>()(
             statusSteps: [],
             mode: 'normal',
             pendingPlan: null,
+            researchPhase: 'idle',
 
     setCurrentChat: (id) => set({ currentChatId: id }),
     
@@ -330,9 +332,6 @@ export const useChatStore = create<ChatStore>()(
             isLoading: true,
         }))
 
-        // Used to track if the assistant message is created
-        let assistantMessageCreated = false;
-
         try {
             await apiFetchStream(
                 '/conversations/chat',
@@ -364,40 +363,40 @@ export const useChatStore = create<ChatStore>()(
 
                         set((state) => {
                             const messages = state.messagesByChat[currentChatId as number] || []
-                            const newState: any = {}
+                            const lastMessage = messages[messages.length - 1]
 
-                            if (!assistantMessageCreated) {
-                                assistantMessageCreated = true
-                                newState.statusSteps = []
-                                newState.isLoading = false
-                                newState.messagesByChat = {
+                            // If last message is already an assistant message, append to it
+                            if (lastMessage && lastMessage.role === 'assistant') {
+                                const updatedMessages = [...messages]
+                                updatedMessages[updatedMessages.length - 1] = {
+                                    ...lastMessage,
+                                    content: lastMessage.content + delta,
+                                }
+                                return {
+                                    messagesByChat: {
+                                        ...state.messagesByChat,
+                                        [currentChatId as number]: updatedMessages,
+                                    },
+                                }
+                            }
+
+                            // Otherwise, create a new assistant message
+                            return {
+                                statusSteps: [],
+                                isLoading: false,
+                                messagesByChat: {
                                     ...state.messagesByChat,
                                     [currentChatId as number]: [
                                         ...messages,
                                         {
                                             id: Date.now() + 1,
-                                            role: 'assistant',
+                                            role: 'assistant' as const,
                                             content: delta,
                                             timestamp: Date.now() + 1,
                                         },
                                     ],
-                                }
-                            } else {
-                                const lastMessage = messages[messages.length - 1]
-                                if (lastMessage && lastMessage.role === 'assistant') {
-                                    const updatedMessages = [...messages]
-                                    updatedMessages[updatedMessages.length - 1] = {
-                                        ...lastMessage,
-                                        content: lastMessage.content + delta,
-                                    }
-                                    newState.messagesByChat = {
-                                        ...state.messagesByChat,
-                                        [currentChatId as number]: updatedMessages,
-                                    }
-                                }
+                                },
                             }
-
-                            return newState
                         })
                         return
                     }
@@ -486,8 +485,7 @@ export const useChatStore = create<ChatStore>()(
     },
 
     createDeepResearchPlan: async (conversationId, userQuestion) => {
-        // Don't add status here - backend will emit status events
-        useChatStore.setState({ isLoading: true })
+        useChatStore.setState({ isLoading: true, researchPhase: 'planning' })
 
         try {
             const response = await apiFetch<{
@@ -508,7 +506,7 @@ export const useChatStore = create<ChatStore>()(
                 message: response.message,
             }
         } catch (error) {
-            useChatStore.setState({ isLoading: false })
+            useChatStore.setState({ isLoading: false, researchPhase: 'idle' })
             throw error
         }
     },
@@ -541,9 +539,8 @@ export const useChatStore = create<ChatStore>()(
             isLoading: true,
             statusSteps: [],
             pendingPlan: null,
+            researchPhase: 'researching',
         }))
-
-        let assistantMessageCreated = false
 
         try {
             await apiFetchStream(
@@ -574,40 +571,40 @@ export const useChatStore = create<ChatStore>()(
 
                         set((state) => {
                             const messages = state.messagesByChat[currentChatId] || []
-                            const newState: any = {}
+                            const lastMessage = messages[messages.length - 1]
 
-                            if (!assistantMessageCreated) {
-                                assistantMessageCreated = true
-                                newState.statusSteps = []
-                                newState.isLoading = false
-                                newState.messagesByChat = {
+                            // If last message is already an assistant message, append to it
+                            if (lastMessage && lastMessage.role === 'assistant') {
+                                const updatedMessages = [...messages]
+                                updatedMessages[updatedMessages.length - 1] = {
+                                    ...lastMessage,
+                                    content: lastMessage.content + delta,
+                                }
+                                return {
+                                    messagesByChat: {
+                                        ...state.messagesByChat,
+                                        [currentChatId]: updatedMessages,
+                                    },
+                                }
+                            }
+
+                            // Otherwise, create a new assistant message
+                            return {
+                                statusSteps: [],
+                                isLoading: false,
+                                messagesByChat: {
                                     ...state.messagesByChat,
                                     [currentChatId]: [
                                         ...messages,
                                         {
                                             id: Date.now() + 1,
-                                            role: 'assistant',
+                                            role: 'assistant' as const,
                                             content: delta,
                                             timestamp: Date.now() + 1,
                                         },
                                     ],
-                                }
-                            } else {
-                                const lastMessage = messages[messages.length - 1]
-                                if (lastMessage && lastMessage.role === 'assistant') {
-                                    const updatedMessages = [...messages]
-                                    updatedMessages[updatedMessages.length - 1] = {
-                                        ...lastMessage,
-                                        content: lastMessage.content + delta,
-                                    }
-                                    newState.messagesByChat = {
-                                        ...state.messagesByChat,
-                                        [currentChatId]: updatedMessages,
-                                    }
-                                }
+                                },
                             }
-
-                            return newState
                         })
                         return
                     }
@@ -617,6 +614,7 @@ export const useChatStore = create<ChatStore>()(
                             ...state,
                             statusSteps: [],
                             isLoading: false,
+                            researchPhase: 'idle',
                         }))
                         return
                     }
@@ -624,20 +622,19 @@ export const useChatStore = create<ChatStore>()(
                     if (evt.event === 'error') {
                         const message =
                             typeof evt.data === 'string' ? evt.data : evt.data?.message || 'Error'
-                        console.error('Streaming error event:', message)
-                        set({ isLoading: false })
+                        console.error('Deep research streaming error event:', message)
+                        set({ isLoading: false, researchPhase: 'idle' })
                     }
                 }
             )
 
-            // Note: Don't reload conversation here to avoid overwriting the streamed message
-            // The message will be persisted on the backend and will be available on next load
-            // get().loadConversation(currentChatId)
+            // Reload conversation to sync real IDs from backend
+            get().loadConversation(currentChatId)
 
         } catch (error) {
             console.error('Deep research streaming error:', error)
         } finally {
-            set({ isLoading: false })
+            set({ isLoading: false, researchPhase: 'idle' })
         }
     },
 

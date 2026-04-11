@@ -6,45 +6,23 @@ from loguru import logger
 
 from backend.agents.image_generation_agent.state import ImageGenerationAgentState
 from backend.utils.llm import azure_chat_openai_gpt_5_1
+from backend.agents.prompts.image_generation import IMAGE_GENERATION_PROMPTS
 
 
 service_logger = logger.bind(service="image-prompt-enhance")
 
 
 class EnhancedPrompt(BaseModel):
-    enhanced_prompt: str = Field(description="enhanced prompt for image generation")
-    style_notes: list[str] = Field(default_factory=list, description="style notes to consider")
-
-
-PROMPT_ENHANCE_SYSTEM = """You are an expert prompt engineer for AI image generation models.
-Your task is to enhance user prompts to create more detailed, vivid, and artistic image descriptions.
-
-Guidelines for enhancement:
-1. Add visual details (colors, textures, lighting, composition)
-2. Include artistic style references (realistic, abstract, impressionistic, etc.)
-3. Specify perspective and framing (close-up, wide shot, bird's eye view)
-4. Add mood and atmosphere descriptors
-5. Include technical quality terms (high resolution, detailed, sharp focus)
-6. Keep the core subject and intent intact
-7. Make the prompt descriptive but concise (under 400characters)
-
-Respond in the same language as the user's request.
-
-Example:
-User: "mèo ngồi cửa sổ"
-Enhanced: "A fluffy cat sitting gracefully on a sunlit windowsill, soft golden hour lighting streaming through sheer curtains, detailed fur texture with subtle shadows, cozy indoor atmosphere, photorealistic style, high detail, 4K quality"
-
-User: "sunset over mountains"
-Enhanced: "Breathtaking sunset over majestic mountain peaks, vibrant orange and purple sky with scattered clouds, silhouetted pine trees in foreground, dramatic atmospheric perspective, golden hour glow, photorealistic landscape photography, ultra high resolution""" 
-
-
-PROMPT_ENHANCE_USER = """Enhance this image generation prompt for better visual quality:
-
-User Request: {user_question}
-
-Conversation Context: {context}
-
-Create an enhanced prompt that will produce a stunning image."""
+    enhanced_prompt: str = Field(description="enhanced English prompt for image generation (max 400 chars)")
+    style_category: str = Field(
+        default="photorealistic",
+        description="detected style: photorealistic, digital_art, anime, oil_painting, concept_art, watercolor, 3d_render, minimalist, vintage, fantasy, pixel_art, sketch"
+    )
+    style_notes: list[str] = Field(default_factory=list, description="style-specific notes")
+    negative_prompt: str = Field(
+        default="",
+        description="what to avoid in the generated image"
+    )
 
 
 class PromptEnhanceNode(Runnable):
@@ -59,10 +37,11 @@ class PromptEnhanceNode(Runnable):
             "status",
             {
                 "step": "image_prompt_enhance",
-                "message": "🎨 Enhancing image prompt for better quality...",
+                "message": "🎨 Enhancing image prompt for professional quality...",
             },
         )
 
+        # Build conversation context from memories
         context = ""
         if state.memories:
             recent_messages = state.memories[-3:] if len(state.memories) > 3 else state.memories
@@ -72,8 +51,8 @@ class PromptEnhanceNode(Runnable):
             ])
 
         messages = [
-            SystemMessage(content=PROMPT_ENHANCE_SYSTEM),
-            HumanMessage(content=PROMPT_ENHANCE_USER.format(
+            SystemMessage(content=IMAGE_GENERATION_PROMPTS["PROMPT_ENHANCE_SYSTEM"]),
+            HumanMessage(content=IMAGE_GENERATION_PROMPTS["PROMPT_ENHANCE_USER"].format(
                 user_question=state.user_question,
                 context=context[:500] if context else "No previous context",
             )),
@@ -84,16 +63,26 @@ class PromptEnhanceNode(Runnable):
         llm_with_structure = azure_chat_openai_gpt_5_1.with_structured_output(EnhancedPrompt)
         result = await llm_with_structure.ainvoke(messages)
 
-        service_logger.info(f"Enhanced prompt: '{result.enhanced_prompt[:100]}...'")
+        # Ensure prompt doesn't exceed 400 chars (DALL-E limit)
+        enhanced = result.enhanced_prompt
+        if len(enhanced) > 400:
+            enhanced = enhanced[:397] + "..."
+            service_logger.info(f"Truncated enhanced prompt from {len(result.enhanced_prompt)} to 400 chars")
+
+        service_logger.info(
+            f"Enhanced prompt: '{enhanced[:100]}...' | "
+            f"Style: {result.style_category} | "
+            f"Negative: '{result.negative_prompt[:60]}...'"
+        )
 
         dispatch_custom_event(
             "status",
             {
                 "step": "image_prompt_enhance",
-                "message": f"✅ Enhanced prompt ready.",
+                "message": f"✨ Prompt enhanced (style: {result.style_category})",
             },
         )
 
         return {
-            "enhanced_prompt": result.enhanced_prompt,
+            "enhanced_prompt": enhanced,
         }

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useRef } from "react"
 import {
     Dialog,
     DialogContent,
@@ -31,13 +31,17 @@ export function PlanApprovalModal({
     const [isEditing, setIsEditing] = useState(false)
     const [editedPlan, setEditedPlan] = useState<string[]>(plan)
     const [isSubmitting, setIsSubmitting] = useState(false)
+    // Track if approval was triggered to avoid firing onCancel when modal closes programmatically
+    const approvedRef = useRef(false)
 
     const handleApprove = async () => {
+        approvedRef.current = true
         setIsSubmitting(true)
         try {
             await onApprove(isEditing ? editedPlan : plan, sessionId)
         } finally {
             setIsSubmitting(false)
+            approvedRef.current = false
         }
     }
 
@@ -66,7 +70,7 @@ export function PlanApprovalModal({
     const currentPlan = isEditing ? editedPlan : plan
 
     return (
-        <Dialog open={isOpen} onOpenChange={(open) => !open && onCancel()}>
+        <Dialog open={isOpen} onOpenChange={(open) => !open && !approvedRef.current && onCancel()}>
             <DialogContent className="max-w-2xl max-h-[80vh] bg-white rounded-xl">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">

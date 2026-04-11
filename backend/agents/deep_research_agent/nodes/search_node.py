@@ -29,7 +29,7 @@ class SearchNode(Runnable):
             "status",
             {
                 "step": "deep_research_search",
-                "message": f"🌐 Searching for information...",
+                "message": "Searching for information...",
             },
         )
 
@@ -45,7 +45,7 @@ class SearchNode(Runnable):
                 "status",
                 {
                     "step": "deep_research_search",
-                    "message": f"🔍 Searching: '{query[:40]}...'",
+                    "message": f"Searching: '{query[:40]}...'",
                 },
             )
 
@@ -79,7 +79,7 @@ class SearchNode(Runnable):
             "status",
             {
                 "step": "deep_research_search",
-                "message": f"✅ Found {len(new_results)} new results.",
+                "message": f"Found {len(new_results)} new results.",
             },
         )
 

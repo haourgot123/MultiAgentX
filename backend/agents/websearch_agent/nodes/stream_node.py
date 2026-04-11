@@ -28,27 +28,51 @@ class StreamNode(Runnable):
             "status",
             {
                 "step": "websearch_answer",
-                "message": "🧩 Synthesizing an answer from the search results...",
+                "message": "Synthesizing an answer from the search results...",
             },
         )
 
-        # Build search context
-        search_context = "Search Results:\n"
+        # Handle empty search results gracefully
+        if not state.search_results:
+            dispatch_custom_event(
+                "status",
+                {
+                    "step": "websearch_answer",
+                    "message": "No search results found.",
+                },
+            )
+            fallback_output = (
+                "I searched the web but couldn't find relevant results for your query. "
+                "This might be due to a network issue or the search terms not matching available content. "
+                "Please try rephrasing your question or check your internet connection."
+            )
+            return {"output": fallback_output}
+
+        # Build rich search context with metadata
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        search_context = f"Search Results (retrieved on {current_date}):\n\n"
         for idx, res in enumerate(state.search_results):
+            title = getattr(res, 'title', 'Untitled')
+            snippet = getattr(res, 'snippet', 'No description available')
+            url = getattr(res, 'url', '')
             search_context += (
-                f"[{idx+1}] Title: {getattr(res, 'title', '')}\n"
-                f"Snippet: {getattr(res, 'snippet', '')}\n"
-                f"Link: {getattr(res, 'url', '')}\n\n"
+                f"[{idx+1}] Title: {title}\n"
+                f"    URL: {url}\n"
+                f"    Content: {snippet}\n\n"
             )
 
         user_prompt = (
-            f"Question: {state.user_question}\n\n"
+            f"User Question: {state.user_question}\n\n"
             f"{search_context}\n"
-            "Use the search results above to answer the question as accurately as possible."
+            f"Using the {len(state.search_results)} search results above, provide a comprehensive, "
+            f"well-cited answer to the user's question. Follow the citation format specified in your instructions."
         )
 
+        # Inject current_date into system prompt
+        system_prompt = WEBSEARCH_SYSTEM_MESSAGE.format(current_date=current_date)
+
         messages = [
-            SystemMessage(content=WEBSEARCH_SYSTEM_MESSAGE),
+            SystemMessage(content=system_prompt),
             *state.memories,
             HumanMessage(content=user_prompt),
         ]
@@ -68,7 +92,7 @@ class StreamNode(Runnable):
             "status",
             {
                 "step": "websearch_answer",
-                "message": "✅ Web search answer ready.",
+                "message": "Web search answer ready.",
             },
         )
 

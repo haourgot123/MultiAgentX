@@ -21,7 +21,7 @@ class MemoryNode(Runnable):
         """Load both short-term (conversation) and long-term (Mem0) memories."""
         dispatch_custom_event(
             "status",
-            {"step": "memory", "message": "🧠 Loading conversation context..."},
+            {"step": "memory", "message": "Loading conversation context..."},
         )
 
         # 1. Format short-term conversation messages
@@ -40,7 +40,7 @@ class MemoryNode(Runnable):
         try:
             dispatch_custom_event(
                 "status",
-                {"step": "memory", "message": "📚 Searching long-term memories..."},
+                {"step": "memory", "message": "Searching long-term memories..."},
             )
             
             user_id = str(state.user_id)
@@ -63,12 +63,12 @@ class MemoryNode(Runnable):
                 
                 dispatch_custom_event(
                     "status",
-                    {"step": "memory", "message": f"✅ Found {len(mem0_memories)} long-term memories."},
+                    {"step": "memory", "message": f"Found {len(mem0_memories)} long-term memories."},
                 )
             else:
                 dispatch_custom_event(
                     "status",
-                    {"step": "memory", "message": "ℹ️ No long-term memories found."},
+                    {"step": "memory", "message": "No long-term memories found."},
                 )
                 
         except Exception as e:
@@ -76,7 +76,7 @@ class MemoryNode(Runnable):
             # Graceful degradation - continue without long-term memories
             dispatch_custom_event(
                 "status",
-                {"step": "memory", "message": "⚠️ Long-term memory unavailable, using short-term only."},
+                {"step": "memory", "message": "Long-term memory unavailable, using short-term only."},
             )
 
         # 3. Prepare result for next node
@@ -87,7 +87,7 @@ class MemoryNode(Runnable):
         
         dispatch_custom_event(
             "status",
-            {"step": "memory", "message": f"✅ Loaded {memory_count} conversation messages."},
+            {"step": "memory", "message": f"Loaded {memory_count} conversation messages."},
         )
 
         return result

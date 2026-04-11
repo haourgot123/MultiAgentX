@@ -1,5 +1,4 @@
-import asyncio
-from typing import AsyncGenerator, Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END, START
@@ -62,44 +61,3 @@ class RAGAgentGraph:
     def visualize_graph(self, visualization_type: str = "ascii") -> Optional[str]:
         if visualization_type == "ascii":
             self.compiled_graph.get_graph().print_ascii()
-
-    async def stream(self, inputs: dict) -> AsyncGenerator[Dict[str, Any], None]:
-        config = self._config_graph()
-        graph = self.compiled_graph
-        try:
-            async for event in graph.astream_events(
-                input=inputs,
-                config=config,
-                version="v2",
-            ):
-                kind = event["event"]
-                tags = event.get("tags", [])
-
-                if kind == "on_chain_end" and any(
-                    tag in [tag_name.name for tag_name in Tag] for tag in tags
-                ):
-                    output = event.get("data", {}).get("output", "")
-                    if output:
-                        yield {
-                            "type": "token",
-                            "delta": output,
-                        }
-
-                if kind == "on_chat_model_stream" and Tag.streaming_node.name in tags:
-                    chunk = event.get("data", {}).get("chunk")
-                    if chunk and hasattr(chunk, "content"):
-                        yield {
-                            "type": "token",
-                            "delta": chunk.content,
-                        }
-
-                if kind == "on_custom_event" and event.get("name") == "status":
-                    msg = event["data"].get("message", "")
-                    if msg:
-                        yield {
-                            "type": "status",
-                            "step": event["data"].get("step"),
-                            "message": msg,
-                        }
-        finally:
-            del graph

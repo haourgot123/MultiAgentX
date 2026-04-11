@@ -21,7 +21,7 @@ class RetrieveNode(Runnable):
             "status",
             {
                 "step": "rag_retrieve",
-                "message": "📚 Searching documents...",
+                "message": "Searching documents...",
             },
         )
 
@@ -45,7 +45,7 @@ class RetrieveNode(Runnable):
                 "status",
                 {
                     "step": "rag_retrieve",
-                    "message": f"✅ Found {len(retrieved_chunks)} relevant passages from: {sources_preview}...",
+                    "message": f"Found {len(retrieved_chunks)} relevant passages from: {sources_preview}...",
                 },
             )
         else:
@@ -53,7 +53,7 @@ class RetrieveNode(Runnable):
                 "status",
                 {
                     "step": "rag_retrieve",
-                    "message": "⚠️ No relevant documents found in knowledge base.",
+                    "message": "No relevant documents found in knowledge base.",
                 },
             )
 

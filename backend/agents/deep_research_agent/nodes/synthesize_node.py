@@ -3,40 +3,45 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.callbacks import dispatch_custom_event
 from loguru import logger
 
-from backend.agents.deep_research_agent.state import DeepResearchAgentState
+from backend.agents.deep_research_agent.state import DeepResearchAgentState, Tag
 from backend.utils.llm import azure_chat_openai_gpt_5_1
+from backend.agents.prompts.deep_research import DEEP_RESEARCH_PROMPTS
 
 
 service_logger = logger.bind(service="deep-research-synthesize")
-
-
-SYNTHESIZE_SYSTEM = """You are an expert research synthesizer. Create comprehensive, well-structured reports from research findings.
-
-Guidelines:
-1. Organize findings logically under clear headings
-2. Synthesize information from multiple sources
-3. Cite sources using [1], [2], etc. notation
-4. Highlight key insights and discoveries
-5. Acknowledge any limitations or uncertainties
-6. Provide actionable conclusions
-7. Use clear, professional language"""
 
 
 SYNTHESIZE_USER = """Synthesize a comprehensive research report:
 
 Original Question: {user_question}
 
-Research Findings:
+## Research Methodology
+- Total iterations: {total_iterations}
+- Total sources analyzed: {total_sources}
+- Sub-questions investigated: {sub_questions}
+
+## Research Findings by Iteration:
 {findings_text}
 
-Create a well-structured report that:
-1. Directly answers the research question
-2. Organizes findings under relevant headings
-3. Cites sources appropriately
-4. Highlights key insights
-5. Notes any limitations
+## Source References (use these for [1], [2], etc. citations):
+{sources_text}
 
-Format the report in clear markdown."""
+## Research Plan Coverage:
+{coverage_text}
+
+## Instructions:
+1. Create a comprehensive report following the structure in your system instructions
+2. Start with an executive summary (2-3 paragraphs)
+3. Organize findings into 3-5 thematic sections with clear headings
+4. Use [1], [2] superscript citation numbers immediately after key claims — reference the source numbers above
+5. Include specific data, statistics, and examples from the findings
+6. Acknowledge limitations and any conflicting information
+7. End with clear conclusions and recommendations
+8. Add a "## Sources" section at the end with numbered markdown links
+
+Format: Use markdown with proper headings, bullet points, and emphasis.
+Language: Match the language of the original question ({detected_language}).
+Citations: Be selective — cite important claims, not every sentence."""
 
 
 class SynthesizeNode(Runnable):
@@ -51,49 +56,105 @@ class SynthesizeNode(Runnable):
             "status",
             {
                 "step": "deep_research_synthesize",
-                "message": "📝 Synthesizing research findings...",
+                "message": "Synthesizing comprehensive research report...",
             },
         )
 
+        # Build detailed findings text
         findings_text = ""
         for i, finding in enumerate(state.findings):
             findings_text += f"\n### Finding {i + 1}: {finding.topic}\n"
-            findings_text += f"Key Facts:\n"
+            findings_text += f"**Confidence:** {finding.confidence:.0%}\n"
+            findings_text += f"**Key Facts:**\n"
             for fact in finding.key_facts:
                 findings_text += f"- {fact}\n"
             if finding.sources:
-                findings_text += f"\nSources: {', '.join(finding.sources)}\n"
-            findings_text += f"\nConfidence: {finding.confidence:.0%}\n"
+                findings_text += f"\n**Sources Used:** {', '.join(finding.sources[:3])}\n"
         
-        search_summary = ""
-        if state.search_results:
-            search_summary = f"\n\nAnalyzed {len(state.search_results)} sources across {state.max_iterations} iterations."
+        # Build deduplicated sources text with proper numbering
+        sources_dict = {}  # url -> (title, snippet)
+        for result in state.search_results:
+            if result.url not in sources_dict and result.url:
+                title = result.title if result.title else "Source"
+                snippet = result.snippet[:250] if result.snippet else ""
+                sources_dict[result.url] = (title, snippet)
+        
+        sources_text = ""
+        for idx, (url, (title, snippet)) in enumerate(sources_dict.items(), 1):
+            sources_text += f"\n[{idx}] Title: {title}\n"
+            sources_text += f"    URL: {url}\n"
+            if snippet:
+                sources_text += f"    Key Info: {snippet}...\n"
+        
+        # Coverage analysis for the synthesis
+        covered_topics = set()
+        for finding in state.findings:
+            covered_topics.add(finding.topic.strip())
+        
+        coverage_text = ""
+        for i, question in enumerate(state.research_plan):
+            is_covered = any(question.strip().lower() in t.lower() or t.lower() in question.strip().lower() for t in covered_topics)
+            status = "✅ Covered" if is_covered else "❌ Not fully covered"
+            coverage_text += f"{i+1}. {question} — {status}\n"
+
+        # Detect language for the report
+        detected_language = "Vietnamese" if any(
+            c in state.user_question for c in "àáảãạèéẻẽẹìíỉĩịòóỏõọùúủũụỳýỷỹỵđ"
+        ) else "English"
+
+        # Sub-questions display
+        sub_questions = "\n".join([f"  {i+1}. {q}" for i, q in enumerate(state.research_plan)])
 
         messages = [
-            SystemMessage(content=SYNTHESIZE_SYSTEM),
+            SystemMessage(content=DEEP_RESEARCH_PROMPTS["SYNTHESIZE_SYSTEM"]),
             HumanMessage(content=SYNTHESIZE_USER.format(
                 user_question=state.user_question,
-                findings_text=findings_text[:6000],
+                total_iterations=state.current_iteration,
+                total_sources=len(sources_dict),
+                sub_questions=sub_questions,
+                findings_text=findings_text[:8000],
+                sources_text=sources_text[:5000],
+                coverage_text=coverage_text,
+                detected_language=detected_language,
             )),
         ]
 
-        service_logger.info("Synthesizing final report")
+        service_logger.info(
+            f"Synthesizing final report: {len(state.findings)} findings, "
+            f"{len(sources_dict)} unique sources, {state.current_iteration} iterations"
+        )
 
-        response = await azure_chat_openai_gpt_5_1.ainvoke(messages)
-        final_report = response.content
+        # Stream tokens natively using tagged config so the outer graph's
+        # astream_events captures on_chat_model_stream events in real-time.
+        llm_with_config = azure_chat_openai_gpt_5_1.with_config(
+            {"tags": [Tag.streaming_node.name]}
+        )
 
-        final_report += search_summary
+        full_output = ""
+        async for chunk in llm_with_config.astream(messages):
+            content = getattr(chunk, "content", None)
+            if not content:
+                continue
+            full_output += content
 
-        service_logger.info(f"Final report synthesized: {len(final_report)} characters")
+        # Append research metadata summary
+        metadata_summary = (
+            f"\n\n---\n*Research completed: {state.current_iteration} iteration(s), "
+            f"{len(sources_dict)} sources analyzed, {len(state.findings)} finding groups.*"
+        )
+        full_output += metadata_summary
+
+        service_logger.info(f"Final report synthesized: {len(full_output)} characters")
 
         dispatch_custom_event(
             "status",
             {
                 "step": "deep_research_synthesize",
-                "message": "✅ Research report complete.",
+                "message": "Research report complete.",
             },
         )
 
         return {
-            "final_report": final_report,
+            "final_report": full_output,
+            "output": full_output,
         }

@@ -21,7 +21,7 @@ class GenerateNode(Runnable):
             "status",
             {
                 "step": "image_generate",
-                "message": "🖼️ Generating image...",
+                "message": "Generating image...",
             },
         )
 
@@ -48,7 +48,7 @@ class GenerateNode(Runnable):
                 "status",
                 {
                     "step": "image_generate",
-                    "message": f"✅ Generated {len(result.urls)} image(s).",
+                    "message": f"Generated {len(result.urls)} image(s).",
                 },
             )
 
@@ -64,7 +64,7 @@ class GenerateNode(Runnable):
                 "status",
                 {
                     "step": "image_generate",
-                    "message": f"⚠️ Image generation failed: {str(e)[:100]}",
+                    "message": f"Image generation failed: {str(e)[:100]}",
                 },
             )
             return {

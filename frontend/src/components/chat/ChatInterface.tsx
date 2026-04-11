@@ -26,6 +26,7 @@ export function ChatInterface() {
         currentChatId,
         chatSessions,
         pendingPlan,
+        researchPhase,
         createNewChat,
         createDeepResearchPlan,
         approveDeepResearchPlan,
@@ -234,14 +235,18 @@ export function ChatInterface() {
                             {messages.map((msg) => (
                                 <MessageBubble key={msg.id} message={msg} />
                             ))}
-                            {/* Loading indicator for Deep Research - show spinner when creating plan or researching */}
-                            {activeFeatures.deepResearch && isLoading && statusSteps.length === 0 && (
+                            {/* Deep Research - show current status */}
+                            {activeFeatures.deepResearch && isLoading && (
                                 <div className="flex items-center gap-3 p-4 animate-in fade-in duration-300">
                                     <div className="flex h-5 w-5 items-center justify-center">
                                         <Loader2 className="h-4 w-4 animate-spin text-primary" />
                                     </div>
                                     <span className="text-sm font-medium text-text-muted">
-                                        {pendingPlan ? 'Creating research plan...' : 'Processing...'}
+                                        {researchPhase === 'researching'
+                                            ? (statusSteps.length > 0 ? statusSteps[statusSteps.length - 1] : 'Researching...')
+                                            : researchPhase === 'planning'
+                                                ? 'Creating research plan...'
+                                                : (pendingPlan ? 'Review plan before starting...' : 'Processing...')}
                                     </span>
                                 </div>
                             )}
@@ -259,24 +264,13 @@ export function ChatInterface() {
                                                 </span>
                                             </div>
                                         ))
-) : (
+                                    ) : (
                                         <div className="text-sm text-text-muted">
                                             {isLoading && pendingPlan === null ? 'Processing...' : 
                                              pendingPlan ? 'Review plan before starting...' : 
                                              'Waiting for input...'}
                                         </div>
                                     )}
-                                </div>
-                            )}
-                            {/* Show loading spinner when creating plan or researching */}
-                            {activeFeatures.deepResearch && isLoading && (
-                                <div className="flex items-center gap-3 p-4 animate-in fade-in duration-300">
-                                    <div className="flex h-5 w-5 items-center justify-center">
-                                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                    </div>
-                                    <span className="text-sm font-medium text-text-muted">
-                                        {pendingPlan ? 'Processing...' : 'Creating research plan...'}
-                                    </span>
                                 </div>
                             )}
                             <div ref={scrollRef} />
@@ -449,11 +443,17 @@ export function ChatInterface() {
                                         </div>
                                     ))}
                                 </div>
+                            ) : isLoading && researchPhase === 'planning' ? (
+                                <div className="text-sm text-text-muted animate-pulse">
+                                    Creating research plan...
+                                </div>
+                            ) : isLoading && researchPhase === 'researching' ? (
+                                <div className="text-sm text-text-muted animate-pulse">
+                                    Researching...
+                                </div>
                             ) : (
                                 <div className="text-sm text-text-muted">
-                                    {isLoading && pendingPlan === null ? 'Processing...' : 
-                                     pendingPlan ? 'Review plan before starting...' : 
-                                     'Waiting for input...'}
+                                    {pendingPlan ? 'Review plan before starting...' : 'Waiting for input...'}
                                 </div>
                             )}
                         </div>
