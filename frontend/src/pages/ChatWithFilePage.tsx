@@ -19,9 +19,9 @@ import {
 import { API_BASE_URL } from "@/lib/api"
 import { useAuthStore } from "@/store/auth-store"
 import { type FileItem, useFileStore } from "@/store/file-store"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useSearchParams } from "react-router-dom"
-import { useChatStore } from "@/store/chat-store"
+import { useChatStore, type FileCitation } from "@/store/chat-store"
 import { toast } from "sonner"
 
 export default function ChatWithFilePage() {
@@ -54,6 +54,28 @@ export default function ChatWithFilePage() {
     const [isPreviewLoading, setIsPreviewLoading] = useState(false)
     const [previewReloadVersion, setPreviewReloadVersion] = useState(0)
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const pdfIframeRef = useRef<HTMLIFrameElement>(null)
+    const [activeCitation, setActiveCitation] = useState<FileCitation | null>(null)
+
+    const handleFileCitationClick = useCallback((citation: FileCitation) => {
+        setActiveCitation(citation)
+
+        // Navigate PDF to the correct page
+        if (citation.page_no && previewUrl && previewType === 'pdf') {
+            // Find the file in available files to make sure we're viewing the right one
+            const citationFile = availableFiles.find(f => f.id === citation.file_id)
+            if (citationFile && citationFile.id !== selectedFile?.id) {
+                // Switch to the correct file first
+                setSelectedFile(citationFile)
+            }
+
+            // Navigate the iframe to the correct page using hash params
+            if (pdfIframeRef.current) {
+                const baseUrl = previewUrl.split('#')[0]
+                pdfIframeRef.current.src = `${baseUrl}#page=${citation.page_no}`
+            }
+        }
+    }, [previewUrl, previewType, availableFiles, selectedFile])
 
     useEffect(() => {
         const loadFiles = async () => {
@@ -855,7 +877,7 @@ export default function ChatWithFilePage() {
                     </div>
                 </div>
                 <div className="flex-1 overflow-hidden">
-                    <ChatInterface />
+                    <ChatInterface onFileCitationClick={handleFileCitationClick} />
                 </div>
             </div>
 
@@ -954,11 +976,36 @@ export default function ChatWithFilePage() {
                                 <p className="text-sm text-text-muted">Loading preview...</p>
                             </div>
                         ) : previewType === 'pdf' && previewUrl ? (
-                            <iframe
-                                title={selectedFile.name}
-                                src={previewUrl}
-                                className="w-full h-full"
-                            />
+                            <div className="h-full flex flex-col">
+                                {/* Active Citation Indicator */}
+                                {activeCitation && (
+                                    <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200 shrink-0">
+                                        <div className="flex items-center gap-2 flex-1">
+                                            <span className="inline-flex items-center justify-center min-w-[2rem] h-5 text-[10px] font-bold text-white bg-amber-500 rounded-full px-1.5">
+                                                [{activeCitation.citation_label}]
+                                            </span>
+                                            <span className="text-xs text-amber-800 font-medium">
+                                                {activeCitation.file_name}
+                                                {activeCitation.page_no ? ` — Page ${activeCitation.page_no}` : ''}
+                                            </span>
+                                        </div>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-5 w-5 rounded text-amber-600 hover:text-amber-800 hover:bg-amber-100"
+                                            onClick={() => setActiveCitation(null)}
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </Button>
+                                    </div>
+                                )}
+                                <iframe
+                                    ref={pdfIframeRef}
+                                    title={selectedFile.name}
+                                    src={previewUrl}
+                                    className="w-full flex-1"
+                                />
+                            </div>
                         ) : previewType === 'image' && previewUrl ? (
                             <div className="h-full w-full flex items-center justify-center bg-surface p-4">
                                 <img

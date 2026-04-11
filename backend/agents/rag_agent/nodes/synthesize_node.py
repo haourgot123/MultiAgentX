@@ -3,7 +3,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.callbacks import dispatch_custom_event
 from loguru import logger
 
-from backend.agents.rag_agent.state import RAGAgentState, RetrievedChunk, Tag
+from backend.agents.rag_agent.state import RAGAgentState, Tag
 from backend.utils.llm import azure_chat_openai_gpt_5_1
 from backend.agents.prompts.rag import RAG_PROMPTS
 
@@ -27,46 +27,36 @@ class SynthesizeNode(Runnable):
             },
         )
 
-        chunks = state.reranked_chunks if state.reranked_chunks else state.retrieved_chunks
+        context = state.combined_context
 
-        if not chunks:
-            service_logger.warning("No chunks to synthesize")
+        if not context or not context.strip():
+            service_logger.warning("No context to synthesize — returning no-context response")
+            dispatch_custom_event(
+                "status",
+                {
+                    "step": "rag_synthesize",
+                    "message": "No relevant documents found.",
+                },
+            )
             return {
-                "context": "",
                 "final_answer": RAG_PROMPTS["NO_CONTEXT_RESPONSE"],
             }
 
-        # Build rich context from top chunks — increased from 5 to 8
-        context_parts = []
+        # Count unique files from citation_map
         unique_files = set()
-        for i, chunk in enumerate(chunks[:8]):
-            chunk_obj = RetrievedChunk(**chunk) if isinstance(chunk, dict) else chunk
-            
-            # Build rich source header with metadata
-            source_header = f"[{i+1}]"
-            if chunk_obj.file_name:
-                source_header = f"[{i+1}] File: {chunk_obj.file_name}"
-                unique_files.add(chunk_obj.file_name)
-                if chunk_obj.page_no:
-                    source_header += f", Page {chunk_obj.page_no}"
-            
-            # Include relevance score if available
-            if chunk_obj.score > 0:
-                source_header += f" (relevance: {chunk_obj.score:.2f})"
-            
-            context_parts.append(f"{source_header}\n{chunk_obj.text}")
-
-        context = "\n\n---\n\n".join(context_parts)
+        for label, data in state.citation_map.items():
+            if isinstance(data, dict):
+                unique_files.add(data.get("file_name", "unknown"))
 
         service_logger.info(
-            f"Synthesizing from {len(chunks[:8])} chunks across {len(unique_files)} files"
+            f"Synthesizing from context ({len(context)} chars) across {len(unique_files)} file(s)"
         )
 
         messages = [
             SystemMessage(content=RAG_PROMPTS["SYNTHESIZE_SYSTEM"]),
             HumanMessage(content=RAG_PROMPTS["SYNTHESIZE_USER"].format(
                 user_question=state.user_question,
-                context=context[:10000],  # Increased from 8K to 10K
+                context=context[:12000],
             )),
         ]
 
@@ -91,7 +81,9 @@ class SynthesizeNode(Runnable):
                 continue
             final_answer += content
 
-        service_logger.info(f"Synthesized answer of {len(final_answer)} characters from {len(unique_files)} files")
+        service_logger.info(
+            f"Synthesized answer of {len(final_answer)} characters from {len(unique_files)} files"
+        )
 
         dispatch_custom_event(
             "status",
@@ -102,6 +94,5 @@ class SynthesizeNode(Runnable):
         )
 
         return {
-            "context": context,
             "final_answer": final_answer,
         }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { useChatStore } from "@/store/chat-store"
+import { useChatStore, type FileCitation } from "@/store/chat-store"
 import { useFileStore } from "@/store/file-store"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { MessageBubble } from "./MessageBubble"
@@ -15,7 +15,11 @@ import { toast } from "sonner"
 import { PlanApprovalModal } from "./PlanApprovalModal"
 import { apiFetch } from "@/lib/api"
 
-export function ChatInterface() {
+interface ChatInterfaceProps {
+    onFileCitationClick?: (citation: FileCitation) => void
+}
+
+export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
     const location = useLocation()
     const {
         getCurrentMessages,
@@ -33,6 +37,7 @@ export function ChatInterface() {
         setPendingPlan,
     } = useChatStore()
     const files = useFileStore((state) => state.files)
+    const fileChatCitations = useChatStore((state) => state.fileChatCitations)
     const messages = getCurrentMessages()
     const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -233,7 +238,12 @@ export function ChatInterface() {
                                 </div>
                             )}
                             {messages.map((msg) => (
-                                <MessageBubble key={msg.id} message={msg} />
+                                <MessageBubble
+                                    key={msg.id}
+                                    message={msg}
+                                    fileCitations={isFileChat && currentChatId ? fileChatCitations[currentChatId] : undefined}
+                                    onFileCitationClick={isFileChat ? onFileCitationClick : undefined}
+                                />
                             ))}
                             {/* Deep Research - show current status */}
                             {activeFeatures.deepResearch && isLoading && (

@@ -33,13 +33,24 @@ class QueryTransformNode(Runnable):
         pass
 
     async def ainvoke(self, state: RAGAgentState, **kwargs):
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "rag_query_transform",
-                "message": "Optimizing query for document search...",
-            },
-        )
+        is_retry = state.retry_count > 0 and state.evaluation_feedback
+
+        if is_retry:
+            dispatch_custom_event(
+                "status",
+                {
+                    "step": "rag_query_transform",
+                    "message": f"Refining search query (attempt {state.retry_count + 1})...",
+                },
+            )
+        else:
+            dispatch_custom_event(
+                "status",
+                {
+                    "step": "rag_query_transform",
+                    "message": "Optimizing query for document search...",
+                },
+            )
 
         # Build conversation context from memories
         context = ""
@@ -50,24 +61,37 @@ class QueryTransformNode(Runnable):
                 for msg in recent_messages
             ])
 
-        messages = [
-            SystemMessage(content=RAG_PROMPTS["QUERY_TRANSFORM_SYSTEM"]),
-            HumanMessage(content=RAG_PROMPTS["QUERY_TRANSFORM_USER"].format(
-                user_question=state.user_question,
-                context=context[:1000] if context else "No previous context"
-            )),
-        ]
+        # On retry, include evaluation feedback to help refine the query
+        if is_retry:
+            messages = [
+                SystemMessage(content=RAG_PROMPTS["QUERY_TRANSFORM_SYSTEM"]),
+                HumanMessage(content=RAG_PROMPTS["QUERY_TRANSFORM_RETRY_USER"].format(
+                    user_question=state.user_question,
+                    context=context[:1000] if context else "No previous context",
+                    previous_query=state.transformed_query,
+                    evaluation_feedback=state.evaluation_feedback[:500],
+                    retry_count=state.retry_count,
+                )),
+            ]
+        else:
+            messages = [
+                SystemMessage(content=RAG_PROMPTS["QUERY_TRANSFORM_SYSTEM"]),
+                HumanMessage(content=RAG_PROMPTS["QUERY_TRANSFORM_USER"].format(
+                    user_question=state.user_question,
+                    context=context[:1000] if context else "No previous context"
+                )),
+            ]
 
-        service_logger.info(f"Transforming query: '{state.user_question[:100]}...'")
+        service_logger.info(
+            f"Transforming query (retry={is_retry}, attempt={state.retry_count}): "
+            f"'{state.user_question[:100]}...'"
+        )
 
         llm_with_structure = azure_chat_openai_gpt_5_1.with_structured_output(TransformedQuery)
         result = await llm_with_structure.ainvoke(messages)
 
-        # Use the HyDE hypothetical answer as the primary query if available,
-        # because it better matches document language rather than question language
         primary_query = result.optimized_query
-        
-        # Log all generated query variants
+
         service_logger.info(
             f"Transformed query: primary='{primary_query}', "
             f"keywords={result.keywords}, "

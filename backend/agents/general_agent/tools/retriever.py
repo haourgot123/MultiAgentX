@@ -18,6 +18,8 @@ class RetrievedChunk(BaseModel):
     file_name: str = ""
     file_id: int = 0
     page_no: Optional[int] = None
+    chunk_index: int = 0
+    bbox_json: str = ""
     metadata: dict = {}
 
 
@@ -41,6 +43,7 @@ class HybridRetriever:
         self.collection_name = _settings.milvus.collection_name
         self._embedding_client = None
         self._collection = None
+        self._available_fields = None
 
     def _get_embedding_client(self) -> AzureOpenAI:
         if self._embedding_client is None:
@@ -62,18 +65,35 @@ class HybridRetriever:
         return self._embedding_client
 
     def _get_collection(self) -> Collection:
-        if self._collection is None:
-            connect_kwargs = {
-                "host": _settings.milvus.host,
-                "port": _settings.milvus.port,
-            }
-            if _settings.milvus.user:
-                connect_kwargs["user"] = _settings.milvus.user
-            if _settings.milvus.password:
-                connect_kwargs["password"] = _settings.milvus.password
+        # Ensure Milvus connection is alive (reconnect if dropped)
+        connect_kwargs = {
+            "host": _settings.milvus.host,
+            "port": _settings.milvus.port,
+        }
+        if _settings.milvus.user:
+            connect_kwargs["user"] = _settings.milvus.user
+        if _settings.milvus.password:
+            connect_kwargs["password"] = _settings.milvus.password
 
-            connections.connect(alias="retriever_default", **connect_kwargs)
-            self._collection = Collection(self.collection_name)
+        try:
+            # Check if connection is still alive
+            if not connections.has_connection("default"):
+                connections.connect(alias="default", **connect_kwargs)
+            else:
+                # Verify connection is actually working
+                from pymilvus import utility
+                utility.list_collections(using="default")
+        except Exception:
+            # Connection lost — reconnect
+            try:
+                connections.disconnect("default")
+            except Exception:
+                pass
+            connections.connect(alias="default", **connect_kwargs)
+            self._collection = None  # Force collection refresh
+
+        if self._collection is None:
+            self._collection = Collection(self.collection_name, using="default")
             self._collection.load()
         return self._collection
 
@@ -84,6 +104,24 @@ class HybridRetriever:
             input=[text],
         )
         return response.data[0].embedding
+
+    def _get_available_output_fields(self) -> List[str]:
+        """Detect which output fields actually exist in the collection schema."""
+        if self._available_fields is not None:
+            return self._available_fields
+
+        collection = self._get_collection()
+        schema_fields = {f.name for f in collection.schema.fields}
+
+        # Desired fields in priority order
+        desired = ["id", "text", "file_name", "file_id", "page_no", "chunk_index", "bbox", "metadata_json"]
+        self._available_fields = [f for f in desired if f in schema_fields]
+
+        service_logger.info(
+            f"Collection '{self.collection_name}' available fields: {self._available_fields} "
+            f"(schema has {len(schema_fields)} fields total)"
+        )
+        return self._available_fields
 
     def _vector_search(
         self,
@@ -110,7 +148,7 @@ class HybridRetriever:
             param=search_params,
             limit=top_k,
             expr=expr,
-            output_fields=["id", "text", "file_name", "file_id", "page_no", "metadata_json"],
+            output_fields=self._get_available_output_fields(),
         )
 
         chunks = []
@@ -123,6 +161,8 @@ class HybridRetriever:
                     file_name=hit.entity.get("file_name", ""),
                     file_id=int(hit.entity.get("file_id", 0)),
                     page_no=hit.entity.get("page_no"),
+                    chunk_index=int(hit.entity.get("chunk_index", 0)),
+                    bbox_json=hit.entity.get("bbox", "") or "",
                     metadata=self._parse_metadata(hit.entity.get("metadata_json")),
                 )
                 chunks.append(chunk)
@@ -153,7 +193,7 @@ class HybridRetriever:
         try:
             results = collection.query(
                 expr=full_expr,
-                output_fields=["id", "text", "file_name", "file_id", "page_no", "metadata_json"],
+                output_fields=self._get_available_output_fields(),
                 limit=top_k,
             )
 
@@ -168,6 +208,8 @@ class HybridRetriever:
                     file_name=row.get("file_name", ""),
                     file_id=int(row.get("file_id", 0)),
                     page_no=row.get("page_no"),
+                    chunk_index=int(row.get("chunk_index", 0)),
+                    bbox_json=row.get("bbox", "") or "",
                     metadata=self._parse_metadata(row.get("metadata_json")),
                 )
                 chunks.append(chunk)
@@ -269,7 +311,7 @@ class HybridRetriever:
 
     def close(self):
         try:
-            connections.disconnect("retriever_default")
+            connections.disconnect("default")
         except Exception:
             pass
 

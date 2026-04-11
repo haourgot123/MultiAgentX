@@ -9,6 +9,14 @@ export type Message = {
     timestamp: number
 }
 
+export type FileCitation = {
+    citation_label: string
+    file_id: number
+    file_name: string
+    page_no: number | null
+    chunk_index: number
+}
+
 export type PlanRequest = {
     sessionId: string
     plan: string[]
@@ -57,6 +65,8 @@ type ChatStore = {
     chatSessions: ChatSession[]
     messagesByChat: Record<number, Message[]>
     fileChatNewRequestId: number
+    fileChatCitations: Record<number, FileCitation[]>  // keyed by conversation_id
+    activeCitation: FileCitation | null
     input: string
     isLoading: boolean
     statusSteps: string[]
@@ -85,6 +95,8 @@ type ChatStore = {
     renameChat: (id: number, newTitle: string) => Promise<void>
     updateConversationFiles: (id: number, fileIds: number[]) => Promise<void>
     setPendingPlan: (plan: PlanRequest | null) => void
+    setActiveCitation: (citation: FileCitation | null) => void
+    getFileChatCitations: () => FileCitation[]
     
     streamChat: (
         message: Omit<Message, 'id' | 'timestamp'>,
@@ -133,6 +145,8 @@ export const useChatStore = create<ChatStore>()(
             chatSessions: [],
             messagesByChat: {},
             fileChatNewRequestId: 0,
+            fileChatCitations: {},
+            activeCitation: null,
             input: '',
             isLoading: false,
             statusSteps: [],
@@ -402,10 +416,18 @@ export const useChatStore = create<ChatStore>()(
                     }
 
                     if (evt.event === 'done') {
+                        // Store citations from file chat
+                        const citations = evt.data?.citations as FileCitation[] | undefined
                         set((state) => ({
                             ...state,
                             statusSteps: [],
                             isLoading: false,
+                            ...(citations && citations.length > 0 && currentChatId ? {
+                                fileChatCitations: {
+                                    ...state.fileChatCitations,
+                                    [currentChatId]: citations,
+                                },
+                            } : {}),
                         }))
                         return
                     }
@@ -433,6 +455,12 @@ export const useChatStore = create<ChatStore>()(
     setInput: (input) => set({ input }),
     setIsLoading: (isLoading) => set({ isLoading }),
     setMode: (mode) => set({ mode }),
+    setActiveCitation: (citation) => set({ activeCitation: citation }),
+    getFileChatCitations: () => {
+        const state = get()
+        if (!state.currentChatId) return []
+        return state.fileChatCitations[state.currentChatId] || []
+    },
     requestFileChatNew: () =>
         set((state) => ({ fileChatNewRequestId: state.fileChatNewRequestId + 1 })),
 

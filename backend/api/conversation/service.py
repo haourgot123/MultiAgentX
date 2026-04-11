@@ -15,6 +15,7 @@ from backend.api.conversation.model import (
     ConversationMessage,
     ConversationMessageCreateRequest,
     ConversationRenameRequest,
+    RetrievalRecord,
 )
 from backend.api.files.model import StoredFile
 from backend.api.conversation.model import DeepResearchPlanResponse
@@ -25,6 +26,9 @@ from backend.agents.general_agent.state import GeneralAgentState, Tag
 from backend.agents.general_agent.graph import GeneralAgentGraph
 from backend.agents.deep_research_agent.state import DeepResearchAgentState
 from backend.agents.deep_research_agent.graph import DeepResearchAgentGraph
+from backend.agents.rag_agent.state import RAGAgentState
+from backend.agents.rag_agent.state import Tag as RAGTag
+from backend.agents.rag_agent.graph import RAGAgentGraph
 from backend.memory.mem0_client import mem0_client
 from backend.utils.research_session import research_session_manager
 
@@ -417,8 +421,204 @@ class ConversationService:
         db_session: Session,
         user_id: int,
         conversation_id: int,
+        user_question: str,
     ):
-        pass
+        """Chat with uploaded files using RAG agent with evaluation loop."""
+        request_logger = self._get_request_logger(request, user_id)
+        conversation = self._get_user_conversation(
+            db_session, user_id, conversation_id, request_logger
+        )
+
+        if conversation.chat_type != "file":
+            raise InvalidRequestException(message=Message.MESSAGE_INVALID_REQUEST)
+
+        # Get file IDs from conversation
+        file_ids = [file.id for file in conversation.files]
+        if not file_ids:
+            raise InvalidRequestException(
+                message="No files attached to this conversation. Please upload files first."
+            )
+
+        # Save user message
+        _, _ = self.add_message(
+            request,
+            db_session,
+            user_id,
+            conversation_id,
+            ConversationMessageCreateRequest(role="user", content=user_question),
+        )
+
+        # Get conversation history for context
+        messages = (
+            conversation.messages[-10:]
+            if len(conversation.messages) > 10
+            else conversation.messages
+        )
+
+        # Initialize RAG agent state
+        rag_state = RAGAgentState(
+            user_question=user_question,
+            memories=messages,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            file_ids=file_ids,
+        )
+
+        full_response = ""
+        final_state = {}
+
+        try:
+            graph = RAGAgentGraph()
+            config = graph._config_graph()
+
+            async for event in graph.compiled_graph.astream_events(
+                input=rag_state.model_dump(),
+                config=config,
+                version="v2",
+            ):
+                kind = event["event"]
+                tags = event.get("tags", [])
+
+                # Real-time LLM token streaming from SynthesizeNode
+                if (
+                    kind == "on_chat_model_stream"
+                    and RAGTag.streaming_node.name in tags
+                ):
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        delta = chunk.content
+                        full_response += delta
+                        yield self._format_sse_event("token", {"delta": delta})
+
+                # Status updates from all nodes
+                elif kind == "on_custom_event":
+                    event_name = event.get("name", "")
+                    event_data = event.get("data", {})
+
+                    if event_name == "status":
+                        msg = event_data.get("message", "")
+                        if msg:
+                            yield self._format_sse_event(
+                                "status",
+                                {
+                                    "step": event_data.get("step"),
+                                    "message": msg,
+                                },
+                            )
+
+                # Capture final graph state for retrieval records
+                if kind == "on_chain_end" and event.get("name") == "LangGraph":
+                    final_state = event.get("data", {}).get("output", {})
+
+            # Save assistant message
+            assistant_message = None
+            if full_response:
+                msg_obj, _ = self.add_message(
+                    request,
+                    db_session,
+                    user_id,
+                    conversation_id,
+                    ConversationMessageCreateRequest(
+                        role="assistant",
+                        content=full_response,
+                    ),
+                )
+                assistant_message = msg_obj
+                request_logger.info("Saved RAG assistant message")
+
+            # Persist retrieval records for PDF bbox highlighting
+            citation_map = final_state.get("citation_map", {})
+            if assistant_message and citation_map:
+                try:
+                    self._save_retrieval_records(
+                        db_session=db_session,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        message_id=assistant_message.id,
+                        citation_map=citation_map,
+                    )
+                    request_logger.info(
+                        f"Saved {len(citation_map)} retrieval records"
+                    )
+                except Exception as e:
+                    request_logger.error(
+                        f"Failed to save retrieval records: {e}"
+                    )
+
+            # Send citations data to FE in the done event
+            citations_payload = []
+            for label, data in citation_map.items():
+                if isinstance(data, dict):
+                    citations_payload.append({
+                        "citation_label": label,
+                        "file_id": data.get("file_id"),
+                        "file_name": data.get("file_name", ""),
+                        "page_no": data.get("page_no"),
+                        "chunk_index": data.get("chunk_index", 0),
+                    })
+
+            yield self._format_sse_event(
+                "done",
+                {
+                    "output": full_response,
+                    "citations": citations_payload,
+                },
+            )
+
+        except Exception as e:
+            request_logger.error("Error in file_chat RAG agent: {}", e)
+            error_message = Message.MESSAGE_GENERAL_AGENT_ERROR
+            _, _ = self.add_message(
+                request,
+                db_session,
+                user_id,
+                conversation_id,
+                ConversationMessageCreateRequest(
+                    role="assistant",
+                    content=error_message,
+                ),
+            )
+            yield self._format_sse_event(
+                "error", {"message": error_message}
+            )
+        finally:
+            if "graph" in locals():
+                del graph
+
+    @staticmethod
+    def _save_retrieval_records(
+        db_session: Session,
+        user_id: int,
+        conversation_id: int,
+        message_id: int,
+        citation_map: dict,
+    ) -> None:
+        """Persist retrieval results to RetrievalRecord table for FE bbox highlighting."""
+        now = get_utc_now()
+        records = []
+        for citation_label, data in citation_map.items():
+            if not isinstance(data, dict):
+                continue
+            record = RetrievalRecord(
+                conversation_id=conversation_id,
+                message_id=message_id,
+                user_id=user_id,
+                chunk_id=data.get("chunk_id", ""),
+                file_id=data.get("file_id", 0),
+                file_name=data.get("file_name"),
+                chunk_index=data.get("chunk_index", 0),
+                citation_label=citation_label,
+                page_no=data.get("page_no"),
+                bbox_json=data.get("bbox_json"),
+                chunk_text=data.get("chunk_text"),
+                relevance_score=data.get("relevance_score"),
+                created_at=now,
+            )
+            records.append(record)
+
+        if records:
+            db_session.add_all(records)
+            db_session.commit()
 
     async def create_deep_research_plan(
         self,

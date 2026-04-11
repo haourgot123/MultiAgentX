@@ -20,6 +20,8 @@ from backend.api.conversation.model import (
     DeepResearchPlanRequest,
     DeepResearchApproveRequest,
     DeepResearchPlanResponse,
+    RetrievalRecord,
+    RetrievalRecordResponse,
 )
 from backend.api.conversation.service import conversation_service
 from backend.api.data_ingestion.model import IngestionStatus
@@ -243,7 +245,8 @@ async def chat(
                 request, 
                 db_session, 
                 request.state.user_id, 
-                chat_request.conversation_id, 
+                chat_request.conversation_id,
+                chat_request.user_question,
             ),
             media_type="text/event-stream",
         )
@@ -292,3 +295,29 @@ async def approve_deep_research_plan(
         ),
         media_type="text/event-stream",
     )
+
+
+@router.get(
+    "/{conversation_id}/messages/{message_id}/retrievals",
+    response_model=list[RetrievalRecordResponse],
+    status_code=status.HTTP_200_OK,
+)
+def get_message_retrievals(
+    request: Request,
+    conversation_id: int,
+    message_id: int,
+    db_session: Session = Depends(get_db),
+):
+    """Get retrieval records for a specific message (bbox data for PDF highlighting)."""
+    user_id = request.state.user_id
+    records = (
+        db_session.query(RetrievalRecord)
+        .filter(
+            RetrievalRecord.conversation_id == conversation_id,
+            RetrievalRecord.message_id == message_id,
+            RetrievalRecord.user_id == user_id,
+        )
+        .order_by(RetrievalRecord.citation_label)
+        .all()
+    )
+    return [RetrievalRecordResponse.model_validate(r) for r in records]

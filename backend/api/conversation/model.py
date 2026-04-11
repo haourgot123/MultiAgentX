@@ -63,6 +63,50 @@ class ConversationMessage(Base):
     conversation = relationship("Conversation", back_populates="messages")
 
 
+class RetrievalRecord(Base):
+    """Stores retrieval results per assistant message for PDF bbox highlighting and citations."""
+    __tablename__ = "RetrievalRecord"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    conversation_id = Column(
+        Integer,
+        ForeignKey("Conversation.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    message_id = Column(
+        Integer,
+        ForeignKey("ConversationMessage.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    user_id = Column(
+        Integer,
+        ForeignKey("User.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+
+    # Chunk identification
+    chunk_id = Column(UnicodeText, nullable=False)
+    file_id = Column(Integer, nullable=False)
+    file_name = Column(UnicodeText, nullable=True)
+    chunk_index = Column(Integer, nullable=False, default=0)
+
+    # Citation info
+    citation_label = Column(UnicodeText, nullable=False)
+
+    # Position info for PDF highlighting
+    page_no = Column(Integer, nullable=True)
+    bbox_json = Column(UnicodeText, nullable=True)
+
+    # Content
+    chunk_text = Column(UnicodeText, nullable=True)
+    relevance_score = Column(UnicodeText, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class ConversationCreateRequest(BaseModel):
     title: Optional[str] = Field(None, max_length=255, description="Conversation title")
     chat_type: Literal["normal", "file"] = Field(
@@ -151,3 +195,19 @@ class DeepResearchPlanResponse(BaseModel):
     session_id: str = Field(..., description="Research session ID")
     plan: List[str] = Field(..., description="Generated research plan sub-questions")
     message: str = Field(..., description="Status message")
+
+
+class RetrievalRecordResponse(BaseModel):
+    id: int = Field(..., description="Retrieval record ID")
+    chunk_id: str = Field(..., description="Milvus chunk ID")
+    file_id: int = Field(..., description="Source file ID")
+    file_name: Optional[str] = Field(None, description="Source file name")
+    chunk_index: int = Field(0, description="Chunk index within file")
+    citation_label: str = Field(..., description="Citation label e.g. '1.2'")
+    page_no: Optional[int] = Field(None, description="Page number in PDF")
+    bbox_json: Optional[str] = Field(None, description="Bounding box JSON for PDF highlighting")
+    chunk_text: Optional[str] = Field(None, description="Chunk text content")
+    relevance_score: Optional[str] = Field(None, description="Relevance score")
+
+    model_config = ConfigDict(from_attributes=True)
+

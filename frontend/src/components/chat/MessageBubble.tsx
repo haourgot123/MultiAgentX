@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import type { Message } from "@/store/chat-store"
+import type { Message, FileCitation } from "@/store/chat-store"
 import { Bot, User, Globe, FileText } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -10,6 +10,8 @@ import { useMemo } from "react"
 
 interface MessageBubbleProps {
     message: Message
+    fileCitations?: FileCitation[]
+    onFileCitationClick?: (citation: FileCitation) => void
 }
 
 interface Source {
@@ -72,12 +74,24 @@ function parseCitationMap(content: string): Map<number, { url: string; title: st
 }
 
 // Process citations in content to make them styled HTML elements
-function processCitations(content: string): string {
+function processCitations(content: string, fileCitations?: FileCitation[]): string {
     // First, add spacing between consecutive citations like [1][2][3] -> [1] [2] [3]
     let processed = content.replace(/\]\s*\[/g, '] [')
     
-    // Convert citation patterns [1], [2], etc. to styled superscript links
-    // Only match standalone citations, not markdown links [text](url)
+    // Handle file citations [X.Y] format (e.g., [1.2], [1.5])
+    if (fileCitations && fileCitations.length > 0) {
+        processed = processed.replace(/\[(\d+\.\d+)\](?!\()/g, (_match, label) => {
+            const citation = fileCitations.find(c => c.citation_label === label)
+            if (citation) {
+                const pageInfo = citation.page_no ? `Page ${citation.page_no}` : ''
+                return `<a href="#file-citation-${label}" class="file-citation-badge" data-citation-label="${label}" data-page="${citation.page_no || ''}" data-file-name="${citation.file_name || ''}" title="${citation.file_name} ${pageInfo}">[${label}]</a>`
+            }
+            return `<a href="#file-citation-${label}" class="file-citation-badge" data-citation-label="${label}">[${label}]</a>`
+        })
+    }
+    
+    // Convert web citation patterns [1], [2], etc. to styled superscript links
+    // Only match standalone citations, not markdown links [text](url) and not file citations [X.Y]
     processed = processed.replace(/\[(\d+)\](?!\()/g, (_match, num) => {
         return `<a href="#citation-${num}" class="citation-badge" data-citation="${num}">${num}</a>`
     })
@@ -85,9 +99,9 @@ function processCitations(content: string): string {
     return processed
 }
 
-function extractSources(content: string): { sources: Source[]; contentWithoutSources: string } {
+function extractSources(content: string, fileCitations?: FileCitation[]): { sources: Source[]; contentWithoutSources: string } {
     // First process citations
-    let processed = processCitations(content)
+    let processed = processCitations(content, fileCitations)
     
     const sources: Source[] = []
     const seenUrls = new Set<string>()
@@ -236,17 +250,17 @@ function SourceIcons({ sources }: { sources: Source[] }) {
     )
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, fileCitations, onFileCitationClick }: MessageBubbleProps) {
     const isUser = message.role === 'user'
     
     const { sources, contentWithoutSources, citationMap } = useMemo(() => {
         if (isUser) {
             return { sources: [], contentWithoutSources: message.content, citationMap: new Map<number, { url: string; title: string }>() }
         }
-        const extracted = extractSources(message.content)
+        const extracted = extractSources(message.content, fileCitations)
         const cMap = parseCitationMap(message.content)
         return { ...extracted, citationMap: cMap }
-    }, [message.content, isUser])
+    }, [message.content, isUser, fileCitations])
 
     return (
         <div
@@ -290,6 +304,30 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                             components={{
                                 p: ({ children }) => <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>,
                                 a: ({ href, children, className, ...props }) => {
+                                    // File citation badges [X.Y] - clickable to navigate PDF
+                                    if (className === 'file-citation-badge' || href?.startsWith('#file-citation-')) {
+                                        const label = (props as Record<string, string>)['data-citation-label'] || ''
+                                        const citation = fileCitations?.find(c => c.citation_label === label)
+                                        const pageNo = citation?.page_no
+                                        const fileName = citation?.file_name || ''
+                                        const handleClick = (e: React.MouseEvent) => {
+                                            e.preventDefault()
+                                            if (citation && onFileCitationClick) {
+                                                onFileCitationClick(citation)
+                                            }
+                                        }
+                                        return (
+                                            <a
+                                                href="#"
+                                                onClick={handleClick}
+                                                className="inline-flex items-center justify-center min-w-[2rem] h-5 text-[10px] font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-full px-1.5 no-underline cursor-pointer transition-all duration-200 hover:scale-110 shadow-sm mx-0.5 align-super"
+                                                title={`${fileName}${pageNo ? ` — Page ${pageNo}` : ''}`}
+                                                {...props}
+                                            >
+                                                {children}
+                                            </a>
+                                        )
+                                    }
                                     // Citation badge links - styled inline numbered badges
                                     if (className === 'citation-badge' || href?.startsWith('#citation-')) {
                                         const citationNum = href ? parseInt(href.replace('#citation-', '')) : NaN
