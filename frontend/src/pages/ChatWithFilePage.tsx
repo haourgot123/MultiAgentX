@@ -1,4 +1,5 @@
 import { ChatInterface } from "@/components/chat/ChatInterface"
+import { PdfViewer } from "@/components/pdf/PdfViewer"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { FileText, Download, Trash2, RefreshCw, ChevronDown, FolderOpen, Upload, X, ChevronUp } from "lucide-react"
@@ -17,9 +18,10 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog"
 import { API_BASE_URL } from "@/lib/api"
+import { fetchRetrievalRecords, parseBBoxJson, groupHighlightsByPage, type HighlightRegion, type RetrievalRecordResponse } from "@/lib/retrieval-api"
 import { useAuthStore } from "@/store/auth-store"
 import { type FileItem, useFileStore } from "@/store/file-store"
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useChatStore, type FileCitation } from "@/store/chat-store"
 import { toast } from "sonner"
@@ -54,28 +56,70 @@ export default function ChatWithFilePage() {
     const [isPreviewLoading, setIsPreviewLoading] = useState(false)
     const [previewReloadVersion, setPreviewReloadVersion] = useState(0)
     const fileInputRef = useRef<HTMLInputElement>(null)
-    const pdfIframeRef = useRef<HTMLIFrameElement>(null)
     const [activeCitation, setActiveCitation] = useState<FileCitation | null>(null)
+    const [activeCitationLabel, setActiveCitationLabel] = useState<string | null>(null)
+    const [retrievalRecords, setRetrievalRecords] = useState<RetrievalRecordResponse[]>([])
+    const [targetPage, setTargetPage] = useState<number | undefined>(undefined)
+    const [targetHighlightIndex, setTargetHighlightIndex] = useState<number | undefined>(undefined)
+    const [numPages, setNumPages] = useState(0)
+    // Counter that increments on every citation click to force scroll even for repeated clicks
+    const scrollTriggerRef = useRef(0)
 
-    const handleFileCitationClick = useCallback((citation: FileCitation) => {
+    const highlights = useMemo(() => {
+        const filtered = activeCitationLabel
+            ? retrievalRecords.filter(r => r.citation_label === activeCitationLabel)
+            : []
+        const bboxItems = filtered.flatMap(r => parseBBoxJson(r.bbox_json))
+        return groupHighlightsByPage(bboxItems)
+    }, [retrievalRecords, activeCitationLabel])
+
+    const loadRetrievalRecords = useCallback(async (messageId: number) => {
+        if (!currentChatId) return
+        try {
+            const records = await fetchRetrievalRecords(currentChatId, messageId)
+            setRetrievalRecords(records)
+        } catch {
+            // Ignore retrieval fetch errors
+        }
+    }, [currentChatId])
+
+    const handleFileCitationClick = useCallback((citation: FileCitation, messageId?: number) => {
         setActiveCitation(citation)
+        setActiveCitationLabel(citation.citation_label)
 
-        // Navigate PDF to the correct page
-        if (citation.page_no && previewUrl && previewType === 'pdf') {
-            // Find the file in available files to make sure we're viewing the right one
+        const pageNo = citation.page_no ?? undefined
+        setTargetPage(pageNo)
+        // Increment scroll trigger to force PdfViewer to re-scroll,
+        // even when clicking the same citation repeatedly
+        scrollTriggerRef.current += 1
+        setTargetHighlightIndex(scrollTriggerRef.current)
+
+        if (citation.file_id && previewType === 'pdf') {
             const citationFile = availableFiles.find(f => f.id === citation.file_id)
             if (citationFile && citationFile.id !== selectedFile?.id) {
-                // Switch to the correct file first
                 setSelectedFile(citationFile)
             }
-
-            // Navigate the iframe to the correct page using hash params
-            if (pdfIframeRef.current) {
-                const baseUrl = previewUrl.split('#')[0]
-                pdfIframeRef.current.src = `${baseUrl}#page=${citation.page_no}`
-            }
         }
-    }, [previewUrl, previewType, availableFiles, selectedFile])
+
+        if (messageId) {
+            void loadRetrievalRecords(messageId)
+        }
+    }, [previewType, availableFiles, selectedFile, loadRetrievalRecords])
+
+    const messages = currentChatId ? messagesByChat[currentChatId] : undefined
+    const lastAssistantMsgId = messages
+        ? [...messages].reverse().find(m => m.role === 'assistant')?.id
+        : undefined
+
+    useEffect(() => {
+        if (!currentChatId || !hasStartedChat || !lastAssistantMsgId) {
+            setRetrievalRecords([])
+            setActiveCitationLabel(null)
+            return
+        }
+
+        void loadRetrievalRecords(lastAssistantMsgId)
+    }, [currentChatId, hasStartedChat, lastAssistantMsgId, loadRetrievalRecords])
 
     useEffect(() => {
         const loadFiles = async () => {
@@ -999,11 +1043,12 @@ export default function ChatWithFilePage() {
                                         </Button>
                                     </div>
                                 )}
-                                <iframe
-                                    ref={pdfIframeRef}
-                                    title={selectedFile.name}
-                                    src={previewUrl}
-                                    className="w-full flex-1"
+                                <PdfViewer
+                                    url={previewUrl}
+                                    highlights={highlights}
+                                    targetPage={targetPage}
+                                    targetHighlightIndex={targetHighlightIndex}
+                                    onDocumentLoad={({ numPages }) => setNumPages(numPages)}
                                 />
                             </div>
                         ) : previewType === 'image' && previewUrl ? (

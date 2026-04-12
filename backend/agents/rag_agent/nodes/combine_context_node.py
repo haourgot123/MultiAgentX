@@ -67,8 +67,15 @@ class CombineContextNode(Runnable):
 
         for fid in file_order:
             file_idx = file_index_map[fid]
-            for chunk_order, chunk in enumerate(file_groups[fid], start=1):
-                citation_label = f"{file_idx}.{chunk_order}"
+            # Sort chunks within each file by page_no then chunk_index
+            # so that adjacent chunks remain contiguous in the context
+            sorted_chunks = sorted(
+                file_groups[fid],
+                key=lambda c: (c.page_no if c.page_no is not None else 0, c.chunk_index),
+            )
+            for chunk in sorted_chunks:
+                # Use the original chunk_index from ingestion (1-based, document order)
+                citation_label = f"{file_idx}.{chunk.chunk_index}"
 
                 # Build formatted context block
                 header = f"[{citation_label}]"

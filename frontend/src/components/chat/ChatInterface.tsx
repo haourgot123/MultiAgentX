@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useChatStore, type FileCitation } from "@/store/chat-store"
 import { useFileStore } from "@/store/file-store"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { MessageBubble } from "./MessageBubble"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
@@ -16,7 +15,7 @@ import { PlanApprovalModal } from "./PlanApprovalModal"
 import { apiFetch } from "@/lib/api"
 
 interface ChatInterfaceProps {
-    onFileCitationClick?: (citation: FileCitation) => void
+    onFileCitationClick?: (citation: FileCitation, messageId: number) => void
 }
 
 export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {

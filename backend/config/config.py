@@ -421,6 +421,33 @@ class ProcessingConfig:
 
 
 @dataclass
+class IngestionSummaryConfig:
+    """Configuration for GPT-based summarization of images and tables during ingestion."""
+
+    enabled: bool = _env_bool(
+        "INGESTION_SUMMARY_ENABLED",
+        default=True,
+    )
+    model: str = _env(
+        "INGESTION_SUMMARY_MODEL",
+        default="gpt-5.1",
+    )
+    max_tokens: int = int(_env("INGESTION_SUMMARY_MAX_TOKENS", default="512"))
+    image_prompt: str = (
+        "Describe the content of this image in detail. "
+        "Focus on any text, data, diagrams, charts, or key information visible. "
+        "Be concise and accurate."
+    )
+    table_prompt: str = (
+        "Summarize the key information in this table. "
+        "Describe its structure, headings, main data points, and any notable trends or insights. "
+        "Be concise and accurate."
+    )
+    timeout_seconds: int = int(_env("INGESTION_SUMMARY_TIMEOUT_SECONDS", default="60"))
+    max_concurrent: int = int(_env("INGESTION_SUMMARY_MAX_CONCURRENT", default="5"))
+
+
+@dataclass
 class Mem0Config:
     """Mem0 long-term memory configuration."""
     

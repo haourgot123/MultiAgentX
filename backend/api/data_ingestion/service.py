@@ -134,90 +134,155 @@ class DataIngestionService:
         )
 
     def _build_chunks(self, text_blocks: list[ExtractedTextBlock]) -> list[IngestionChunk]:
+        """Section-aware chunking: headings act as chunk boundaries.
+
+        Each section (heading + body blocks until next heading) becomes one chunk.
+        Tables/images are treated as atomic (standalone) chunks.
+        Sections exceeding max_section_size are split with overlap as a safety net.
+        """
         if not text_blocks:
             return []
 
-        normalized_blocks: list[ExtractedTextBlock] = []
+        max_section_size = self.chunk_size * 4  # ~4000 chars safety limit
+
+        # --- Helper: finalize a list of blocks into an IngestionChunk ---
+        def _finalize_chunk(index: int, blocks: list[ExtractedTextBlock]) -> IngestionChunk:
+            seen_bbox_keys: set[tuple] = set()
+            bboxes = []
+            block_types = []
+            for source_block in blocks:
+                all_bboxes = source_block.metadata.get("all_bboxes", [])
+                if all_bboxes:
+                    for bbox_entry in all_bboxes:
+                        page_no = bbox_entry.get("page_no")
+                        bbox_dict = bbox_entry.get("bbox")
+                        if bbox_dict is None:
+                            continue
+                        key = (page_no, bbox_dict.get("x0"), bbox_dict.get("y0"), bbox_dict.get("x1"), bbox_dict.get("y1"))
+                        if key in seen_bbox_keys:
+                            continue
+                        seen_bbox_keys.add(key)
+                        bboxes.append({"page_no": page_no, "bbox": bbox_dict})
+                elif source_block.bbox is not None:
+                    key = (source_block.page_no, source_block.bbox.get("x0"), source_block.bbox.get("y0"), source_block.bbox.get("x1"), source_block.bbox.get("y1"))
+                    if key not in seen_bbox_keys:
+                        seen_bbox_keys.add(key)
+                        bboxes.append({
+                            "page_no": source_block.page_no,
+                            "bbox": source_block.bbox,
+                        })
+
+            for source_block in blocks:
+                bt = source_block.block_type
+                if bt and bt not in block_types:
+                    block_types.append(bt)
+
+            return IngestionChunk(
+                chunk_index=index,  # 1-based index
+                text="\n".join(block.text for block in blocks).strip(),
+                page_no=next((block.page_no for block in blocks if block.page_no is not None), None),
+                bboxes=bboxes,
+                block_types=block_types,
+            )
+
+        # --- Helper: split an oversized section into sub-chunks ---
+        def _split_oversized_section(
+            blocks: list[ExtractedTextBlock], chunks: list[IngestionChunk]
+        ) -> None:
+            """Split a section that exceeds max_section_size using the old
+            sliding-window approach, then append resulting chunks."""
+            window_blocks: list[ExtractedTextBlock] = []
+            window_size = 0
+
+            for block in blocks:
+                projected = window_size + len(block.text) + 1
+                if window_blocks and projected > self.chunk_size:
+                    chunks.append(_finalize_chunk(len(chunks) + 1, window_blocks))
+
+                    if self.chunk_overlap > 0:
+                        overlap_blocks: list[ExtractedTextBlock] = []
+                        overlap_size = 0
+                        for previous in reversed(window_blocks):
+                            previous_size = len(previous.text) + 1
+                            if overlap_blocks and overlap_size + previous_size > self.chunk_overlap:
+                                break
+                            overlap_blocks.insert(0, previous)
+                            overlap_size += previous_size
+                        window_blocks = overlap_blocks
+                        window_size = overlap_size
+                    else:
+                        window_blocks = []
+                        window_size = 0
+
+                window_blocks.append(block)
+                window_size += len(block.text) + 1
+
+            if window_blocks:
+                chunks.append(_finalize_chunk(len(chunks) + 1, window_blocks))
+
+        # --- Main logic: group blocks by sections ---
+        chunks: list[IngestionChunk] = []
+        # Current section accumulator (heading block + body blocks)
+        section_blocks: list[ExtractedTextBlock] = []
+        section_size = 0
+
         for block in text_blocks:
             clean_text = block.text.strip()
             if not clean_text:
                 continue
 
-            if len(clean_text) <= self.chunk_size:
-                normalized_blocks.append(
-                    ExtractedTextBlock(
-                        text=clean_text,
-                        page_no=block.page_no,
-                        bbox=block.bbox,
-                        metadata=block.metadata,
-                    )
-                )
-                continue
-
-            cursor = 0
-            while cursor < len(clean_text):
-                piece = clean_text[cursor : cursor + self.chunk_size]
-                normalized_blocks.append(
-                    ExtractedTextBlock(
-                        text=piece,
-                        page_no=block.page_no,
-                        bbox=block.bbox,
-                        metadata=block.metadata,
-                    )
-                )
-                cursor += self.chunk_size
-
-        chunks: list[IngestionChunk] = []
-        window_blocks: list[ExtractedTextBlock] = []
-        window_size = 0
-
-        def _finalize_chunk(index: int, blocks: list[ExtractedTextBlock]) -> IngestionChunk:
-            bboxes = []
-            for source_block in blocks:
-                if source_block.bbox is None:
-                    continue
-                bboxes.append(
-                    {
-                        "page_no": source_block.page_no,
-                        "bbox": source_block.bbox,
-                    }
-                )
-
-            return IngestionChunk(
-                chunk_index=index,
-                text="\n".join(block.text for block in blocks).strip(),
-                page_no=next((block.page_no for block in blocks if block.page_no is not None), None),
-                bboxes=bboxes,
+            # Normalize block text
+            block = ExtractedTextBlock(
+                text=clean_text,
+                page_no=block.page_no,
+                bbox=block.bbox,
+                metadata=block.metadata,
+                block_type=block.block_type,
+                image_data=block.image_data,
             )
 
-        for block in normalized_blocks:
-            projected = window_size + len(block.text) + 1
-            if window_blocks and projected > self.chunk_size:
-                chunks.append(_finalize_chunk(len(chunks), window_blocks))
+            is_heading = block.block_type == "heading"
+            is_atomic = block.block_type in ("table", "image")
 
-                if self.chunk_overlap > 0:
-                    overlap_blocks: list[ExtractedTextBlock] = []
-                    overlap_size = 0
-                    for previous in reversed(window_blocks):
-                        previous_size = len(previous.text) + 1
-                        if overlap_blocks and overlap_size + previous_size > self.chunk_overlap:
-                            break
-                        overlap_blocks.insert(0, previous)
-                        overlap_size += previous_size
+            # --- Heading: finalize previous section, start new one ---
+            if is_heading:
+                if section_blocks:
+                    if section_size > max_section_size:
+                        _split_oversized_section(section_blocks, chunks)
+                    else:
+                        chunks.append(_finalize_chunk(len(chunks) + 1, section_blocks))
+                section_blocks = [block]
+                section_size = len(clean_text) + 1
+                continue
 
-                    window_blocks = overlap_blocks
-                    window_size = overlap_size
-                else:
-                    window_blocks = []
-                    window_size = 0
+            # --- Atomic block (table/image): emit as standalone chunk ---
+            if is_atomic:
+                # First finalize any pending section
+                if section_blocks:
+                    if section_size > max_section_size:
+                        _split_oversized_section(section_blocks, chunks)
+                    else:
+                        chunks.append(_finalize_chunk(len(chunks) + 1, section_blocks))
+                    section_blocks = []
+                    section_size = 0
 
-            window_blocks.append(block)
-            window_size += len(block.text) + 1
+                # Table/image becomes its own chunk
+                chunks.append(_finalize_chunk(len(chunks) + 1, [block]))
+                continue
 
-        if window_blocks:
-            chunks.append(_finalize_chunk(len(chunks), window_blocks))
+            # --- Regular text block: accumulate into current section ---
+            section_blocks.append(block)
+            section_size += len(clean_text) + 1
+
+        # Finalize any remaining section
+        if section_blocks:
+            if section_size > max_section_size:
+                _split_oversized_section(section_blocks, chunks)
+            else:
+                chunks.append(_finalize_chunk(len(chunks) + 1, section_blocks))
 
         return [chunk for chunk in chunks if chunk.text]
+
 
     def _embed_chunks(self, chunks: list[IngestionChunk]) -> list[list[float]]:
         if not chunks:
@@ -395,6 +460,7 @@ class DataIngestionService:
             "mime_type": stored_file.mime_type,
             "chunk_index": chunk.chunk_index,
             "page_no": chunk.page_no,
+            "block_types": chunk.block_types,
             "created_unix": created_unix,
         }
         serialized = json.dumps(payload, ensure_ascii=False)
@@ -502,6 +568,53 @@ class DataIngestionService:
         if not chunks:
             raise InvalidRequestException(message="No text extracted for ingestion")
         request_logger.debug("Built chunks from extracted blocks, chunk_count={}", len(chunks))
+
+        # --- Debug: write extraction + chunking results to JSON for verification ---
+        try:
+            debug_dir = Path("tmp")
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_file = debug_dir / f"ingestion_debug_{stored_file.id}.json"
+
+            debug_blocks = []
+            for i, block in enumerate(blocks):
+                debug_blocks.append({
+                    "index": i,
+                    "block_type": block.block_type,
+                    "docling_label": block.metadata.get("docling_label", ""),
+                    "page_no": block.page_no,
+                    "text": block.text[:300],
+                    "bbox": block.bbox,
+                    "all_bboxes": block.metadata.get("all_bboxes", []),
+                })
+
+            debug_chunks = []
+            for chunk in chunks:
+                debug_chunks.append({
+                    "chunk_index": chunk.chunk_index,
+                    "page_no": chunk.page_no,
+                    "text_preview": chunk.text[:500],
+                    "text_length": len(chunk.text),
+                    "block_types": chunk.block_types,
+                    "bboxes_count": len(chunk.bboxes),
+                    "bboxes": chunk.bboxes,
+                })
+
+            debug_payload = {
+                "file_id": stored_file.id,
+                "file_name": stored_file.original_name,
+                "total_blocks": len(blocks),
+                "total_chunks": len(chunks),
+                "blocks": debug_blocks,
+                "chunks": debug_chunks,
+            }
+            debug_file.write_text(
+                json.dumps(debug_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            request_logger.info("Wrote ingestion debug JSON to {}", debug_file)
+        except Exception as e:
+            request_logger.warning("Failed to write debug JSON: {}", e)
+        # --- End debug ---
 
         if on_progress:
             on_progress("indexing", 70, len(chunks))

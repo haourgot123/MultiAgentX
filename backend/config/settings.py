@@ -9,6 +9,7 @@ from .config import (
     ChunkConfig,
     ConversationChatConfig,
     EmbeddingModelConfig,
+    IngestionSummaryConfig,
     JWTConfig,
     LoggingConfig,
     Mem0Config,
@@ -54,6 +55,7 @@ class Settings(BaseSettings):
     jwt: JWTConfig = JWTConfig()
     vlm: VLMConfig = VLMConfig()
     processing: ProcessingConfig = ProcessingConfig()
+    ingestion_summary: IngestionSummaryConfig = IngestionSummaryConfig()
     mem0: Mem0Config = Mem0Config()
 
     def __str__(self) -> str:

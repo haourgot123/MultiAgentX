@@ -52,6 +52,10 @@ class ExtractedTextBlock(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional block metadata"
     )
+    block_type: str = Field("text", description="Block type: text, table, or image")
+    image_data: Optional[str] = Field(
+        None, description="Base64-encoded image data for picture blocks"
+    )
 
 
 class IngestionChunk(BaseModel):
@@ -61,6 +65,10 @@ class IngestionChunk(BaseModel):
     bboxes: list[dict[str, Any]] = Field(
         default_factory=list,
         description="List of source bounding boxes in this chunk",
+    )
+    block_types: list[str] = Field(
+        default_factory=list,
+        description="Block types in this chunk (text, table, image)",
     )
 
 

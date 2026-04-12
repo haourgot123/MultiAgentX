@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import { apiFetch, apiFetchStream, StreamEvent } from '@/lib/api'
+import { apiFetch, apiFetchStream, type StreamEvent } from '@/lib/api'
 
 export type Message = {
     id: number

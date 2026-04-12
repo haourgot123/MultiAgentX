@@ -11,7 +11,7 @@ import { useMemo } from "react"
 interface MessageBubbleProps {
     message: Message
     fileCitations?: FileCitation[]
-    onFileCitationClick?: (citation: FileCitation) => void
+    onFileCitationClick?: (citation: FileCitation, messageId: number) => void
 }
 
 interface Source {
@@ -79,16 +79,13 @@ function processCitations(content: string, fileCitations?: FileCitation[]): stri
     let processed = content.replace(/\]\s*\[/g, '] [')
     
     // Handle file citations [X.Y] format (e.g., [1.2], [1.5])
-    if (fileCitations && fileCitations.length > 0) {
-        processed = processed.replace(/\[(\d+\.\d+)\](?!\()/g, (_match, label) => {
-            const citation = fileCitations.find(c => c.citation_label === label)
-            if (citation) {
-                const pageInfo = citation.page_no ? `Page ${citation.page_no}` : ''
-                return `<a href="#file-citation-${label}" class="file-citation-badge" data-citation-label="${label}" data-page="${citation.page_no || ''}" data-file-name="${citation.file_name || ''}" title="${citation.file_name} ${pageInfo}">[${label}]</a>`
-            }
-            return `<a href="#file-citation-${label}" class="file-citation-badge" data-citation-label="${label}">[${label}]</a>`
-        })
-    }
+    // Always convert these to clickable badges, even if fileCitations is not yet available
+    processed = processed.replace(/\[(\d+\.\d+)\](?!\()/g, (_match, label) => {
+        const citation = fileCitations?.find(c => c.citation_label === label)
+        const pageInfo = citation?.page_no ? `Page ${citation.page_no}` : ''
+        const fileName = citation?.file_name || ''
+        return `<a href="#file-citation-${label}" class="file-citation-badge" data-citation-label="${label}" data-page="${citation?.page_no || ''}" data-file-name="${fileName}" title="${fileName}${pageInfo ? ` ${pageInfo}` : ''}">[${label}]</a>`
+    })
     
     // Convert web citation patterns [1], [2], etc. to styled superscript links
     // Only match standalone citations, not markdown links [text](url) and not file citations [X.Y]
@@ -308,13 +305,20 @@ export function MessageBubble({ message, fileCitations, onFileCitationClick }: M
                                     if (className === 'file-citation-badge' || href?.startsWith('#file-citation-')) {
                                         const label = (props as Record<string, string>)['data-citation-label'] || ''
                                         const citation = fileCitations?.find(c => c.citation_label === label)
-                                        const pageNo = citation?.page_no
-                                        const fileName = citation?.file_name || ''
+                                        const dataPage = (props as Record<string, string>)['data-page']
+                                        const dataFileName = (props as Record<string, string>)['data-file-name']
+                                        const pageNo = citation?.page_no ?? (dataPage ? Number(dataPage) || null : null)
+                                        const fileName = citation?.file_name || dataFileName || ''
                                         const handleClick = (e: React.MouseEvent) => {
                                             e.preventDefault()
-                                            if (citation && onFileCitationClick) {
-                                                onFileCitationClick(citation)
+                                            const citationObj: FileCitation = citation || {
+                                                citation_label: label,
+                                                file_id: 0,
+                                                file_name: fileName,
+                                                page_no: pageNo,
+                                                chunk_index: 0,
                                             }
+                                            onFileCitationClick?.(citationObj, message.id)
                                         }
                                         return (
                                             <a
