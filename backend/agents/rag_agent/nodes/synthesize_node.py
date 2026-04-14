@@ -60,14 +60,6 @@ class SynthesizeNode(Runnable):
             )),
         ]
 
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "rag_synthesize",
-                "message": f"Generating answer from {len(unique_files)} document(s)...",
-            },
-        )
-
         # Stream tokens natively using tagged config so the outer graph's
         # astream_events captures on_chat_model_stream events in real-time
         llm_with_config = azure_chat_openai_gpt_5_1.with_config(
@@ -83,14 +75,6 @@ class SynthesizeNode(Runnable):
 
         service_logger.info(
             f"Synthesized answer of {len(final_answer)} characters from {len(unique_files)} files"
-        )
-
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "rag_synthesize",
-                "message": "Answer synthesized successfully.",
-            },
         )
 
         return {

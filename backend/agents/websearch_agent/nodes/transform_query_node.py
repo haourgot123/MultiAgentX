@@ -34,7 +34,7 @@ class TransformQueryNode(Runnable):
             "status",
             {
                 "step": "websearch_transform",
-                "message": "🧠 Understanding intent and optimizing search queries...",
+                "message": "Understanding intent and optimizing search queries...",
             },
         )
 
@@ -70,13 +70,5 @@ class TransformQueryNode(Runnable):
         transformed_queries = unique_queries[:3]  # Cap at 3 queries
 
         logger.info(f"TransformQueryNode generated {len(transformed_queries)} unique queries: {transformed_queries}")
-
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "websearch_transform",
-                "message": f"🎯 Generated {len(transformed_queries)} optimized search queries.",
-            },
-        )
 
         return {"transformed_queries": transformed_queries}

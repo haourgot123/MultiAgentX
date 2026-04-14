@@ -54,7 +54,7 @@ class GeneralAgentGraph:
             "status",
             {
                 "step": "websearch_delegate",
-                "message": "Switching to the web search agent...",
+                "message": "Switching to the Web Search Agent...",
             },
         )
         websearch_state = WebsearchAgentState(
@@ -72,12 +72,12 @@ class GeneralAgentGraph:
         self, state: GeneralAgentState, config: RunnableConfig
     ) -> Dict[str, Any]:
         """Wrapper to call the image generation subgraph"""
-        logger.info("Delegating to image_generation_agent...")
+        logger.info("Delegating to Image Generation Agent...")
         dispatch_custom_event(
             "status",
             {
                 "step": "image_generation_delegate",
-                "message": "Switching to image generation agent...",
+                "message": "Switching to Image Generation Agent...",
             },
         )
         image_state = ImageGenerationAgentState(
@@ -94,12 +94,12 @@ class GeneralAgentGraph:
         self, state: GeneralAgentState, config: RunnableConfig
     ) -> Dict[str, Any]:
         """Wrapper to call the deep research subgraph"""
-        logger.info("Delegating to deep_research_agent...")
+        logger.info("Delegating to Deep Research Agent...")
         dispatch_custom_event(
             "status",
             {
                 "step": "deep_research_delegate",
-                "message": "Switching to deep research agent...",
+                "message": "Switching to Deep Research Agent...",
             },
         )
         research_state = DeepResearchAgentState(

@@ -41,14 +41,6 @@ class SearchNode(Runnable):
         )
 
         for i, query in enumerate(state.search_queries):
-            dispatch_custom_event(
-                "status",
-                {
-                    "step": "deep_research_search",
-                    "message": f"Searching: '{query[:40]}...'",
-                },
-            )
-
             try:
                 search_request = SearchRequest(query=query, total_results=5)
                 results = await self.search_service.search(search_request)
@@ -79,7 +71,7 @@ class SearchNode(Runnable):
             "status",
             {
                 "step": "deep_research_search",
-                "message": f"Found {len(new_results)} new results.",
+                "message": f"Found {len(new_results)} new results ...",
             },
         )
 

@@ -19,10 +19,6 @@ class MemoryNode(Runnable):
 
     async def ainvoke(self, state: GeneralAgentState, **kwargs):
         """Load both short-term (conversation) and long-term (Mem0) memories."""
-        dispatch_custom_event(
-            "status",
-            {"step": "memory", "message": "Loading conversation context..."},
-        )
 
         # 1. Format short-term conversation messages
         langchain_memories = []
@@ -38,10 +34,6 @@ class MemoryNode(Runnable):
         # 2. Retrieve long-term memories from Mem0 (Milvus)
         long_term_memory_context = ""
         try:
-            dispatch_custom_event(
-                "status",
-                {"step": "memory", "message": "Searching long-term memories..."},
-            )
             
             user_id = str(state.user_id)
             
@@ -60,34 +52,18 @@ class MemoryNode(Runnable):
                     score = mem.get("score", 0)
                     long_term_memory_context += f"{idx}. {memory_text} (relevance: {score:.2f})\n"
                     self.logger.debug(f"Retrieved memory {idx}: {memory_text[:100]}")
-                
-                dispatch_custom_event(
-                    "status",
-                    {"step": "memory", "message": f"Found {len(mem0_memories)} long-term memories."},
-                )
+    
             else:
-                dispatch_custom_event(
-                    "status",
-                    {"step": "memory", "message": "No long-term memories found."},
-                )
+                pass  # No relevant long-term memories found, continue without them
                 
         except Exception as e:
             self.logger.error(f"Error retrieving long-term memories: {e}")
             # Graceful degradation - continue without long-term memories
-            dispatch_custom_event(
-                "status",
-                {"step": "memory", "message": "Long-term memory unavailable, using short-term only."},
-            )
 
         # 3. Prepare result for next node
         result = {
             "memories": langchain_memories,
             "long_term_memory_context": long_term_memory_context,
         }
-        
-        dispatch_custom_event(
-            "status",
-            {"step": "memory", "message": f"Loaded {memory_count} conversation messages."},
-        )
 
         return result

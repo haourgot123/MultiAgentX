@@ -37,7 +37,7 @@ class PromptEnhanceNode(Runnable):
             "status",
             {
                 "step": "image_prompt_enhance",
-                "message": "🎨 Enhancing image prompt for professional quality...",
+                "message": "Enhancing image prompt for professional quality...",
             },
         )
 
@@ -73,14 +73,6 @@ class PromptEnhanceNode(Runnable):
             f"Enhanced prompt: '{enhanced[:100]}...' | "
             f"Style: {result.style_category} | "
             f"Negative: '{result.negative_prompt[:60]}...'"
-        )
-
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "image_prompt_enhance",
-                "message": f"✨ Prompt enhanced (style: {result.style_category})",
-            },
         )
 
         return {

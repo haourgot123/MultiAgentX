@@ -1,7 +1,7 @@
 import { ChatInterface } from "@/components/chat/ChatInterface"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { FileText, Download, Trash2, RefreshCw, ChevronDown, FolderOpen, Upload, X, ChevronUp } from "lucide-react"
+import { FileText, Download, Trash2, RefreshCw, ChevronDown, FolderOpen, Upload, X, ChevronUp, ScanSearch } from "lucide-react"
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -45,6 +45,7 @@ export default function ChatWithFilePage() {
     const [showUploadDialog, setShowUploadDialog] = useState(false)
     const [showLibraryDialog, setShowLibraryDialog] = useState(false)
     const [availableFiles, setAvailableFiles] = useState<FileItem[]>([])
+    const [pendingLibraryFiles, setPendingLibraryFiles] = useState<FileItem[]>([])
     const [hasStartedChat, setHasStartedChat] = useState(false)
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
     const [showAllFiles, setShowAllFiles] = useState(false)
@@ -378,9 +379,7 @@ export default function ChatWithFilePage() {
         }
     }
 
-    const handleFileSelect = async (file: FileItem) => {
-        const previousFiles = availableFiles
-        const previousSelectedFile = selectedFile
+    const handleAvailableFileToggle = (file: FileItem) => {
         const exists = availableFiles.some((item) => item.id === file.id)
         const nextFiles = exists
             ? availableFiles.filter((item) => item.id !== file.id)
@@ -392,12 +391,63 @@ export default function ChatWithFilePage() {
             if (selectedFile?.id === file.id) {
                 setSelectedFile(nextFiles[0] || null)
             }
-        } else {
-            setSelectedFile(file)
+            return
         }
+
+        setSelectedFile(file)
+    }
+
+    const openLibraryDialog = () => {
+        setPendingLibraryFiles(availableFiles)
+        setShowLibraryDialog(true)
+    }
+
+    const handleLibraryDialogChange = (open: boolean) => {
+        if (open) {
+            setPendingLibraryFiles(availableFiles)
+            setShowLibraryDialog(true)
+            return
+        }
+
+        setPendingLibraryFiles(availableFiles)
+        setShowLibraryDialog(false)
+    }
+
+    const handleLibraryFileToggle = (file: FileItem) => {
+        setPendingLibraryFiles((previousFiles) => {
+            const exists = previousFiles.some((item) => item.id === file.id)
+            return exists
+                ? previousFiles.filter((item) => item.id !== file.id)
+                : [...previousFiles, file]
+        })
+    }
+
+    const handleLibraryCancel = () => {
+        setPendingLibraryFiles(availableFiles)
+        setShowLibraryDialog(false)
+    }
+
+    const handleLibraryConfirm = async () => {
+        const previousFiles = availableFiles
+        const previousSelectedFile = selectedFile
+        const nextFiles = pendingLibraryFiles
+
+        setAvailableFiles(nextFiles)
+        setSelectedFile((currentSelectedFile) => {
+            if (currentSelectedFile && nextFiles.some((file) => file.id === currentSelectedFile.id)) {
+                return currentSelectedFile
+            }
+
+            if (previousSelectedFile && nextFiles.some((file) => file.id === previousSelectedFile.id)) {
+                return previousSelectedFile
+            }
+
+            return nextFiles[0] || null
+        })
 
         try {
             await syncConversationFiles(nextFiles)
+            setShowLibraryDialog(false)
         } catch (error) {
             setAvailableFiles(previousFiles)
             setSelectedFile(previousSelectedFile)
@@ -613,10 +663,10 @@ export default function ChatWithFilePage() {
                     {/* Header - Fixed */}
                     <div className="p-8 pb-6 shrink-0">
                         <div className="text-center">
-                            <div className="h-16 w-16 bg-tech-gradient rounded-2xl flex items-center justify-center mx-auto mb-4">
-                                <FileText className="h-8 w-8 text-white" />
+                            <div className="h-16 w-16 bg-tech-gradient rounded-[1.6rem] flex items-center justify-center mx-auto mb-4 shadow-[0_20px_45px_rgba(18,130,79,0.24)] ring-1 ring-emerald-500/20">
+                                <ScanSearch className="h-8 w-8 text-white" />
                             </div>
-                            <h2 className="text-2xl font-bold text-text-primary mb-2">Chat with File</h2>
+                            <h2 className="font-display text-2xl font-bold text-text-primary mb-2">Chat with File</h2>
                             <p className="text-text-muted">Select files to start chatting or upload new ones</p>
                         </div>
                     </div>
@@ -641,7 +691,7 @@ export default function ChatWithFilePage() {
                             <Button
                                 variant="outline"
                                 className="h-32 flex flex-col gap-3 border-2 border-dashed border-border hover:border-primary hover:bg-primary/5 rounded-xl"
-                                onClick={() => setShowLibraryDialog(true)}
+                                onClick={openLibraryDialog}
                             >
                                 <div className="h-12 w-12 bg-primary/10 rounded-full flex items-center justify-center">
                                     <FolderOpen className="h-6 w-6 text-primary" />
@@ -674,7 +724,7 @@ export default function ChatWithFilePage() {
                                                 variant="ghost"
                                                 size="icon"
                                                 className="h-8 w-8 rounded-lg"
-                                                onClick={() => void handleFileSelect(file)}
+                                                onClick={() => handleAvailableFileToggle(file)}
                                             >
                                                 <X className="h-4 w-4" />
                                             </Button>
@@ -708,7 +758,7 @@ export default function ChatWithFilePage() {
                                                 key={file.id}
                                                 variant="outline"
                                                 className={`h-auto p-3 justify-start rounded-lg ${isSelected ? 'bg-primary/10 border-primary' : ''}`}
-                                                onClick={() => void handleFileSelect(file)}
+                                                onClick={() => handleAvailableFileToggle(file)}
                                             >
                                                 <div className="flex items-center gap-2 w-full">
                                                     <div className={`h-8 w-8 rounded-md flex items-center justify-center shrink-0 ${getFileTypeColor(file.type)}`}>
@@ -757,7 +807,7 @@ export default function ChatWithFilePage() {
                 </Card>
 
                 {/* Library Selection Dialog */}
-                <Dialog open={showLibraryDialog} onOpenChange={setShowLibraryDialog}>
+                <Dialog open={showLibraryDialog} onOpenChange={handleLibraryDialogChange}>
                     <DialogContent className="bg-white rounded-xl max-w-2xl">
                         <DialogHeader>
                             <DialogTitle>Select Files from Library</DialogTitle>
@@ -773,13 +823,13 @@ export default function ChatWithFilePage() {
                             ) : (
                                 <div className="grid gap-2">
                                     {sortedFiles.map((file) => {
-                                        const isSelected = availableFiles.some(f => f.id === file.id)
+                                        const isSelected = pendingLibraryFiles.some(f => f.id === file.id)
                                         return (
                                             <Button
                                                 key={file.id}
                                                 variant="outline"
                                                 className={`w-full justify-start h-auto p-3 rounded-lg hover:bg-primary/10 hover:border-primary ${isSelected ? 'bg-primary/10 border-primary' : ''}`}
-                                                onClick={() => void handleFileSelect(file)}
+                                                onClick={() => handleLibraryFileToggle(file)}
                                             >
                                                 <div className="flex items-center gap-3 w-full">
                                                     <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${getFileTypeColor(file.type)}`}>
@@ -803,6 +853,21 @@ export default function ChatWithFilePage() {
                                     })}
                                 </div>
                             )}
+                        </div>
+                        <div className="flex justify-end gap-2 pt-4 border-t border-border">
+                            <Button
+                                variant="outline"
+                                className="rounded-lg"
+                                onClick={handleLibraryCancel}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                className="bg-primary hover:bg-primary-hover text-white rounded-lg"
+                                onClick={() => void handleLibraryConfirm()}
+                            >
+                                Done
+                            </Button>
                         </div>
                     </DialogContent>
                 </Dialog>
@@ -912,14 +977,6 @@ export default function ChatWithFilePage() {
         <div className="flex h-full w-full overflow-hidden bg-white">
             {/* Left Panel: Chat */}
             <div className="w-1/2 h-full border-r border-border flex flex-col bg-white">
-                <div className="h-14 border-b border-border flex items-center px-4 justify-between bg-surface">
-                    <div className="flex items-center gap-2">
-                        <div className="p-1.5 bg-primary/10 rounded-lg">
-                            <FileText className="h-4 w-4 text-primary" />
-                        </div>
-                        <span className="font-medium text-sm text-text-primary">Chat with File Mode</span>
-                    </div>
-                </div>
                 <div className="flex-1 overflow-hidden">
                     <ChatInterface onFileCitationClick={handleFileCitationClick} />
                 </div>
@@ -973,7 +1030,7 @@ export default function ChatWithFilePage() {
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
                                     className="cursor-pointer rounded-md text-primary focus:text-primary font-medium"
-                                    onClick={() => setShowLibraryDialog(true)}
+                                    onClick={openLibraryDialog}
                                 >
                                     <FolderOpen className="mr-2 h-4 w-4" />
                                     Select from Library
@@ -1112,7 +1169,7 @@ export default function ChatWithFilePage() {
                 </div>
             </div>
             {/* Library Selection Dialog */}
-            <Dialog open={showLibraryDialog} onOpenChange={setShowLibraryDialog}>
+            <Dialog open={showLibraryDialog} onOpenChange={handleLibraryDialogChange}>
                 <DialogContent className="bg-white rounded-xl max-w-2xl">
                     <DialogHeader>
                         <DialogTitle>Select Files from Library</DialogTitle>
@@ -1128,13 +1185,13 @@ export default function ChatWithFilePage() {
                         ) : (
                             <div className="grid gap-2">
                                 {sortedFiles.map((file) => {
-                                    const isSelected = availableFiles.some(f => f.id === file.id)
+                                    const isSelected = pendingLibraryFiles.some(f => f.id === file.id)
                                     return (
                                         <Button
                                             key={file.id}
                                             variant="outline"
                                             className={`w-full justify-start h-auto p-3 rounded-lg hover:bg-primary/10 hover:border-primary ${isSelected ? 'bg-primary/10 border-primary' : ''}`}
-                                            onClick={() => void handleFileSelect(file)}
+                                            onClick={() => handleLibraryFileToggle(file)}
                                         >
                                             <div className="flex items-center gap-3 w-full">
                                                 <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${getFileTypeColor(file.type)}`}>
@@ -1159,10 +1216,17 @@ export default function ChatWithFilePage() {
                             </div>
                         )}
                     </div>
-                    <div className="flex justify-end pt-4 border-t border-border">
+                    <div className="flex justify-end gap-2 pt-4 border-t border-border">
+                        <Button
+                            variant="outline"
+                            className="rounded-lg"
+                            onClick={handleLibraryCancel}
+                        >
+                            Cancel
+                        </Button>
                         <Button
                             className="bg-primary hover:bg-primary-hover text-white rounded-lg"
-                            onClick={() => setShowLibraryDialog(false)}
+                            onClick={() => void handleLibraryConfirm()}
                         >
                             Done
                         </Button>

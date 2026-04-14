@@ -74,17 +74,24 @@ class RouteNode(Runnable):
             logger.warning(f"RouteNode returned invalid route '{route}', falling back to direct_response")
             route = "direct_response"
             confidence = 0.5
-        
-        # Enforce feature flag constraints
-        if route == "websearch_agent" and not state.is_web_search_enabled:
-            logger.info("Websearch requested but disabled, falling back to direct_response")
-            route = "direct_response"
-        elif route == "deep_research_agent" and not state.is_deep_research_enabled:
-            logger.info("Deep research requested but disabled, falling back to direct_response")
-            route = "direct_response"
-        elif route == "image_generation_agent" and not state.is_generate_image_enabled:
-            logger.info("Image generation requested but disabled, falling back to direct_response")
-            route = "direct_response"
+
+        if (
+            sum(
+                [
+                    state.is_web_search_enabled,
+                    state.is_deep_research_enabled,
+                    state.is_generate_image_enabled,
+                ]
+            ) == 1
+        ):
+            # If only one feature is enabled, override route to that feature for better reliability
+            if state.is_web_search_enabled:
+                route = "websearch_agent"
+            elif state.is_deep_research_enabled:
+                route = "deep_research_agent"
+            elif state.is_generate_image_enabled:
+                route = "image_generation_agent"
+            logger.info(f"Only one feature enabled, overriding route to: {route}")
         
         # Low confidence fallback
         if confidence < 0.4 and route != "direct_response":
@@ -92,13 +99,6 @@ class RouteNode(Runnable):
             route = "direct_response"
         
         logger.info(f"RouteNode decided route: {route} (confidence: {confidence:.2f}, reason: {reasoning[:100]})")
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "routing",
-                "message": f"Route selected: `{route}` (confidence: {confidence:.0%})",
-            },
-        )
         
         return {
             "route": route

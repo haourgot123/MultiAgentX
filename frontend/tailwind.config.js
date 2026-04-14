@@ -10,22 +10,22 @@ export default {
     		colors: {
     			primary: {
     				DEFAULT: 'hsl(var(--primary))',
-    				hover: '#059669',
-    				light: '#34D399',
+	    				hover: '#0f8a55',
+	    				light: '#43d17d',
     				foreground: 'hsl(var(--primary-foreground))'
     			},
     			secondary: {
     				DEFAULT: 'hsl(var(--secondary))',
-    				hover: '#2563EB',
+	    				hover: '#dbe7dd',
     				foreground: 'hsl(var(--secondary-foreground))'
     			},
     			background: 'hsl(var(--background))',
-    			surface: '#F9FAFB',
+	    			surface: '#f3f7f1',
     			border: 'hsl(var(--border))',
     			text: {
-    				primary: '#111827',
-    				secondary: '#4B5563',
-    				muted: '#9CA3AF'
+	    				primary: '#0b1110',
+	    				secondary: '#3f4b45',
+	    				muted: '#7c8b84'
     			},
     			foreground: 'hsl(var(--foreground))',
     			card: {
@@ -64,7 +64,12 @@ export default {
     				'Inter',
     				'system-ui',
     				'sans-serif'
-    			]
+	    			],
+	    			display: [
+	    				'Space Grotesk',
+	    				'Plus Jakarta Sans',
+	    				'sans-serif'
+	    			]
     		},
     		borderRadius: {
     			lg: 'var(--radius)',

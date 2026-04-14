@@ -107,14 +107,6 @@ class CombineContextNode(Runnable):
             f"into {len(citation_map)} cited passages"
         )
 
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "rag_combine_context",
-                "message": f"Organized {len(citation_map)} passages with citations from {len(file_order)} file(s).",
-            },
-        )
-
         return {
             "combined_context": combined_context,
             "citation_map": citation_map,

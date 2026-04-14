@@ -104,14 +104,6 @@ class PlanNode(Runnable):
             f"approach={result.approach}, depth={result.estimated_depth}"
         )
 
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "deep_research_plan",
-                "message": f"Research plan created: {len(sub_questions)} sub-questions ({result.approach} approach, {result.estimated_depth} depth).",
-            },
-        )
-
         # Emit plan_request event for human approval
         dispatch_custom_event(
             "plan_request",

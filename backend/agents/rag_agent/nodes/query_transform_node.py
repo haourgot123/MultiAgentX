@@ -40,7 +40,7 @@ class QueryTransformNode(Runnable):
                 "status",
                 {
                     "step": "rag_query_transform",
-                    "message": f"Refining search query (attempt {state.retry_count + 1})...",
+                    "message": f"Refining search query ...",
                 },
             )
         else:
@@ -102,7 +102,7 @@ class QueryTransformNode(Runnable):
             "status",
             {
                 "step": "rag_query_transform",
-                "message": f"Optimized query: '{primary_query[:60]}...'",
+                "message": f"Optimized query ...'",
             },
         )
 

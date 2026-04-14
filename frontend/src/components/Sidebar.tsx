@@ -6,9 +6,6 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { useChatStore } from "@/store/chat-store"
 import {
     MessageSquare,
-    FileText,
-    FolderOpen,
-    User,
     ChevronLeft,
     ChevronRight,
     Aperture,
@@ -17,10 +14,10 @@ import {
     Plus,
     MoreVertical,
     Trash2,
-    Edit2
+    Edit2,
+    ScanSearch,
 } from "lucide-react"
 import { Link, useLocation } from "react-router-dom"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -36,7 +33,6 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
-import { UserProfile } from "./user/UserProfile"
 import { useState, useEffect } from "react"
 import { toast } from "sonner"
 
@@ -59,7 +55,6 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
         renameChat,
         requestFileChatNew
     } = useChatStore()
-    const [showUserProfile, setShowUserProfile] = useState(false)
     const [expandedSection, setExpandedSection] = useState<'chat' | 'file' | null>(null)
     const [isCreatingChat, setIsCreatingChat] = useState(false)
     const [renamingChatId, setRenamingChatId] = useState<number | null>(null)
@@ -203,36 +198,6 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
         return new Date(timestamp).toLocaleDateString()
     }
 
-    const NavItem = ({ icon: Icon, label, path, onClick, variant = "ghost" }: any) => {
-        const content = (
-            <Button
-                variant={variant}
-                className={cn(
-                    "w-full justify-start text-text-secondary hover:text-primary hover:bg-surface transition-all",
-                    isCollapsed ? "justify-center px-2" : "px-4",
-                    isActive(path) && "bg-primary/10 text-primary font-medium"
-                )}
-                onClick={onClick}
-            >
-                <Icon className={cn("h-5 w-5", isCollapsed ? "mr-0" : "mr-3")} />
-                {!isCollapsed && <span>{label}</span>}
-            </Button>
-        )
-
-        if (isCollapsed) {
-            return (
-                <TooltipProvider>
-                    <Tooltip delayDuration={0}>
-                        <TooltipTrigger asChild>{content}</TooltipTrigger>
-                        <TooltipContent side="right">{label}</TooltipContent>
-                    </Tooltip>
-                </TooltipProvider>
-            )
-        }
-
-        return content
-    }
-
     const ChatHistoryItem = ({ session }: { session: any }) => (
         <div
             className={cn(
@@ -295,19 +260,19 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
     )
 
     return (
-        <div className={cn("h-full bg-white border-r border-border flex flex-col relative transition-all duration-300", className)}>
+        <div className={cn("h-full border-r border-border/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(243,247,241,0.92))] flex flex-col relative transition-all duration-300", className)}>
 
             {/* Header */}
-            <div className={cn("flex items-center h-20 px-4 border-b border-border", isCollapsed ? "justify-center" : "justify-start gap-3")}>
-                <div className="h-10 w-10 rounded-xl bg-tech-gradient flex items-center justify-center shadow-md shrink-0">
+            <div className={cn("flex items-center h-20 px-4 border-b border-border/80", isCollapsed ? "justify-center" : "justify-start gap-3")}>
+                <div className="h-10 w-10 rounded-[1.1rem] bg-tech-gradient flex items-center justify-center shadow-[0_16px_30px_rgba(18,130,79,0.26)] shrink-0 ring-1 ring-emerald-500/20">
                     <Aperture className="h-6 w-6 text-white" />
                 </div>
                 {!isCollapsed && (
                     <div className="flex flex-col">
-                        <span className="font-bold text-xl tracking-tight text-primary">
+                        <span className="font-display font-bold text-xl tracking-tight text-primary">
                             MultiAgentX
                         </span>
-                        <span className="text-[10px] text-text-muted font-medium uppercase tracking-widest">Enterprise AI</span>
+                        <span className="text-[10px] text-text-muted font-medium uppercase tracking-[0.24em]">Signal Engine</span>
                     </div>
                 )}
             </div>
@@ -332,7 +297,9 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                                         )}
                                         onClick={() => activateChatType('normal')}
                                     >
-                                        <MessageSquare className="h-5 w-5 mr-3" />
+                                        <span className="icon-tech-shell mr-3 flex h-8 w-8 items-center justify-center rounded-xl">
+                                            <MessageSquare className="h-4 w-4" />
+                                        </span>
                                         <span>Chat</span>
                                     </Button>
                                 </Link>
@@ -392,7 +359,9 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                                         )}
                                         onClick={() => activateChatType('file')}
                                     >
-                                        <FileText className="h-5 w-5 mr-3" />
+                                        <span className="icon-tech-shell mr-3 flex h-8 w-8 items-center justify-center rounded-xl">
+                                            <ScanSearch className="h-4 w-4" />
+                                        </span>
                                         <span>Chat with File</span>
                                     </Button>
                                 </Link>
@@ -434,33 +403,17 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                             </div>
                         )}
                     </div>
-
-                    {/* File Management */}
-                    <Link to="/files">
-                        <NavItem icon={FolderOpen} label="File Management" path="/files" variant={isActive('/files') ? 'secondary' : 'ghost'} />
-                    </Link>
                 </div>
             </ScrollArea>
 
             {/* Footer Actions */}
             <div className="p-3 border-t border-border space-y-2">
-                <Button
-                    variant="ghost"
-                    className={cn("w-full justify-start text-text-secondary hover:text-primary hover:bg-surface", isCollapsed ? "justify-center px-2" : "px-4")}
-                    onClick={() => setShowUserProfile(true)}
-                >
-                    <User className={cn("h-5 w-5", isCollapsed ? "mr-0" : "mr-3")} />
-                    {!isCollapsed && <span>User Profile</span>}
-                </Button>
-
                 {toggleCollapse && (
                     <Button variant="ghost" size="icon" className="w-full mt-2 text-text-muted hover:text-primary" onClick={toggleCollapse}>
                         {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
                     </Button>
                 )}
             </div>
-
-            <UserProfile open={showUserProfile} onOpenChange={setShowUserProfile} />
 
             {/* Rename Dialog */}
             <Dialog open={renamingChatId !== null} onOpenChange={(open) => !open && handleRenameCancel()}>

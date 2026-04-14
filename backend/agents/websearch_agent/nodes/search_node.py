@@ -43,7 +43,7 @@ class SearchNode(Runnable):
             "status",
             {
                 "step": "websearch_search",
-                "message": f"Starting web search with {len(state.transformed_queries)} query variations...",
+                "message": f"Starting web search ...",
             },
         )
 
@@ -55,13 +55,6 @@ class SearchNode(Runnable):
         # Process queries with progress tracking
         for i, query in enumerate(state.transformed_queries):
             progress_pct = int((i / len(state.transformed_queries)) * 100)
-            dispatch_custom_event(
-                "status",
-                {
-                    "step": "websearch_search",
-                    "message": f"[{progress_pct}%] Searching: `{query}`",
-                },
-            )
 
             try:
                 results = await search_service.search(SearchRequest(query=query))
@@ -74,13 +67,6 @@ class SearchNode(Runnable):
             except Exception as e:
                 failed_queries += 1
                 logger.error(f"Search failed for query '{query}': {e}")
-                dispatch_custom_event(
-                    "status",
-                    {
-                        "step": "websearch_search",
-                        "message": f"Search error for query {i + 1}, continuing...",
-                    },
-                )
 
         # Deduplicate results by URL
         unique_results = self._deduplicate_results(all_results)
@@ -88,13 +74,6 @@ class SearchNode(Runnable):
 
         if duplicates_removed > 0:
             logger.info(f"Removed {duplicates_removed} duplicate results")
-            dispatch_custom_event(
-                "status",
-                {
-                    "step": "websearch_search",
-                    "message": f"Removed {duplicates_removed} duplicate sources",
-                },
-            )
 
         # Update state with deduplicated results
         state.search_results.extend(unique_results)
@@ -104,22 +83,8 @@ class SearchNode(Runnable):
             "status",
             {
                 "step": "websearch_search",
-                "message": f"Search complete: {len(unique_results)} unique sources from {successful_queries} queries",
+                "message": f"Search complete: {len(unique_results)} unique sources from queries",
             },
         )
-
-        if failed_queries > 0:
-            dispatch_custom_event(
-                "status",
-                {
-                    "step": "websearch_search",
-                    "message": f"Note: {failed_queries} query(s) encountered errors",
-                },
-            )
-
-        dispatch_custom_event(
-            "status",
-            {"step": "websearch_search", "message": "---"},
-        )  # Horizontal rule to separate thought from answer
 
         return {"search_results": state.search_results}

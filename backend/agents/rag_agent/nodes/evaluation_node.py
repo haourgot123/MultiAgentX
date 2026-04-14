@@ -53,7 +53,7 @@ class EvaluationNode(Runnable):
             "status",
             {
                 "step": "rag_evaluation",
-                "message": f"Evaluating relevance of retrieved passages (attempt {current_retry + 1}/{state.max_retries})...",
+                "message": f"Evaluating relevance of retrieved passages ...",
             },
         )
 
@@ -100,7 +100,7 @@ class EvaluationNode(Runnable):
                     "status",
                     {
                         "step": "rag_evaluation",
-                        "message": f"Context is relevant (confidence: {result.confidence:.0%}). Generating answer...",
+                        "message": f"Context is relevant. Generating answer...",
                     },
                 )
                 return {
@@ -136,7 +136,7 @@ class EvaluationNode(Runnable):
                 "status",
                 {
                     "step": "rag_evaluation",
-                    "message": f"Results not relevant enough. Refining search (attempt {current_retry + 2}/{state.max_retries})...",
+                    "message": f"Results not relevant enough. Refining search ...",
                 },
             )
             return {
@@ -152,13 +152,7 @@ class EvaluationNode(Runnable):
         except Exception as e:
             service_logger.error(f"Evaluation failed: {e}")
             # Graceful degradation: assume relevance and proceed
-            dispatch_custom_event(
-                "status",
-                {
-                    "step": "rag_evaluation",
-                    "message": "Evaluation check skipped — proceeding with answer generation.",
-                },
-            )
+
             return {
                 "is_relevant": True,
                 "evaluation_feedback": f"Evaluation skipped due to error: {str(e)[:100]}",

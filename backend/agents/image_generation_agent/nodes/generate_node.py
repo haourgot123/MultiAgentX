@@ -44,14 +44,6 @@ class GenerateNode(Runnable):
 
             service_logger.info(f"Generated {len(result.urls)} images")
 
-            dispatch_custom_event(
-                "status",
-                {
-                    "step": "image_generate",
-                    "message": f"Generated {len(result.urls)} image(s).",
-                },
-            )
-
             return {
                 "image_urls": result.urls,
                 "revised_prompt": result.revised_prompt or "",
@@ -64,7 +56,7 @@ class GenerateNode(Runnable):
                 "status",
                 {
                     "step": "image_generate",
-                    "message": f"Image generation failed: {str(e)[:100]}",
+                    "message": f"Image generation failed.",
                 },
             )
             return {

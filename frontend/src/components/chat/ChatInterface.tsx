@@ -5,7 +5,7 @@ import { MessageBubble } from "./MessageBubble"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { Send, Paperclip, Image as ImageIcon, Mic, Search, Globe, Aperture, X, Video, Loader2 } from "lucide-react"
+import { Send, Paperclip, Image as ImageIcon, Search, Globe, Aperture, X, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Toggle } from "@/components/ui/toggle"
@@ -27,9 +27,11 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
         statusSteps,
         currentChatId,
         chatSessions,
+        messagesByChat,
         pendingPlan,
         researchPhase,
         addMessage,
+        loadConversation,
         createDeepResearchPlan,
         approveDeepResearchPlan,
         setPendingPlan,
@@ -37,7 +39,11 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
     const files = useFileStore((state) => state.files)
     const fileChatCitations = useChatStore((state) => state.fileChatCitations)
     const messages = getCurrentMessages()
+    const scrollAreaRef = useRef<HTMLDivElement>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
+    const shouldAutoScrollRef = useRef(true)
+    const previousMessageCountRef = useRef(0)
+    const previousLastMessageIdRef = useRef<number | null>(null)
 
     const isFileChat = location.pathname === '/chat-file'
     const currentFileSession =
@@ -78,17 +84,97 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
         deepResearch: false,
         webSearch: false,
         genImage: false,
-        videoAnalysis: false
     })
+    const chatOptions = isFileChat
+        ? {
+            is_web_search_enabled: false,
+            is_deep_research_enabled: false,
+            is_generate_image_enabled: false,
+        }
+        : {
+            is_web_search_enabled: activeFeatures.webSearch,
+            is_deep_research_enabled: activeFeatures.deepResearch,
+            is_generate_image_enabled: activeFeatures.genImage,
+        }
 
     const toggleFeature = (feature: keyof typeof activeFeatures) => {
         setActiveFeatures(prev => ({ ...prev, [feature]: !prev[feature] }))
     }
 
     useEffect(() => {
-        if (scrollRef.current) {
-            scrollRef.current.scrollIntoView({ behavior: "smooth" })
+        if (isFileChat) {
+            setActiveFeatures({
+                deepResearch: false,
+                webSearch: false,
+                genImage: false,
+            })
         }
+    }, [isFileChat])
+
+    useEffect(() => {
+        if (!currentChatId) {
+            return
+        }
+
+        const currentSession = chatSessions.find((session) => session.id === currentChatId)
+        if (!currentSession) {
+            return
+        }
+
+        if (messagesByChat[currentChatId] !== undefined) {
+            return
+        }
+
+        void loadConversation(currentChatId)
+    }, [currentChatId, chatSessions, messagesByChat, loadConversation])
+
+    useEffect(() => {
+        const viewport = scrollAreaRef.current?.querySelector(
+            '[data-radix-scroll-area-viewport]'
+        ) as HTMLDivElement | null
+
+        if (!viewport) {
+            return
+        }
+
+        const updateAutoScrollState = () => {
+            const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+            shouldAutoScrollRef.current = distanceFromBottom <= 96
+        }
+
+        updateAutoScrollState()
+        viewport.addEventListener('scroll', updateAutoScrollState, { passive: true })
+
+        return () => {
+            viewport.removeEventListener('scroll', updateAutoScrollState)
+        }
+    }, [])
+
+    useEffect(() => {
+        if (!scrollRef.current) {
+            return
+        }
+
+        const lastMessage = messages[messages.length - 1]
+        const hasNewMessage = messages.length > previousMessageCountRef.current
+        const hasMessageBoundaryChanged = lastMessage?.id !== previousLastMessageIdRef.current
+        const isUserMessage = lastMessage?.role === 'user'
+
+        if (!shouldAutoScrollRef.current && !isUserMessage) {
+            previousMessageCountRef.current = messages.length
+            previousLastMessageIdRef.current = lastMessage?.id ?? null
+            return
+        }
+
+        scrollRef.current.scrollIntoView({
+            behavior: hasNewMessage || hasMessageBoundaryChanged ? "smooth" : "auto",
+            block: "end",
+        })
+
+        shouldAutoScrollRef.current = true
+
+        previousMessageCountRef.current = messages.length
+        previousLastMessageIdRef.current = lastMessage?.id ?? null
     }, [messages])
 
     const handleSend = async () => {
@@ -105,7 +191,7 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
         }
         
         // Deep Research persists the user message first, then requests a plan.
-        if (activeFeatures.deepResearch) {
+        if (!isFileChat && activeFeatures.deepResearch) {
             setInput("")
             
             try {
@@ -136,11 +222,7 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
             await useChatStore.getState().streamChat(
                 userMessage,
                 isFileChat ? 'file' : 'normal',
-                {
-                    is_web_search_enabled: activeFeatures.webSearch,
-                    is_deep_research_enabled: activeFeatures.deepResearch,
-                    is_generate_image_enabled: activeFeatures.genImage,
-                }
+                chatOptions
             )
         } catch {
             setInput(prompt)
@@ -175,15 +257,15 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
             {/* Main Chat Area */}
             <div className="flex-1 flex flex-col h-full w-full max-w-4xl mx-auto relative z-0">
                 <div className="flex-1 overflow-hidden p-4">
-                    <ScrollArea className="h-full pr-4">
+                    <ScrollArea ref={scrollAreaRef} className="h-full pr-4">
                         <div className="flex flex-col gap-6 pb-4">
                             {messages.length === 0 && (
                                 <div className="flex flex-col items-center justify-center h-[60vh] text-center space-y-6">
-                                    <div className="h-20 w-20 rounded-3xl bg-tech-gradient flex items-center justify-center shadow-lg animate-in zoom-in duration-500">
+                                    <div className="h-20 w-20 rounded-[2rem] bg-tech-gradient flex items-center justify-center shadow-[0_24px_55px_rgba(18,130,79,0.28)] ring-1 ring-emerald-400/20 animate-in zoom-in duration-500">
                                         <Aperture className="h-10 w-10 text-white" />
                                     </div>
                                     <div className="space-y-2">
-                                        <h3 className="text-2xl font-bold tracking-tight text-text-primary">MultiAgentX</h3>
+                                        <h3 className="font-display text-2xl font-bold tracking-tight text-text-primary">MultiAgentX</h3>
                                         <p className="text-text-muted max-w-sm mx-auto">
                                             Your advanced AI assistant for research, analysis, and creation.
                                         </p>
@@ -262,101 +344,83 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
 
                         <div className="flex items-center justify-between mt-2">
                             <div className="flex items-center gap-1">
-                                <TooltipProvider>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-text-muted hover:text-primary hover:bg-primary/10">
-                                                <Paperclip className="h-4 w-4" />
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>Attach File</TooltipContent>
-                                    </Tooltip>
-                                </TooltipProvider>
+                                {!isFileChat && (
+                                    <>
+                                        <TooltipProvider>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-text-muted hover:text-primary hover:bg-primary/10">
+                                                        <Paperclip className="h-4 w-4" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>Attach File</TooltipContent>
+                                            </Tooltip>
+                                        </TooltipProvider>
 
-                                <div className="h-4 w-px bg-border/50 mx-1" />
+                                        <div className="h-4 w-px bg-border/50 mx-1" />
 
-                                {/* Feature Toggles */}
-                                <TooltipProvider>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Toggle
-                                                pressed={activeFeatures.deepResearch}
-                                                onPressedChange={() => toggleFeature('deepResearch')}
-                                                className={cn(
-                                                    "h-8 px-2 gap-2",
-                                                    activeFeatures.deepResearch && "!bg-[#22c55e] !text-white hover:!bg-[#16a34a]"
-                                                )}
-                                            >
-                                                <Search className="h-4 w-4" />
-                                                <span className="text-xs font-medium">Deep Research</span>
-                                            </Toggle>
-                                        </TooltipTrigger>
-                                        <TooltipContent>Deep Research Mode</TooltipContent>
-                                    </Tooltip>
-                                </TooltipProvider>
+                                        <TooltipProvider>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Toggle
+                                                        pressed={activeFeatures.deepResearch}
+                                                        onPressedChange={() => toggleFeature('deepResearch')}
+                                                        className={cn(
+                                                            "h-8 px-2 gap-2",
+                                                            activeFeatures.deepResearch && "!bg-[#22c55e] !text-white hover:!bg-[#16a34a]"
+                                                        )}
+                                                    >
+                                                        <Search className="h-4 w-4" />
+                                                        <span className="text-xs font-medium">Deep Research</span>
+                                                    </Toggle>
+                                                </TooltipTrigger>
+                                                <TooltipContent>Deep Research Mode</TooltipContent>
+                                            </Tooltip>
+                                        </TooltipProvider>
 
-                                <TooltipProvider>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Toggle
-                                                pressed={activeFeatures.webSearch}
-                                                onPressedChange={() => toggleFeature('webSearch')}
-                                                size="sm"
-                                                className={cn(
-                                                    "h-8 w-8 p-0",
-                                                    activeFeatures.webSearch && "!bg-[#22c55e] !text-white hover:!bg-[#16a34a]"
-                                                )}
-                                            >
-                                                <Globe className="h-4 w-4" />
-                                            </Toggle>
-                                        </TooltipTrigger>
-                                        <TooltipContent>Web Search</TooltipContent>
-                                    </Tooltip>
-                                </TooltipProvider>
+                                        <TooltipProvider>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Toggle
+                                                        pressed={activeFeatures.webSearch}
+                                                        onPressedChange={() => toggleFeature('webSearch')}
+                                                        size="sm"
+                                                        className={cn(
+                                                            "h-8 w-8 p-0",
+                                                            activeFeatures.webSearch && "!bg-[#22c55e] !text-white hover:!bg-[#16a34a]"
+                                                        )}
+                                                    >
+                                                        <Globe className="h-4 w-4" />
+                                                    </Toggle>
+                                                </TooltipTrigger>
+                                                <TooltipContent>Web Search</TooltipContent>
+                                            </Tooltip>
+                                        </TooltipProvider>
 
-                                <TooltipProvider>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Toggle
-                                                pressed={activeFeatures.genImage}
-                                                onPressedChange={() => toggleFeature('genImage')}
-                                                size="sm"
-                                                className={cn(
-                                                    "h-8 w-8 p-0",
-                                                    activeFeatures.genImage && "!bg-[#22c55e] !text-white hover:!bg-[#16a34a]"
-                                                )}
-                                            >
-                                                <ImageIcon className="h-4 w-4" />
-                                            </Toggle>
-                                        </TooltipTrigger>
-                                        <TooltipContent>Generate Image</TooltipContent>
-                                    </Tooltip>
-                                </TooltipProvider>
+                                        <TooltipProvider>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Toggle
+                                                        pressed={activeFeatures.genImage}
+                                                        onPressedChange={() => toggleFeature('genImage')}
+                                                        size="sm"
+                                                        className={cn(
+                                                            "h-8 w-8 p-0",
+                                                            activeFeatures.genImage && "!bg-[#22c55e] !text-white hover:!bg-[#16a34a]"
+                                                        )}
+                                                    >
+                                                        <ImageIcon className="h-4 w-4" />
+                                                    </Toggle>
+                                                </TooltipTrigger>
+                                                <TooltipContent>Generate Image</TooltipContent>
+                                            </Tooltip>
+                                        </TooltipProvider>
 
-                                <TooltipProvider>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Toggle
-                                                pressed={activeFeatures.videoAnalysis}
-                                                onPressedChange={() => toggleFeature('videoAnalysis')}
-                                                size="sm"
-                                                className={cn(
-                                                    "h-8 w-8 p-0",
-                                                    activeFeatures.videoAnalysis && "!bg-[#22c55e] !text-white hover:!bg-[#16a34a]"
-                                                )}
-                                            >
-                                                <Video className="h-4 w-4" />
-                                            </Toggle>
-                                        </TooltipTrigger>
-                                        <TooltipContent>Video Analysis</TooltipContent>
-                                    </Tooltip>
-                                </TooltipProvider>
+                                    </>
+                                )}
                             </div>
 
                             <div className="flex items-center gap-2">
-                                <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
-                                    <Mic className="h-4 w-4" />
-                                </Button>
                                 <Button
                                     onClick={handleSend}
                                     disabled={!input.trim() || isLoading || fileChatBlocked}
@@ -383,7 +447,7 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
             </div>
 
             {/* Deep Research Panel (Conditional) */}
-            {activeFeatures.deepResearch && (
+            {!isFileChat && activeFeatures.deepResearch && (
                 <div className="w-80 border-l border-border bg-surface h-full flex flex-col transition-all duration-300 animate-in slide-in-from-right">
                     <div className="h-14 border-b border-border flex items-center justify-between px-4">
                         <div className="font-semibold text-sm flex items-center gap-2">

@@ -82,7 +82,7 @@ class ShouldContinueNode(Runnable):
                 "status",
                 {
                     "step": "deep_research_continue",
-                    "message": f"Continuing research ({reason})... (iteration {current + 2}/{max_iter})",
+                    "message": f"Continuing research ...",
                 },
             )
         else:
@@ -91,7 +91,7 @@ class ShouldContinueNode(Runnable):
                 "status",
                 {
                     "step": "deep_research_continue",
-                    "message": f"Research complete ({reason}). Synthesizing findings...",
+                    "message": f"Research complete. Synthesizing findings...",
                 },
             )
 

@@ -137,8 +137,64 @@ const sortMessages = (messages: Message[]): Message[] =>
         return left.id - right.id
     })
 
+const ensureSortedMessages = (messages: Message[]): Message[] => {
+    for (let index = 1; index < messages.length; index += 1) {
+        const previous = messages[index - 1]
+        const current = messages[index]
+
+        if (
+            previous.timestamp > current.timestamp ||
+            (previous.timestamp === current.timestamp && previous.id > current.id)
+        ) {
+            return sortMessages(messages)
+        }
+    }
+
+    return messages
+}
+
 const appendMessage = (messages: Message[], message: Message): Message[] =>
     sortMessages([...messages, message])
+
+const mergeAssistantDelta = (
+    state: Pick<ChatStore, 'messagesByChat' | 'statusSteps' | 'isLoading'>,
+    chatId: number,
+    delta: string
+) => {
+    const messages = state.messagesByChat[chatId] || []
+    const lastMessage = messages[messages.length - 1]
+
+    if (lastMessage && lastMessage.role === 'assistant') {
+        const updatedMessages = [...messages]
+        updatedMessages[updatedMessages.length - 1] = {
+            ...lastMessage,
+            content: lastMessage.content + delta,
+        }
+
+        return {
+            statusSteps: [],
+            isLoading: false,
+            messagesByChat: {
+                ...state.messagesByChat,
+                [chatId]: updatedMessages,
+            },
+        }
+    }
+
+    return {
+        statusSteps: [],
+        isLoading: false,
+        messagesByChat: {
+            ...state.messagesByChat,
+            [chatId]: appendMessage(messages, {
+                id: Date.now() + 1,
+                role: 'assistant' as const,
+                content: delta,
+                timestamp: Date.now() + 1,
+            }),
+        },
+    }
+}
 
 const mapConversationResponse = (
     conversation: ConversationApiResponse
@@ -471,40 +527,7 @@ export const useChatStore = create<ChatStore>()(
                             typeof evt.data === 'string' ? evt.data : evt.data?.delta || ''
                         if (!delta) return
 
-                        set((state) => {
-                            const messages = state.messagesByChat[currentChatId as number] || []
-                            const lastMessage = messages[messages.length - 1]
-
-                            // If last message is already an assistant message, append to it
-                            if (lastMessage && lastMessage.role === 'assistant') {
-                                const updatedMessages = [...messages]
-                                updatedMessages[updatedMessages.length - 1] = {
-                                    ...lastMessage,
-                                    content: lastMessage.content + delta,
-                                }
-                                return {
-                                    messagesByChat: {
-                                        ...state.messagesByChat,
-                                        [currentChatId as number]: sortMessages(updatedMessages),
-                                    },
-                                }
-                            }
-
-                            // Otherwise, create a new assistant message
-                            return {
-                                statusSteps: [],
-                                isLoading: false,
-                                messagesByChat: {
-                                    ...state.messagesByChat,
-                                    [currentChatId as number]: appendMessage(messages, {
-                                        id: Date.now() + 1,
-                                        role: 'assistant' as const,
-                                        content: delta,
-                                        timestamp: Date.now() + 1,
-                                    }),
-                                },
-                            }
-                        })
+                        set((state) => mergeAssistantDelta(state, currentChatId as number, delta))
                         return
                     }
 
@@ -568,7 +591,7 @@ export const useChatStore = create<ChatStore>()(
         if (!state.currentChatId) {
             return []
         }
-        return sortMessages(state.messagesByChat[state.currentChatId] || [])
+        return ensureSortedMessages(state.messagesByChat[state.currentChatId] || [])
     },
 
     getChatSessions: (chatType) => {
@@ -697,40 +720,7 @@ export const useChatStore = create<ChatStore>()(
                             typeof evt.data === 'string' ? evt.data : evt.data?.delta || ''
                         if (!delta) return
 
-                        set((state) => {
-                            const messages = state.messagesByChat[currentChatId] || []
-                            const lastMessage = messages[messages.length - 1]
-
-                            // If last message is already an assistant message, append to it
-                            if (lastMessage && lastMessage.role === 'assistant') {
-                                const updatedMessages = [...messages]
-                                updatedMessages[updatedMessages.length - 1] = {
-                                    ...lastMessage,
-                                    content: lastMessage.content + delta,
-                                }
-                                return {
-                                    messagesByChat: {
-                                        ...state.messagesByChat,
-                                        [currentChatId]: sortMessages(updatedMessages),
-                                    },
-                                }
-                            }
-
-                            // Otherwise, create a new assistant message
-                            return {
-                                statusSteps: [],
-                                isLoading: false,
-                                messagesByChat: {
-                                    ...state.messagesByChat,
-                                    [currentChatId]: appendMessage(messages, {
-                                        id: Date.now() + 1,
-                                        role: 'assistant' as const,
-                                        content: delta,
-                                        timestamp: Date.now() + 1,
-                                    }),
-                                },
-                            }
-                        })
+                        set((state) => mergeAssistantDelta(state, currentChatId, delta))
                         return
                     }
 

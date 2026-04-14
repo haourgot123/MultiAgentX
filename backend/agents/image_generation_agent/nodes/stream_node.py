@@ -52,20 +52,6 @@ class StreamNode(Runnable):
                 "Please try again with a different description."
             )
 
-        # Dispatch the output as a custom event so the parent graph's
-        # astream_events can pick it up and stream it to the client
-        dispatch_custom_event(
-            "token",
-            {"delta": output},
-        )
-
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "image_stream",
-                "message": "Image response ready.",
-            },
-        )
 
         return {
             "output": output,

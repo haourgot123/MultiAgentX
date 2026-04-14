@@ -125,7 +125,7 @@ class QueryGenerationNode(Runnable):
             "status",
             {
                 "step": "deep_research_query_gen",
-                "message": f"Generated {len(queries)} unique search queries for: {current_focus[:50]}...",
+                "message": f"Generated {len(queries)} unique search queries ...",
             },
         )
 

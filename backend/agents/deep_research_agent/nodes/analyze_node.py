@@ -139,9 +139,7 @@ class AnalyzeNode(Runnable):
             {
                 "step": "deep_research_analyze",
                 "message": (
-                    f"Extracted {len(result.key_findings)} key findings "
-                    f"(confidence: {result.confidence:.0%}, evidence: {result.evidence_strength})"
-                    + (f" — ⚠️ {len(result.contradictions)} contradiction(s) detected" if result.contradictions else "")
+                    f"Extracted {len(result.key_findings)} key findings..."
                 ),
             },
         )

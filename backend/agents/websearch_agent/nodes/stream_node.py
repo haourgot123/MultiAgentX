@@ -34,13 +34,6 @@ class StreamNode(Runnable):
 
         # Handle empty search results gracefully
         if not state.search_results:
-            dispatch_custom_event(
-                "status",
-                {
-                    "step": "websearch_answer",
-                    "message": "No search results found.",
-                },
-            )
             fallback_output = (
                 "I searched the web but couldn't find relevant results for your query. "
                 "This might be due to a network issue or the search terms not matching available content. "
@@ -87,13 +80,5 @@ class StreamNode(Runnable):
             if not content:
                 continue
             full_output += content
-
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "websearch_answer",
-                "message": "Web search answer ready.",
-            },
-        )
 
         return {"output": full_output}

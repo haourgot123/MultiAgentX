@@ -6,7 +6,7 @@ import { Bot, User, Globe, FileText } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeRaw from "rehype-raw"
-import { useMemo } from "react"
+import { memo, useMemo } from "react"
 
 interface MessageBubbleProps {
     message: Message
@@ -247,7 +247,7 @@ function SourceIcons({ sources }: { sources: Source[] }) {
     )
 }
 
-export function MessageBubble({ message, fileCitations, onFileCitationClick }: MessageBubbleProps) {
+function MessageBubbleComponent({ message, fileCitations, onFileCitationClick }: MessageBubbleProps) {
     const isUser = message.role === 'user'
     
     const { sources, contentWithoutSources, citationMap } = useMemo(() => {
@@ -395,3 +395,11 @@ export function MessageBubble({ message, fileCitations, onFileCitationClick }: M
         </div>
     )
 }
+
+export const MessageBubble = memo(
+    MessageBubbleComponent,
+    (previousProps, nextProps) =>
+        previousProps.message === nextProps.message &&
+        previousProps.fileCitations === nextProps.fileCitations &&
+        previousProps.onFileCitationClick === nextProps.onFileCitationClick
+)

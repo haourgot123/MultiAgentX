@@ -74,7 +74,7 @@ class RetrieveNode(Runnable):
                 "status",
                 {
                     "step": "rag_retrieve",
-                    "message": f"Found {len(retrieved_chunks)} relevant passages from: {sources_preview}...",
+                    "message": f"Found relevant passages ...",
                 },
             )
         else:

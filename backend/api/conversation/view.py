@@ -37,6 +37,12 @@ router = APIRouter(
     dependencies=[Depends(get_current_user)],
 )
 
+SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
 
 def _to_conversation_response(conversation: Conversation) -> ConversationResponse:
     return ConversationResponse(
@@ -238,6 +244,7 @@ async def chat(
                 chat_request.is_generate_image_enabled
             ),
             media_type="text/event-stream",
+            headers=SSE_HEADERS,
             status_code=status.HTTP_201_CREATED,
         )
     elif chat_request.chat_type == "file":
@@ -250,6 +257,7 @@ async def chat(
                 chat_request.user_question,
             ),
             media_type="text/event-stream",
+            headers=SSE_HEADERS,
             status_code=status.HTTP_201_CREATED,
         )
     else:
@@ -296,6 +304,7 @@ async def approve_deep_research_plan(
             approve_request.approved_plan,
         ),
         media_type="text/event-stream",
+        headers=SSE_HEADERS,
         status_code=status.HTTP_201_CREATED,
     )
 
