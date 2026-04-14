@@ -22,7 +22,7 @@ memory_logger = logger.bind(service="memory-api")
 async def get_user_memories(
     request: Request,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    _: None = Depends(get_current_user),
     limit: int = 50,
 ):
     """
@@ -30,7 +30,7 @@ async def get_user_memories(
     
     Returns a list of all stored memories for the authenticated user.
     """
-    user_id = str(current_user.id)
+    user_id = str(request.state.user_id)
     request_logger = memory_logger.bind(
         request_id=getattr(getattr(request, "state", None), "request_id", "-"),
         user_id=user_id
@@ -74,7 +74,7 @@ async def search_memories(
     request: Request,
     search_request: MemorySearchRequest,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    _: None = Depends(get_current_user),
 ):
     """
     Search memories for the current user.
@@ -82,10 +82,11 @@ async def search_memories(
     Performs semantic search over stored memories and returns relevant results.
     """
     # Validate user_id matches current user
-    if search_request.user_id != str(current_user.id):
+    current_user_id = str(request.state.user_id)
+    if search_request.user_id != current_user_id:
         raise HTTPException(status_code=403, detail="Cannot search memories for other users")
     
-    user_id = str(current_user.id)
+    user_id = current_user_id
     request_logger = memory_logger.bind(
         request_id=getattr(getattr(request, "state", None), "request_id", "-"),
         user_id=user_id
@@ -130,7 +131,7 @@ async def add_memory(
     request: Request,
     add_request: MemoryAddRequest,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    _: None = Depends(get_current_user),
 ):
     """
     Add memories from conversation messages.
@@ -138,10 +139,11 @@ async def add_memory(
     Extracts facts from messages and stores them as long-term memories.
     """
     # Validate user_id matches current user
-    if add_request.user_id != str(current_user.id):
+    current_user_id = str(request.state.user_id)
+    if add_request.user_id != current_user_id:
         raise HTTPException(status_code=403, detail="Cannot add memories for other users")
     
-    user_id = str(current_user.id)
+    user_id = current_user_id
     request_logger = memory_logger.bind(
         request_id=getattr(getattr(request, "state", None), "request_id", "-"),
         user_id=user_id
@@ -190,14 +192,14 @@ async def update_memory(
     request: Request,
     update_request: MemoryUpdateRequest,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    _: None = Depends(get_current_user),
 ):
     """
     Update a specific memory by ID.
     
     Updates the content of an existing memory.
     """
-    user_id = str(current_user.id)
+    user_id = str(request.state.user_id)
     request_logger = memory_logger.bind(
         request_id=getattr(getattr(request, "state", None), "request_id", "-"),
         user_id=user_id
@@ -235,14 +237,14 @@ async def delete_memory(
     memory_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    _: None = Depends(get_current_user),
 ):
     """
     Delete a specific memory by ID.
     
     Permanently removes a memory from the user's memory store.
     """
-    user_id = str(current_user.id)
+    user_id = str(request.state.user_id)
     request_logger = memory_logger.bind(
         request_id=getattr(getattr(request, "state", None), "request_id", "-"),
         user_id=user_id
@@ -270,14 +272,14 @@ async def delete_memory(
 async def clear_user_memories(
     request: Request,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    _: None = Depends(get_current_user),
 ):
     """
     Clear all memories for the current user.
     
     Permanently removes all memories. This action cannot be undone.
     """
-    user_id = str(current_user.id)
+    user_id = str(request.state.user_id)
     request_logger = memory_logger.bind(
         request_id=getattr(getattr(request, "state", None), "request_id", "-"),
         user_id=user_id

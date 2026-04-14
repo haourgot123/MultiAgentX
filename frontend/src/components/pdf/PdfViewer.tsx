@@ -19,7 +19,6 @@ export function PdfViewer({ url, highlights = [], targetPage, targetHighlightInd
     const [internalPage, setInternalPage] = useState(1)
     const [scale, setScale] = useState(1.2)
     const [pageHeights, setPageHeights] = useState<Record<number, number>>({})
-    const [pageWidths, setPageWidths] = useState<Record<number, number>>({})
     const pageRefs = useRef<Record<number, HTMLDivElement | null>>({})
     const highlightRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
@@ -66,7 +65,6 @@ export function PdfViewer({ url, highlights = [], targetPage, targetHighlightInd
     const handlePageLoadSuccess = useCallback((pageNum: number, page: pdfjs.PDFPageProxy) => {
         const viewport = page.getViewport({ scale: 1 })
         setPageHeights((prev) => ({ ...prev, [pageNum]: viewport.height }))
-        setPageWidths((prev) => ({ ...prev, [pageNum]: viewport.width }))
     }, [])
 
     return (
@@ -122,7 +120,7 @@ export function PdfViewer({ url, highlights = [], targetPage, targetHighlightInd
                                         onLoadSuccess={(page) => handlePageLoadSuccess(pageNum, page)}
                                     />
                                     {pageHighlights.length > 0 && pageNaturalHeight != null && pageHighlights.map((region) =>
-                                        region.bboxes.map((bbox, bidx) => {
+                                        region.bboxes.map((bbox) => {
                                             const left = bbox.x0 * scale
                                             const top = (pageNaturalHeight - bbox.y1) * scale
                                             const width = (bbox.x1 - bbox.x0) * scale

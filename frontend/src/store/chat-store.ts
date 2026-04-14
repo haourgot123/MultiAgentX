@@ -62,6 +62,7 @@ type AddMessageApiResponse = {
 
 type ChatStore = {
     currentChatId: number | null
+    activeChatIdByType: Record<'normal' | 'file', number | null>
     chatSessions: ChatSession[]
     messagesByChat: Record<number, Message[]>
     fileChatNewRequestId: number
@@ -74,7 +75,8 @@ type ChatStore = {
     pendingPlan: PlanRequest | null
     researchPhase: 'idle' | 'planning' | 'researching'
 
-    setCurrentChat: (id: number | null) => void
+    setCurrentChat: (id: number | null, chatType?: 'normal' | 'file') => void
+    activateChatType: (chatType: 'normal' | 'file') => void
     fetchChatSessions: (chatType?: 'normal' | 'file') => Promise<ChatSession[]>
     loadConversation: (id: number) => Promise<void>
     createNewChat: (
@@ -126,6 +128,18 @@ const mapMessageResponse = (message: MessageApiResponse): Message => ({
     timestamp: new Date(message.created_at).getTime(),
 })
 
+const sortMessages = (messages: Message[]): Message[] =>
+    [...messages].sort((left, right) => {
+        if (left.timestamp !== right.timestamp) {
+            return left.timestamp - right.timestamp
+        }
+
+        return left.id - right.id
+    })
+
+const appendMessage = (messages: Message[], message: Message): Message[] =>
+    sortMessages([...messages, message])
+
 const mapConversationResponse = (
     conversation: ConversationApiResponse
 ): ChatSession => ({
@@ -138,10 +152,57 @@ const mapConversationResponse = (
     messageCount: conversation.message_count,
 })
 
+const getFallbackChatIdForType = (
+    state: Pick<ChatStore, 'activeChatIdByType' | 'chatSessions'>,
+    chatType: 'normal' | 'file'
+): number | null => {
+    const preferredChatId = state.activeChatIdByType[chatType]
+    if (preferredChatId) {
+        return preferredChatId
+    }
+
+    return state.chatSessions.find((session) => session.chatType === chatType)?.id || null
+}
+
+const resolveActiveChatId = (
+    state: Pick<ChatStore, 'activeChatIdByType' | 'chatSessions' | 'currentChatId' | 'mode'>,
+    chatType: 'normal' | 'file'
+): number | null => {
+    const currentSession = state.chatSessions.find(
+        (session) => session.id === state.currentChatId
+    )
+
+    if (currentSession?.chatType === chatType) {
+        return currentSession.id
+    }
+
+    return getFallbackChatIdForType(state, chatType)
+}
+
+const resolveChatTypeForSelection = (
+    state: Pick<ChatStore, 'chatSessions' | 'mode'>,
+    id: number | null,
+    explicitChatType?: 'normal' | 'file'
+): 'normal' | 'file' | null => {
+    if (explicitChatType) {
+        return explicitChatType
+    }
+
+    if (id === null) {
+        return state.mode === 'file' ? 'file' : 'normal'
+    }
+
+    return state.chatSessions.find((session) => session.id === id)?.chatType || null
+}
+
 export const useChatStore = create<ChatStore>()(
     persist(
         (set, get) => ({
             currentChatId: null,
+            activeChatIdByType: {
+                normal: null,
+                file: null,
+            },
             chatSessions: [],
             messagesByChat: {},
             fileChatNewRequestId: 0,
@@ -154,7 +215,26 @@ export const useChatStore = create<ChatStore>()(
             pendingPlan: null,
             researchPhase: 'idle',
 
-    setCurrentChat: (id) => set({ currentChatId: id }),
+    setCurrentChat: (id, chatType) => set((state) => {
+        const resolvedChatType = resolveChatTypeForSelection(state, id, chatType)
+
+        if (!resolvedChatType) {
+            return { currentChatId: id }
+        }
+
+        return {
+            currentChatId: id,
+            activeChatIdByType: {
+                ...state.activeChatIdByType,
+                [resolvedChatType]: id,
+            },
+        }
+    }),
+
+    activateChatType: (chatType) => set((state) => ({
+        mode: chatType,
+        currentChatId: getFallbackChatIdForType(state, chatType),
+    })),
     
     setPendingPlan: (plan) => set({ pendingPlan: plan }),
 
@@ -185,13 +265,19 @@ export const useChatStore = create<ChatStore>()(
             `/conversations/${id}`
         )
         const mappedSession = mapConversationResponse(conversation)
-        const mappedMessages = conversation.messages.map(mapMessageResponse)
+        const mappedMessages = sortMessages(
+            conversation.messages.map(mapMessageResponse)
+        )
 
         set((state) => ({
             chatSessions: [
                 mappedSession,
                 ...state.chatSessions.filter((session) => session.id !== id),
             ].sort((a, b) => b.updatedAt - a.updatedAt),
+            activeChatIdByType: {
+                ...state.activeChatIdByType,
+                [mappedSession.chatType]: id,
+            },
             messagesByChat: {
                 ...state.messagesByChat,
                 [id]: mappedMessages,
@@ -201,7 +287,7 @@ export const useChatStore = create<ChatStore>()(
 
     createNewChat: async (chatType = 'normal', options = {}) => {
         const state = get()
-        const currentChatId = state.currentChatId
+        const currentChatId = resolveActiveChatId(state, chatType)
         const currentMessages = currentChatId
             ? state.messagesByChat[currentChatId] || []
             : []
@@ -216,6 +302,10 @@ export const useChatStore = create<ChatStore>()(
                         chatSessions: currentState.chatSessions.filter(
                             (session) => session.id !== currentChatId
                         ),
+                        activeChatIdByType: {
+                            ...currentState.activeChatIdByType,
+                            [chatType]: null,
+                        },
                         messagesByChat: remainingMessages,
                     }
                 })
@@ -252,6 +342,10 @@ export const useChatStore = create<ChatStore>()(
                 ),
             ],
             currentChatId: newChat.id,
+            activeChatIdByType: {
+                ...currentState.activeChatIdByType,
+                [newChat.chatType]: newChat.id,
+            },
             messagesByChat: {
                 ...currentState.messagesByChat,
                 [newChat.id]: [],
@@ -263,10 +357,11 @@ export const useChatStore = create<ChatStore>()(
 
     addMessage: async (message, chatType) => {
         const state = get()
-        let currentChatId = state.currentChatId
+        const targetChatType = chatType || 'normal'
+        let currentChatId = resolveActiveChatId(state, targetChatType)
 
         if (!currentChatId) {
-            currentChatId = await get().createNewChat(chatType)
+            currentChatId = await get().createNewChat(targetChatType)
         }
         if (!currentChatId) {
             return
@@ -308,17 +403,17 @@ export const useChatStore = create<ChatStore>()(
             })(),
             messagesByChat: {
                 ...state.messagesByChat,
-                [currentChatId]: [
-                    ...(state.messagesByChat[currentChatId] || []),
-                    mappedMessage,
-                ],
+                [currentChatId]: appendMessage(
+                    state.messagesByChat[currentChatId] || [],
+                    mappedMessage
+                ),
             },
         }))
     },
 
     streamChat: async (message, chatType = 'normal', options = {}) => {
         const state = get()
-        let currentChatId = state.currentChatId
+        let currentChatId = resolveActiveChatId(state, chatType)
 
         if (!currentChatId) {
             currentChatId = await get().createNewChat(chatType)
@@ -338,12 +433,13 @@ export const useChatStore = create<ChatStore>()(
         set((state) => ({
             messagesByChat: {
                 ...state.messagesByChat,
-                [currentChatId as number]: [
-                    ...(state.messagesByChat[currentChatId as number] || []),
-                    optimisticUserMessage,
-                ],
+                [currentChatId as number]: appendMessage(
+                    state.messagesByChat[currentChatId as number] || [],
+                    optimisticUserMessage
+                ),
             },
             isLoading: true,
+            statusSteps: [],
         }))
 
         try {
@@ -389,7 +485,7 @@ export const useChatStore = create<ChatStore>()(
                                 return {
                                     messagesByChat: {
                                         ...state.messagesByChat,
-                                        [currentChatId as number]: updatedMessages,
+                                        [currentChatId as number]: sortMessages(updatedMessages),
                                     },
                                 }
                             }
@@ -400,15 +496,12 @@ export const useChatStore = create<ChatStore>()(
                                 isLoading: false,
                                 messagesByChat: {
                                     ...state.messagesByChat,
-                                    [currentChatId as number]: [
-                                        ...messages,
-                                        {
-                                            id: Date.now() + 1,
-                                            role: 'assistant' as const,
-                                            content: delta,
-                                            timestamp: Date.now() + 1,
-                                        },
-                                    ],
+                                    [currentChatId as number]: appendMessage(messages, {
+                                        id: Date.now() + 1,
+                                        role: 'assistant' as const,
+                                        content: delta,
+                                        timestamp: Date.now() + 1,
+                                    }),
                                 },
                             }
                         })
@@ -441,14 +534,20 @@ export const useChatStore = create<ChatStore>()(
                 }
             )
             
-            // Reload conversation in the background to sync real IDs from the backend
-            get().loadConversation(currentChatId)
+            await get().loadConversation(currentChatId)
             
         } catch (error) {
             console.error('Streaming error:', error)
-            // Error handling could be expanded here to update the assistant message to an error state
+            if (currentChatId) {
+                try {
+                    await get().loadConversation(currentChatId)
+                } catch (reloadError) {
+                    console.error('Failed to reload conversation after streaming error:', reloadError)
+                }
+            }
+            throw error
         } finally {
-            set({ isLoading: false })
+            set({ isLoading: false, statusSteps: [] })
         }
     },
 
@@ -469,7 +568,7 @@ export const useChatStore = create<ChatStore>()(
         if (!state.currentChatId) {
             return []
         }
-        return state.messagesByChat[state.currentChatId] || []
+        return sortMessages(state.messagesByChat[state.currentChatId] || [])
     },
 
     getChatSessions: (chatType) => {
@@ -486,13 +585,30 @@ export const useChatStore = create<ChatStore>()(
             const remainingMessages = { ...state.messagesByChat }
             delete remainingMessages[id]
             const newSessions = state.chatSessions.filter((session) => session.id !== id)
-            const newCurrentId = state.currentChatId === id
-                ? (newSessions[0]?.id || null)
+            const deletedSession = state.chatSessions.find((session) => session.id === id)
+            const deletedChatType = deletedSession?.chatType || null
+            const nextActiveByType = deletedChatType
+                ? {
+                    ...state.activeChatIdByType,
+                    [deletedChatType]:
+                        newSessions.find((session) => session.chatType === deletedChatType)?.id || null,
+                }
+                : state.activeChatIdByType
+
+            const newCurrentId = state.currentChatId === id && deletedChatType
+                ? getFallbackChatIdForType(
+                    {
+                        activeChatIdByType: nextActiveByType,
+                        chatSessions: newSessions,
+                    },
+                    deletedChatType
+                )
                 : state.currentChatId
 
             return {
                 chatSessions: newSessions,
                 messagesByChat: remainingMessages,
+                activeChatIdByType: nextActiveByType,
                 currentChatId: newCurrentId,
             }
         })
@@ -547,28 +663,12 @@ export const useChatStore = create<ChatStore>()(
             throw new Error('No active conversation')
         }
 
-        // Add user message about approved plan
-        const userMessage: Message = {
-            id: Date.now(),
-            role: 'user',
-            content: `Research plan approved:\n${approvedPlan.map((q, i) => `${i + 1}. ${q}`).join('\n')}`,
-            timestamp: Date.now(),
-        }
-
-        // Clear status and set loading - backend will emit status events
-        useChatStore.setState((state) => ({
-            messagesByChat: {
-                ...state.messagesByChat,
-                [currentChatId]: [
-                    ...(state.messagesByChat[currentChatId] || []),
-                    userMessage,
-                ],
-            },
+        set({
             isLoading: true,
             statusSteps: [],
             pendingPlan: null,
             researchPhase: 'researching',
-        }))
+        })
 
         try {
             await apiFetchStream(
@@ -611,7 +711,7 @@ export const useChatStore = create<ChatStore>()(
                                 return {
                                     messagesByChat: {
                                         ...state.messagesByChat,
-                                        [currentChatId]: updatedMessages,
+                                        [currentChatId]: sortMessages(updatedMessages),
                                     },
                                 }
                             }
@@ -622,15 +722,12 @@ export const useChatStore = create<ChatStore>()(
                                 isLoading: false,
                                 messagesByChat: {
                                     ...state.messagesByChat,
-                                    [currentChatId]: [
-                                        ...messages,
-                                        {
-                                            id: Date.now() + 1,
-                                            role: 'assistant' as const,
-                                            content: delta,
-                                            timestamp: Date.now() + 1,
-                                        },
-                                    ],
+                                    [currentChatId]: appendMessage(messages, {
+                                        id: Date.now() + 1,
+                                        role: 'assistant' as const,
+                                        content: delta,
+                                        timestamp: Date.now() + 1,
+                                    }),
                                 },
                             }
                         })
@@ -656,11 +753,16 @@ export const useChatStore = create<ChatStore>()(
                 }
             )
 
-            // Reload conversation to sync real IDs from backend
-            get().loadConversation(currentChatId)
+            await get().loadConversation(currentChatId)
 
         } catch (error) {
             console.error('Deep research streaming error:', error)
+            try {
+                await get().loadConversation(currentChatId)
+            } catch (reloadError) {
+                console.error('Failed to reload conversation after deep research error:', reloadError)
+            }
+            throw error
         } finally {
             set({ isLoading: false, researchPhase: 'idle' })
         }
@@ -702,6 +804,7 @@ export const useChatStore = create<ChatStore>()(
             storage: createJSONStorage(() => sessionStorage),
             partialize: (state) => ({
                 currentChatId: state.currentChatId,
+                activeChatIdByType: state.activeChatIdByType,
                 mode: state.mode,
             }),
         }

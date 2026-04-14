@@ -48,7 +48,7 @@ interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {
 export function Sidebar({ className, isCollapsed = false, toggleCollapse }: SidebarProps) {
     const location = useLocation()
     const {
-        setMode,
+        activateChatType,
         createNewChat,
         setCurrentChat,
         getChatSessions,
@@ -77,11 +77,13 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
     // Auto-expand history when navigating to Chat or Chat With File
     useEffect(() => {
         if (isActive('/')) {
+            activateChatType('normal')
             setExpandedSection('chat')
         } else if (isActive('/chat-file')) {
+            activateChatType('file')
             setExpandedSection('file')
         }
-    }, [location.pathname])
+    }, [location.pathname, activateChatType])
 
     useEffect(() => {
         const loadSessions = async () => {
@@ -102,7 +104,7 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
 
     const handleNewChat = async () => {
         if (isFileChat) {
-            setCurrentChat(null)
+            setCurrentChat(null, 'file')
             requestFileChatNew()
             setExpandedSection('file')
             toast.info('Upload file to start a new file conversation')
@@ -328,7 +330,7 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                                             "w-full justify-start text-text-secondary hover:text-primary hover:bg-transparent transition-all px-2",
                                             isActive('/') && "text-primary font-medium"
                                         )}
-                                        onClick={() => setMode('normal')}
+                                        onClick={() => activateChatType('normal')}
                                     >
                                         <MessageSquare className="h-5 w-5 mr-3" />
                                         <span>Chat</span>
@@ -388,7 +390,7 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                                             "w-full justify-start text-text-secondary hover:text-primary hover:bg-transparent transition-all px-2",
                                             isActive('/chat-file') && "text-primary font-medium"
                                         )}
-                                        onClick={() => setMode('file')}
+                                        onClick={() => activateChatType('file')}
                                     >
                                         <FileText className="h-5 w-5 mr-3" />
                                         <span>Chat with File</span>

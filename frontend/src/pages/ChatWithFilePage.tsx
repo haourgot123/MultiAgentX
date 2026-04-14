@@ -1,5 +1,4 @@
 import { ChatInterface } from "@/components/chat/ChatInterface"
-import { PdfViewer } from "@/components/pdf/PdfViewer"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { FileText, Download, Trash2, RefreshCw, ChevronDown, FolderOpen, Upload, X, ChevronUp } from "lucide-react"
@@ -18,13 +17,15 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog"
 import { API_BASE_URL } from "@/lib/api"
-import { fetchRetrievalRecords, parseBBoxJson, groupHighlightsByPage, type HighlightRegion, type RetrievalRecordResponse } from "@/lib/retrieval-api"
+import { fetchRetrievalRecords, parseBBoxJson, groupHighlightsByPage, type RetrievalRecordResponse } from "@/lib/retrieval-api"
 import { useAuthStore } from "@/store/auth-store"
 import { type FileItem, useFileStore } from "@/store/file-store"
-import { useState, useEffect, useRef, useCallback, useMemo } from "react"
+import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useChatStore, type FileCitation } from "@/store/chat-store"
 import { toast } from "sonner"
+
+const PdfViewer = lazy(() => import("@/components/pdf/PdfViewer").then((module) => ({ default: module.PdfViewer })))
 
 export default function ChatWithFilePage() {
     const [searchParams] = useSearchParams()
@@ -61,7 +62,6 @@ export default function ChatWithFilePage() {
     const [retrievalRecords, setRetrievalRecords] = useState<RetrievalRecordResponse[]>([])
     const [targetPage, setTargetPage] = useState<number | undefined>(undefined)
     const [targetHighlightIndex, setTargetHighlightIndex] = useState<number | undefined>(undefined)
-    const [numPages, setNumPages] = useState(0)
     // Counter that increments on every citation click to force scroll even for repeated clicks
     const scrollTriggerRef = useRef(0)
 
@@ -1043,13 +1043,20 @@ export default function ChatWithFilePage() {
                                         </Button>
                                     </div>
                                 )}
-                                <PdfViewer
-                                    url={previewUrl}
-                                    highlights={highlights}
-                                    targetPage={targetPage}
-                                    targetHighlightIndex={targetHighlightIndex}
-                                    onDocumentLoad={({ numPages }) => setNumPages(numPages)}
-                                />
+                                <Suspense
+                                    fallback={
+                                        <div className="flex flex-1 items-center justify-center bg-surface">
+                                            <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
+                                        </div>
+                                    }
+                                >
+                                    <PdfViewer
+                                        url={previewUrl}
+                                        highlights={highlights}
+                                        targetPage={targetPage}
+                                        targetHighlightIndex={targetHighlightIndex}
+                                    />
+                                </Suspense>
                             </div>
                         ) : previewType === 'image' && previewUrl ? (
                             <div className="h-full w-full flex items-center justify-center bg-surface p-4">

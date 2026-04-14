@@ -12,7 +12,6 @@ import { Toggle } from "@/components/ui/toggle"
 import { useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { PlanApprovalModal } from "./PlanApprovalModal"
-import { apiFetch } from "@/lib/api"
 
 interface ChatInterfaceProps {
     onFileCitationClick?: (citation: FileCitation, messageId: number) => void
@@ -30,7 +29,7 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
         chatSessions,
         pendingPlan,
         researchPhase,
-        createNewChat,
+        addMessage,
         createDeepResearchPlan,
         approveDeepResearchPlan,
         setPendingPlan,
@@ -105,63 +104,20 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
             content: prompt,
         }
         
-        // Clear previous status steps when starting new message
-        useChatStore.setState({ statusSteps: [] })
-        
-// Optimistically add user message to chat for Deep Research
+        // Deep Research persists the user message first, then requests a plan.
         if (activeFeatures.deepResearch) {
-            let chatId = currentChatId
-            if (!chatId) {
-                chatId = await createNewChat('normal')
-            }
-            if (!chatId) return
-
-            // Clear previous status and set loading
-            useChatStore.setState({ 
-                statusSteps: [], 
-                isLoading: true,
-            })
-
-            // Add user message to chat immediately (optimistic)
-            const optimisticUserMessage = {
-                id: Date.now(),
-                role: 'user' as const,
-                content: prompt,
-                timestamp: Date.now(),
-            }
-            
-            useChatStore.setState((state) => ({
-                messagesByChat: {
-                    ...state.messagesByChat,
-                    [chatId as number]: [
-                        ...(state.messagesByChat[chatId as number] || []),
-                        optimisticUserMessage,
-                    ],
-                },
-            }))
-
             setInput("")
             
             try {
-                // Save user message to database WITHOUT adding to store again (already added optimistically)
-                try {
-                    const chatIdForMessage = currentChatId || chatId
-                    if (chatIdForMessage) {
-                        await apiFetch(`/conversations/${chatIdForMessage}/messages`, {
-                            method: 'POST',
-                            body: JSON.stringify({
-                                role: 'user',
-                                content: prompt,
-                            }),
-                        })
-                    }
-                } catch (saveError) {
-                    console.error('Failed to save user message:', saveError)
-                    // Continue even if save fails - message is already in UI
+                await addMessage(userMessage, 'normal')
+
+                const activeChatId = useChatStore.getState().currentChatId
+                if (!activeChatId) {
+                    throw new Error('No active conversation')
                 }
                 
                 // Create research plan - backend will emit status events
-                const planRequest = await createDeepResearchPlan(chatId, prompt)
+                const planRequest = await createDeepResearchPlan(activeChatId, prompt)
                 
                 // Show plan approval modal
                 setPendingPlan(planRequest)
@@ -169,8 +125,6 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
                 toast.error('Failed to create research plan')
                 console.error(error)
                 setInput(prompt)
-            } finally {
-                useChatStore.setState({ isLoading: false })
             }
             return
         }

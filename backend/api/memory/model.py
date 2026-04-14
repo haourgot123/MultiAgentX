@@ -34,7 +34,7 @@ class MemorySearchRequest(BaseModel):
 class MemoryAddRequest(BaseModel):
     """Request model for adding memories manually."""
     
-    messages: List[dict] = Field(..., description="Conversation messages", min_items=1)
+    messages: List[dict] = Field(..., description="Conversation messages", min_length=1)
     user_id: str = Field(..., description="User ID")
     metadata: Optional[dict] = Field(None, description="Optional metadata")
     infer: bool = Field(True, description="Auto-extract facts from messages")

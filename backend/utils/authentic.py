@@ -1,5 +1,5 @@
 import hashlib
-from time import time
+from time import time, time_ns
 
 import jwt
 from fastapi import HTTPException, status
@@ -21,6 +21,7 @@ def create_refresh_token(uid, email):
     token = jwt.encode(
         {
             "rt": rt,
+            "nonce": time_ns(),
             "expire_after": expire,
             "uid": uid,
             "email": email,
@@ -36,7 +37,12 @@ def create_access_token(*, data: dict):
     rt = int(time())
     to_encode = data.copy()
     expire = int(_settings.jwt.access_token_expire_minutes) * 60
-    to_encode.update({"rt": rt, "expire_after": expire, "sub": "access_token"})
+    to_encode.update({
+        "rt": rt,
+        "nonce": time_ns(),
+        "expire_after": expire,
+        "sub": "access_token",
+    })
     encoded_jwt = jwt.encode(
         to_encode, str(_settings.jwt.secret_key), algorithm=_settings.jwt.algorithm
     )
@@ -47,13 +53,18 @@ def verify_access_token(token: str) -> dict:
     # Returns Is_Valid, user_id
     rt = int(time())
     token_raw = None
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing token",
+        )
     try:
         token_raw = jwt.decode(
             token, _settings.jwt.secret_key, algorithms=_settings.jwt.algorithm
         )
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(e),
         )
     tk_rt = token_raw["rt"]

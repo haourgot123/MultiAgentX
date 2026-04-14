@@ -1,8 +1,12 @@
 from typing import List, Dict, Any, Optional
-from mem0 import AsyncMemory
 from backend.config.settings import _settings
 from loguru import logger
 import os
+
+try:
+    from mem0 import AsyncMemory
+except ImportError:
+    AsyncMemory = None
 
 
 class Mem0Client:
@@ -20,6 +24,10 @@ class Mem0Client:
     async def initialize(self):
         """Lazy initialization of AsyncMemory instance."""
         if self._initialized:
+            return
+
+        if AsyncMemory is None:
+            self.logger.warning("Mem0 package is not installed; long-term memory is unavailable")
             return
         
         if not _settings.mem0.enable_long_term_memory:

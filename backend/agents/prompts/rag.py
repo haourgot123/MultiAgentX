@@ -27,9 +27,10 @@ Your task is to transform user questions into queries that maximize retrieval re
 - This helps match against actual document language rather than question language
 
 ### 3. Multi-Query Generation
-Generate 1-2 complementary queries:
-- **Primary Query:** Direct, focused on the core intent
-- **Expanded Query:** Broader coverage with related terms and context
+Generate exactly 3 complementary queries from different angles:
+- **Primary Query:** Direct, focused on the core intent — concise and precise
+- **Secondary Query:** Alternative perspective — different terminology, broader/narrower scope, or related aspect the user implicitly needs
+- **Tertiary Query:** HyDE-style — written in the vocabulary and style of a document paragraph that *answers* this question (not asks it)
 
 ## Guidelines:
 1. Preserve the core intent of the original question
@@ -40,17 +41,21 @@ Generate 1-2 complementary queries:
 6. Respond in the same language as the user's question
 7. For technical topics, include both the casual and formal terminology""",
 
-    "QUERY_TRANSFORM_USER": """Transform this question into optimized search queries for document retrieval:
+    "QUERY_TRANSFORM_USER": """Transform this question into 3 optimized search queries for document retrieval:
 
 User Question: {user_question}
 
 Conversation Context: {context}
 
-Generate an optimized primary query and extract key terms for document search.
-Also generate a hypothetical answer snippet (1-2 sentences) that documents might contain.""",
+Generate exactly 3 queries:
+1. **primary_query** — Direct, focused on the core intent of the question.
+2. **secondary_query** — A different angle: alternative terminology, related sub-topic, or broader/narrower framing that captures aspects the user implicitly needs.
+3. **tertiary_query** — HyDE-style: write a sentence or phrase in the language a document *answering* this question would use (not the question itself).
 
-    "QUERY_TRANSFORM_RETRY_USER": """The previous search did not return sufficiently relevant results. 
-Transform the question into a DIFFERENT, refined search query.
+Also extract relevant keywords.""",
+
+    "QUERY_TRANSFORM_RETRY_USER": """The previous search did not return sufficiently relevant results.
+Generate 3 NEW, significantly different search queries.
 
 User Question: {user_question}
 
@@ -64,13 +69,12 @@ Retry Attempt: {retry_count}
 
 ## Instructions:
 1. Analyze WHY the previous query failed based on the evaluation feedback
-2. Generate a significantly DIFFERENT query approach:
-   - Try alternative keywords, synonyms, or phrasings
-   - Consider using more specific or more general terms
-   - If the previous query was too narrow, broaden it
-   - If the previous query was too broad, make it more specific
-3. Apply HyDE: imagine what the answer paragraph would look like in the document
-4. Do NOT repeat the same query — it must be meaningfully different""",
+2. Generate exactly 3 meaningfully different queries:
+   - **primary_query**: Try completely different keywords or framing from the previous attempt
+   - **secondary_query**: Shift the angle — if previous was specific, go broad; if broad, go specific; or focus on a related sub-aspect
+   - **tertiary_query**: HyDE-style — write in the vocabulary of a document that *contains the answer*, not the question
+3. None of the 3 queries should repeat the previous failed query
+4. Consider synonyms, domain-specific terms, and related concepts""",
 
     "EVALUATION_SYSTEM": """You are a Retrieval Quality Evaluator for RAG systems.
 Your job is to assess whether retrieved document chunks are relevant enough to answer the user's question.

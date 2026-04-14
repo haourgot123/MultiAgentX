@@ -13,16 +13,16 @@ service_logger = logger.bind(service="rag-query-transform")
 
 
 class TransformedQuery(BaseModel):
-    optimized_query: str = Field(description="optimized primary search query for document retrieval")
+    primary_query: str = Field(description="Primary search query — direct, focused on core intent")
+    secondary_query: str = Field(
+        default="",
+        description="Secondary query — alternative angle, broader/narrower scope, or different terminology"
+    )
+    tertiary_query: str = Field(
+        default="",
+        description="Tertiary query — HyDE-style, written in the language a document answering this might use"
+    )
     keywords: list[str] = Field(default_factory=list, description="key terms extracted from the query")
-    hypothetical_answer: str = Field(
-        default="",
-        description="a hypothetical 1-2 sentence answer that a document might contain (HyDE approach)"
-    )
-    expanded_query: str = Field(
-        default="",
-        description="an alternative query with synonyms and related terms for broader coverage"
-    )
 
 
 class QueryTransformNode(Runnable):

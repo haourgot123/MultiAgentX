@@ -133,17 +133,48 @@ class DataIngestionService:
             progress,
         )
 
-    def _build_chunks(self, text_blocks: list[ExtractedTextBlock]) -> list[IngestionChunk]:
-        """Section-aware chunking: headings act as chunk boundaries.
+    @staticmethod
+    def _heading_level(text: str) -> int:
+        """Return 1 for top-level section headings, 2 for subsections.
 
-        Each section (heading + body blocks until next heading) becomes one chunk.
-        Tables/images are treated as atomic (standalone) chunks.
-        Sections exceeding max_section_size are split with overlap as a safety net.
+        Level-1 (split boundary): "1. Introduction", "2. Core Capabilities",
+            "Abstract", "References", "Appendix", "Conclusion"
+        Level-2 (merged into parent): "2.1. PP-OCRv5", "3.2. Inference Library",
+            "A. Acknowledgments", "B.1. Run inference by CLI",
+            and anything without a leading numeric prefix.
+        """
+        import re
+        t = text.strip()
+        lower = t.lower()
+        # Subsection: two-level "2.1." or letter+number "B.1."
+        if re.match(r'^\d+\.\d+', t) or re.match(r'^[A-Z]\.\d+', t):
+            return 2
+        # Appendix sub-sections: single uppercase letter "A. Acknowledgments" etc.
+        if re.match(r'^[A-Z]\.\s', t):
+            return 2
+        # Top-level numeric: "1. ", "2. " etc.
+        if re.match(r'^\d+\.\s', t):
+            return 1
+        # Well-known standalone section names
+        for kw in ("abstract", "introduction", "conclusion", "references",
+                   "appendix", "acknowledgment"):
+            if lower.startswith(kw):
+                return 1
+        # Anything else (e.g. descriptive sub-headings) → subsection
+        return 2
+
+    def _build_chunks(self, text_blocks: list[ExtractedTextBlock]) -> list[IngestionChunk]:
+        """Hierarchy-aware section chunking.
+
+        Only TOP-LEVEL headings (level 1) create chunk boundaries.
+        Sub-headings (level 2+) are accumulated inside their parent section.
+        Tables and images-with-content are standalone atomic chunks.
+        Sections exceeding max_section_size are split with overlap.
         """
         if not text_blocks:
             return []
 
-        max_section_size = self.chunk_size * 4  # ~4000 chars safety limit
+        max_section_size = self.chunk_size * 6  # generous limit; primary control is heading level
 
         # --- Helper: finalize a list of blocks into an IngestionChunk ---
         def _finalize_chunk(index: int, blocks: list[ExtractedTextBlock]) -> IngestionChunk:
@@ -241,11 +272,24 @@ class DataIngestionService:
                 image_data=block.image_data,
             )
 
-            is_heading = block.block_type == "heading"
-            is_atomic = block.block_type in ("table", "image")
+            is_major_heading = (
+                block.block_type == "heading"
+                and self._heading_level(clean_text) == 1
+            )
+            is_minor_heading = (
+                block.block_type == "heading"
+                and self._heading_level(clean_text) > 1
+            )
+            # Images with no real content (just "[Image]") are merged into adjacent
+            # sections instead of becoming standalone atomic chunks.
+            _has_image_content = (
+                block.block_type == "image"
+                and clean_text != "[Image]"
+            )
+            is_atomic = block.block_type == "table" or _has_image_content
 
-            # --- Heading: finalize previous section, start new one ---
-            if is_heading:
+            # --- Major heading: finalize previous section, start new one ---
+            if is_major_heading:
                 if section_blocks:
                     if section_size > max_section_size:
                         _split_oversized_section(section_blocks, chunks)
@@ -255,7 +299,7 @@ class DataIngestionService:
                 section_size = len(clean_text) + 1
                 continue
 
-            # --- Atomic block (table/image): emit as standalone chunk ---
+            # --- Atomic block (table / image-with-content): emit as standalone chunk ---
             if is_atomic:
                 # First finalize any pending section
                 if section_blocks:
@@ -266,9 +310,12 @@ class DataIngestionService:
                     section_blocks = []
                     section_size = 0
 
-                # Table/image becomes its own chunk
+                # Table / meaningful image becomes its own chunk
                 chunks.append(_finalize_chunk(len(chunks) + 1, [block]))
                 continue
+
+            # --- Minor heading and regular text: accumulate into current section ---
+            # (is_minor_heading falls through here intentionally)
 
             # --- Regular text block: accumulate into current section ---
             section_blocks.append(block)
@@ -571,7 +618,7 @@ class DataIngestionService:
 
         # --- Debug: write extraction + chunking results to JSON for verification ---
         try:
-            debug_dir = Path("tmp")
+            debug_dir = Path(__file__).resolve().parent.parent.parent / "tmp" / "ingestion_debug"
             debug_dir.mkdir(parents=True, exist_ok=True)
             debug_file = debug_dir / f"ingestion_debug_{stored_file.id}.json"
 

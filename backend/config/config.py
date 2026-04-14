@@ -363,8 +363,8 @@ class MiddlewareConfig:
 class ChunkConfig:
     """Chunk configuration settings."""
 
-    chunk_size: int = 1000
-    chunk_overlap: int = 100
+    chunk_size: int = 6000
+    chunk_overlap: int = 200
     markdown_headers: List[Tuple[str, str]] = field(
         default_factory=lambda: [
             ("#", "header1"),

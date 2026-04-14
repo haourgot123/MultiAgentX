@@ -24,6 +24,7 @@ class RAGAgentState(BaseModel):
 
     # Query transform
     transformed_query: str = ""
+    transformed_queries: List[str] = []  # All 3 generated queries for multi-query retrieval
 
     # Retrieval
     retrieved_chunks: List[RetrievedChunk] = []

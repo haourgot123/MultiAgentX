@@ -1,16 +1,30 @@
+import { Suspense, lazy } from 'react'
 import { createBrowserRouter, RouterProvider} from 'react-router-dom'
-import AppLayout from './layout/AppLayout'
-import { ChatInterface } from './components/chat/ChatInterface'
-import FilesPage from './pages/FilesPage'
-import ChatWithFilePage from './pages/ChatWithFilePage'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { Toaster } from "@/components/ui/sonner"
-import LoginPage from './store/LoginPage'
-import RegisterPage from './store/RegisterPage'
+
+const AppLayout = lazy(() => import('./layout/AppLayout'))
+const ChatInterface = lazy(() => import('./components/chat/ChatInterface').then((module) => ({ default: module.ChatInterface })))
+const FilesPage = lazy(() => import('./pages/FilesPage'))
+const ChatWithFilePage = lazy(() => import('./pages/ChatWithFilePage'))
+const LoginPage = lazy(() => import('./store/LoginPage'))
+const RegisterPage = lazy(() => import('./store/RegisterPage'))
+
+function RouteFallback() {
+  return (
+    <div className="flex h-screen items-center justify-center bg-background text-sm text-text-muted">
+      Loading...
+    </div>
+  )
+}
+
+function withSuspense(element: React.ReactNode) {
+  return <Suspense fallback={<RouteFallback />}>{element}</Suspense>
+}
 
 
 function LoginRoute() {
-  return <LoginPage />
+  return withSuspense(<LoginPage />)
 }
 
 const router = createBrowserRouter([
@@ -20,27 +34,27 @@ const router = createBrowserRouter([
   },
   {
     path: '/register',
-    element: <RegisterPage />
+    element: withSuspense(<RegisterPage />)
   },
   {
     path: '/',
     element: (
       <ProtectedRoute>
-        <AppLayout />
+        {withSuspense(<AppLayout />)}
       </ProtectedRoute>
     ),
     children: [
       {
         index: true,
-        element: <ChatInterface />
+        element: withSuspense(<ChatInterface />)
       },
       {
         path: 'files',
-        element: <FilesPage />
+        element: withSuspense(<FilesPage />)
       },
       {
         path: 'chat-file',
-        element: <ChatWithFilePage />
+        element: withSuspense(<ChatWithFilePage />)
       }
     ]
   }

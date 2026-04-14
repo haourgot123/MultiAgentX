@@ -10,8 +10,7 @@ from pydantic.types import constr
 from six import string_types
 from sqlalchemy import String, and_, cast, event, inspect, not_, or_
 from sqlalchemy.engine import Engine, create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Session, joinedload, load_only, sessionmaker
+from sqlalchemy.orm import Session, declarative_base, joinedload, load_only, sessionmaker
 from sqlalchemy.orm.base import InspectionAttr
 from sqlalchemy.orm.relationships import RelationshipProperty
 from sqlalchemy_filters import apply_filters, apply_pagination, apply_sort
@@ -272,7 +271,7 @@ def insert_row(db_session: Session, obj_table):
 
 
 def update_row(db_session: Session, obj_table, obj_table_in):
-    update_data = obj_table_in.dict(exclude_none=True)
+    update_data = obj_table_in.model_dump(exclude_none=True)
 
     for field in update_data:
         setattr(obj_table, field, update_data[field])

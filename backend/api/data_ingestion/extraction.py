@@ -403,7 +403,19 @@ class DoclingExtractionService:
                 )
             ) from exc
 
-        converter = DocumentConverter()
+        try:
+            from docling.datamodel.pipeline_options import PdfPipelineOptions
+            from docling.document_converter import PdfFormatOption
+
+            pipeline_options = PdfPipelineOptions()
+            pipeline_options.generate_picture_images = True
+            converter = DocumentConverter(
+                format_options={"pdf": PdfFormatOption(pipeline_options=pipeline_options)}
+            )
+        except (ImportError, Exception):
+            # Fallback: use default converter if options are unavailable
+            converter = DocumentConverter()
+
         result = converter.convert(doc_path)
         return result.document
 
