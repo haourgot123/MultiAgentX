@@ -41,6 +41,20 @@ export type OutputFile = {
     blob_url?: string | null
 }
 
+export type SkillExecutionArtifact = {
+    id: number
+    user_id: number
+    conversation_id: number
+    message_id: number | null
+    skill_id: number | null
+    file_name: string
+    blob_path: string
+    content_type: string | null
+    size: number
+    download_url: string | null
+    created_at: string
+}
+
 export type SkillExecutionRun = {
     id: number
     userMessageId: number | null
@@ -103,6 +117,20 @@ type MessageApiResponse = {
     updated_at: string
 }
 
+type SkillExecutionArtifactApiResponse = {
+    id: number
+    user_id: number
+    conversation_id: number
+    message_id: number | null
+    skill_id: number | null
+    file_name: string
+    blob_path: string
+    content_type: string | null
+    size: number
+    download_url: string | null
+    created_at: string
+}
+
 export interface SandboxFile {
     name: string
     size: number
@@ -115,6 +143,7 @@ interface AgentSkillsState {
     conversations: SkillConversation[]
     currentConversationId: number | null
     executionRunsByConversation: Record<number, SkillExecutionRun[]>
+    artifactsByConversation: Record<number, SkillExecutionArtifact[]>
     isLoading: boolean
     isUploading: boolean
     isExecuting: boolean
@@ -140,6 +169,8 @@ interface AgentSkillsState {
     getSelectedSkills: () => Skill[]
     fetchSandboxFiles: (sandboxIndex: number) => Promise<void>
     downloadSandboxFile: (sandboxIndex: number, filename: string) => Promise<void>
+    fetchConversationArtifacts: (conversationId: number) => Promise<void>
+    downloadArtifact: (artifactId: number) => Promise<void>
 }
 
 const mapSkillResponse = (skill: SkillApiResponse): Skill => ({
@@ -230,6 +261,7 @@ export const useAgentSkillsStore = create<AgentSkillsState>((set, get) => ({
     conversations: [],
     currentConversationId: null,
     executionRunsByConversation: {},
+    artifactsByConversation: {},
     isLoading: false,
     isUploading: false,
     isExecuting: false,
@@ -271,6 +303,8 @@ export const useAgentSkillsStore = create<AgentSkillsState>((set, get) => ({
                     : derivedRuns,
             },
         }))
+
+        void get().fetchConversationArtifacts(conversationId)
     },
 
     createConversation: async (title) => {
@@ -678,6 +712,38 @@ export const useAgentSkillsStore = create<AgentSkillsState>((set, get) => ({
             window.URL.revokeObjectURL(url)
         } catch (error) {
             console.error('Failed to download file:', error)
+            throw error
+        }
+    },
+
+    fetchConversationArtifacts: async (conversationId: number) => {
+        try {
+            const artifacts = await apiFetch<SkillExecutionArtifactApiResponse[]>(`/skills/artifacts/${conversationId}`)
+            set((state) => ({
+                artifactsByConversation: {
+                    ...state.artifactsByConversation,
+                    [conversationId]: artifacts,
+                },
+            }))
+        } catch (error) {
+            console.error('Failed to fetch artifacts:', error)
+        }
+    },
+
+    downloadArtifact: async (artifactId: number) => {
+        try {
+            const token = useAuthStore.getState().accessToken
+            const response = await fetch(`${API_BASE_URL}/skills/artifacts/${artifactId}/download`, {
+                method: 'GET',
+                headers: token ? { Token: token } : {},
+            })
+            if (!response.ok) {
+                throw new Error(`Failed to download artifact: ${response.status}`)
+            }
+            const redirectUrl = response.url
+            window.open(redirectUrl, '_blank')
+        } catch (error) {
+            console.error('Failed to download artifact:', error)
             throw error
         }
     },

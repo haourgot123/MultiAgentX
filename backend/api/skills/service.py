@@ -22,6 +22,7 @@ from fastapi import Request
 from backend.api.skills.model import (
     AgentSkill,
     SandboxSession,
+    SkillExecutionArtifact,
     SkillUpdateRequest,
 )
 from backend.api.conversation.model import ConversationMessageCreateRequest
@@ -1213,13 +1214,36 @@ class SandboxService:
                 for f in file_attachments:
                     message_content += f"\n- {f['name']} ({f['size']:,} bytes)"
 
-            conversation_service.add_message(
+            new_message, _ = conversation_service.add_message(
                 request,
                 db_session,
                 user_id,
                 conversation_id,
                 ConversationMessageCreateRequest(role="assistant", content=message_content),
             )
+
+            # Persist artifacts to database for permanent access
+            for f in file_attachments:
+                if f.get("blob_url"):
+                    try:
+                        blob_key = f"skill-outputs/{user_id}/{sandbox.sandbox_index}/{f['name']}"
+                        artifact = SkillExecutionArtifact(
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            message_id=new_message.id if new_message else None,
+                            skill_id=skill.id if skill else None,
+                            sandbox_index=sandbox.sandbox_index,
+                            file_name=f["name"],
+                            blob_path=blob_key,
+                            content_type=mimetypes.guess_type(f["name"])[0] or "application/octet-stream",
+                            size=f["size"],
+                            created_at=get_utc_now(),
+                        )
+                        db_session.add(artifact)
+                        request_logger.info("Persisted artifact to DB: {} for message_id={}", f["name"], new_message.id if new_message else None)
+                    except Exception as artifact_exc:
+                        request_logger.warning("Failed to persist artifact to DB: {}", artifact_exc)
+            db_session.commit()
 
             yield self._format_sse_event("done", {"output": result, "files": file_attachments})
 

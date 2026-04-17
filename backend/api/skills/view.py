@@ -12,6 +12,8 @@ from backend.api.skills.model import (
     SandboxResponse,
     SkillExecutionRequest,
     SkillSelectRequest,
+    SkillExecutionArtifact,
+    SkillExecutionArtifactResponse,
 )
 from backend.api.skills.service import skill_service, sandbox_service
 from backend.utils.blob_storage import blob_storage_client
@@ -256,3 +258,69 @@ async def execute_skills(
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )
+
+
+def _to_artifact_response(artifact: SkillExecutionArtifact) -> SkillExecutionArtifactResponse:
+    download_url: str | None = None
+    try:
+        if artifact.blob_path:
+            download_url = blob_storage_client.generate_sas_url(artifact.blob_path)
+    except Exception:
+        download_url = None
+    return SkillExecutionArtifactResponse(
+        id=artifact.id,
+        user_id=artifact.user_id,
+        conversation_id=artifact.conversation_id,
+        message_id=artifact.message_id,
+        skill_id=artifact.skill_id,
+        file_name=artifact.file_name,
+        blob_path=artifact.blob_path,
+        content_type=artifact.content_type,
+        size=artifact.size,
+        download_url=download_url,
+        created_at=artifact.created_at,
+    )
+
+
+@router.get(
+    "/artifacts/{conversation_id}",
+    response_model=list[SkillExecutionArtifactResponse],
+    status_code=status.HTTP_200_OK,
+)
+def list_conversation_artifacts(
+    request: Request,
+    conversation_id: int,
+    db_session: Session = Depends(get_db),
+):
+    user_id = request.state.user_id
+    artifacts = (
+        db_session.query(SkillExecutionArtifact)
+        .filter(
+            SkillExecutionArtifact.conversation_id == conversation_id,
+            SkillExecutionArtifact.user_id == user_id,
+        )
+        .order_by(SkillExecutionArtifact.created_at.desc())
+        .all()
+    )
+    return [_to_artifact_response(a) for a in artifacts]
+
+
+@router.get("/artifacts/{artifact_id}/download", status_code=status.HTTP_302_FOUND)
+def download_artifact(
+    request: Request,
+    artifact_id: int,
+    db_session: Session = Depends(get_db),
+):
+    user_id = request.state.user_id
+    artifact = (
+        db_session.query(SkillExecutionArtifact)
+        .filter(
+            SkillExecutionArtifact.id == artifact_id,
+            SkillExecutionArtifact.user_id == user_id,
+        )
+        .first()
+    )
+    if not artifact or not artifact.blob_path:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    sas_url = blob_storage_client.generate_sas_url(artifact.blob_path)
+    return RedirectResponse(url=sas_url, status_code=302)
