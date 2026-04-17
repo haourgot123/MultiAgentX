@@ -54,3 +54,6 @@ langchain>=1.2.12
 
 # Mem0 Long-term Memory
 mem0ai>=0.1.0
+
+# Azure Blob Storage
+azure-storage-blob>=12.0.0

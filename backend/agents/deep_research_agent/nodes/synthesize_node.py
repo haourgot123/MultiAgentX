@@ -23,7 +23,7 @@ Original Question: {user_question}
 ## Research Findings by Iteration:
 {findings_text}
 
-## Source References (use these for [1], [2], etc. citations):
+## Source References (use these URLs to create inline citations like [1](URL), [2](URL)):
 {sources_text}
 
 ## Research Plan Coverage:
@@ -33,7 +33,7 @@ Original Question: {user_question}
 1. Create a comprehensive report following the structure in your system instructions
 2. Start with an executive summary (2-3 paragraphs)
 3. Organize findings into 3-5 thematic sections with clear headings
-4. Use [1], [2] superscript citation numbers immediately after key claims — reference the source numbers above
+4. Use inline markdown citations like [1](URL), [2](URL) immediately after key claims — use the matching URLs from the source references above
 5. Include specific data, statistics, and examples from the findings
 6. Acknowledge limitations and any conflicting information
 7. End with clear conclusions and recommendations

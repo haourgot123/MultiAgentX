@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { io, type Socket } from 'socket.io-client'
-import { API_BASE_URL, SOCKET_BASE_URL, apiFetch } from '@/lib/api'
+import { SOCKET_BASE_URL, apiFetch } from '@/lib/api'
 import { useAuthStore } from './auth-store'
 
 export type FileItem = {
@@ -9,7 +9,7 @@ export type FileItem = {
     type: string
     size: number
     uploadedAt: number
-    storagePath: string
+    sasUrl: string | null
     ingestionStatus: string
     ingestionError: string | null
     ingestedChunks: number
@@ -21,7 +21,7 @@ export type FileItem = {
 type FileApiResponse = {
     id: number
     name: string
-    storage_path: string
+    sas_url: string | null
     mime_type: string
     size: number
     ingestion_status?: string
@@ -51,6 +51,8 @@ interface FileState {
     removeFile: (id: number) => Promise<void>
     renameFile: (id: number, name: string) => Promise<void>
     downloadFile: (id: number) => Promise<void>
+    refreshSasUrl: (id: number) => Promise<string | null>
+    refreshSasUrls: (ids?: number[]) => Promise<void>
     connectIngestionSocket: () => void
     disconnectIngestionSocket: () => void
 }
@@ -154,7 +156,7 @@ const mapFileResponse = (file: FileApiResponse): FileItem => {
         type: file.mime_type,
         size: file.size,
         uploadedAt: new Date(file.created_at).getTime(),
-        storagePath: file.storage_path,
+        sasUrl: file.sas_url ?? null,
         ingestionStatus: normalizedStatus,
         ingestionError: file.ingestion_error ?? null,
         ingestedChunks: file.ingested_chunks ?? 0,
@@ -259,34 +261,63 @@ export const useFileStore = create<FileState>((set) => ({
     },
 
     downloadFile: async (id) => {
-        const token = useAuthStore.getState().accessToken
-        const response = await fetch(`${API_BASE_URL}/files/${id}/download`, {
-            method: 'GET',
-            headers: token ? { Token: token } : {},
-        })
-
-        if (!response.ok) {
-            const errorPayload = await response.json().catch(() => null)
-            const message =
-                errorPayload?.message ||
-                errorPayload?.detail ||
-                `Request failed with status ${response.status}`
-            throw new Error(message)
-        }
-
-        const blob = await response.blob()
-        const downloadUrl = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = downloadUrl
-
         const state = useFileStore.getState()
         const targetFile = state.files.find((file) => file.id === id)
-        a.download = targetFile?.name || `file-${id}`
 
+        // Use stored SAS URL, or fetch a fresh one if missing
+        let sasUrl = targetFile?.sasUrl ?? null
+        if (!sasUrl) {
+            sasUrl = await useFileStore.getState().refreshSasUrl(id)
+        }
+        if (!sasUrl) {
+            throw new Error('Unable to generate download URL for this file')
+        }
+
+        const a = document.createElement('a')
+        a.href = sasUrl
+        a.download = targetFile?.name || `file-${id}`
+        a.target = '_blank'
+        a.rel = 'noopener noreferrer'
         document.body.appendChild(a)
         a.click()
         a.remove()
-        window.URL.revokeObjectURL(downloadUrl)
+    },
+
+    refreshSasUrl: async (id) => {
+        type SasResponse = { sas_url: string; expires_at: string }
+        try {
+            const response = await apiFetch<SasResponse>(`/files/${id}/sas`)
+            set((state) => ({
+                files: state.files.map((f) =>
+                    f.id === id ? { ...f, sasUrl: response.sas_url } : f
+                ),
+            }))
+            return response.sas_url
+        } catch {
+            return null
+        }
+    },
+
+    refreshSasUrls: async (ids) => {
+        const state = useFileStore.getState()
+        const targetIds = ids ?? state.files.map((f) => f.id)
+        if (targetIds.length === 0) return
+
+        type BatchSasResponse = { urls: Record<string, string>; expires_at: string }
+        try {
+            const response = await apiFetch<BatchSasResponse>('/files/sas', {
+                method: 'POST',
+                body: JSON.stringify({ file_ids: targetIds }),
+            })
+            set((state) => ({
+                files: state.files.map((f) => {
+                    const newUrl = response.urls[String(f.id)]
+                    return newUrl ? { ...f, sasUrl: newUrl } : f
+                }),
+            }))
+        } catch {
+            // Non-fatal — existing SAS URLs may still be valid
+        }
     },
 
     connectIngestionSocket: () => {

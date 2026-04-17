@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 class ImageGenerationAgentState(BaseModel):
     user_question: str
+    user_id: int = 0
     memories: List[Any] = []
     enhanced_prompt: str = ""
     image_urls: List[str] = []

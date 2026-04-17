@@ -4,6 +4,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useChatStore } from "@/store/chat-store"
+import { useAuthStore } from "@/store/auth-store"
+import { useAgentSkillsStore } from "@/store/agent-skills-store"
 import {
     MessageSquare,
     ChevronLeft,
@@ -16,6 +18,7 @@ import {
     Trash2,
     Edit2,
     ScanSearch,
+    Bot,
 } from "lucide-react"
 import { Link, useLocation } from "react-router-dom"
 import {
@@ -47,6 +50,7 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
         activateChatType,
         createNewChat,
         setCurrentChat,
+        setConversationOpenScrollBehavior,
         getChatSessions,
         fetchChatSessions,
         loadConversation,
@@ -55,12 +59,26 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
         renameChat,
         requestFileChatNew
     } = useChatStore()
-    const [expandedSection, setExpandedSection] = useState<'chat' | 'file' | null>(null)
+    const {
+        conversations: skillConversations,
+        currentConversationId,
+        fetchConversations: fetchSkillConversations,
+        loadConversation: loadSkillConversation,
+        createConversation: createSkillConversation,
+        renameConversation: renameSkillConversation,
+        deleteConversation: deleteSkillConversation,
+    } = useAgentSkillsStore()
+    const [expandedSection, setExpandedSection] = useState<'chat' | 'file' | 'skills' | null>(null)
     const [isCreatingChat, setIsCreatingChat] = useState(false)
+    const [isCreatingSkillConversation, setIsCreatingSkillConversation] = useState(false)
     const [renamingChatId, setRenamingChatId] = useState<number | null>(null)
     const [newChatTitle, setNewChatTitle] = useState("")
     const [deletingChatId, setDeletingChatId] = useState<number | null>(null)
     const [deletingChatTitle, setDeletingChatTitle] = useState("")
+    const [renamingSkillConversationId, setRenamingSkillConversationId] = useState<number | null>(null)
+    const [newSkillConversationTitle, setNewSkillConversationTitle] = useState("")
+    const [deletingSkillConversationId, setDeletingSkillConversationId] = useState<number | null>(null)
+    const [deletingSkillConversationTitle, setDeletingSkillConversationTitle] = useState("")
 
     // Get chat sessions based on current route
     const isFileChat = location.pathname === '/chat-file'
@@ -77,23 +95,30 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
         } else if (isActive('/chat-file')) {
             activateChatType('file')
             setExpandedSection('file')
+        } else if (isActive('/agent-skills')) {
+            setExpandedSection('skills')
         }
     }, [location.pathname, activateChatType])
 
     useEffect(() => {
         const loadSessions = async () => {
             try {
-                await fetchChatSessions()
+                await Promise.all([
+                    fetchChatSessions('normal'),
+                    fetchChatSessions('file'),
+                    fetchSkillConversations(),
+                ])
             } catch (error) {
+                if (!useAuthStore.getState().isAuthenticated) return
                 toast.error(
                     error instanceof Error ? error.message : 'Failed to load conversations'
                 )
             }
         }
         void loadSessions()
-    }, [fetchChatSessions])
+    }, [fetchChatSessions, fetchSkillConversations])
 
-    const toggleSection = (section: 'chat' | 'file') => {
+    const toggleSection = (section: 'chat' | 'file' | 'skills') => {
         setExpandedSection(expandedSection === section ? null : section)
     }
 
@@ -123,8 +148,36 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
         }
     }
 
+    const handleNewSkillConversation = async () => {
+        setIsCreatingSkillConversation(true)
+        try {
+            const conversationId = await createSkillConversation()
+            await fetchSkillConversations()
+            await loadSkillConversation(conversationId)
+            setExpandedSection('skills')
+            toast.success('Created new Agent Skills conversation')
+        } catch (error) {
+            toast.error(
+                error instanceof Error ? error.message : 'Failed to create Agent Skills conversation'
+            )
+        } finally {
+            setIsCreatingSkillConversation(false)
+        }
+    }
+
+    const handleSelectSkillConversation = async (conversationId: number) => {
+        try {
+            await loadSkillConversation(conversationId)
+        } catch (error) {
+            toast.error(
+                error instanceof Error ? error.message : 'Failed to load Agent Skills conversation'
+            )
+        }
+    }
+
     const handleSelectChat = async (chatId: number) => {
         try {
+            setConversationOpenScrollBehavior('smooth')
             setCurrentChat(chatId)
             await loadConversation(chatId)
         } catch (error) {
@@ -183,6 +236,59 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
     const handleRenameCancel = () => {
         setRenamingChatId(null)
         setNewChatTitle("")
+    }
+
+    const handleRenameSkillStart = (conversationId: number, currentTitle: string) => {
+        setRenamingSkillConversationId(conversationId)
+        setNewSkillConversationTitle(currentTitle)
+    }
+
+    const handleRenameSkillCancel = () => {
+        setRenamingSkillConversationId(null)
+        setNewSkillConversationTitle("")
+    }
+
+    const handleRenameSkillConfirm = async () => {
+        if (renamingSkillConversationId && newSkillConversationTitle.trim()) {
+            try {
+                await renameSkillConversation(renamingSkillConversationId, newSkillConversationTitle.trim())
+                await fetchSkillConversations()
+                setRenamingSkillConversationId(null)
+                setNewSkillConversationTitle("")
+                toast.success('Agent Skills conversation renamed')
+            } catch (error) {
+                toast.error(
+                    error instanceof Error ? error.message : 'Failed to rename Agent Skills conversation'
+                )
+            }
+        }
+    }
+
+    const handleDeleteSkillConversation = (conversationId: number, conversationTitle: string) => {
+        setDeletingSkillConversationId(conversationId)
+        setDeletingSkillConversationTitle(conversationTitle)
+    }
+
+    const handleDeleteSkillCancel = () => {
+        setDeletingSkillConversationId(null)
+        setDeletingSkillConversationTitle("")
+    }
+
+    const handleDeleteSkillConfirm = async () => {
+        if (!deletingSkillConversationId) return
+
+        try {
+            await deleteSkillConversation(deletingSkillConversationId)
+            await fetchSkillConversations()
+            toast.success('Agent Skills conversation deleted')
+        } catch (error) {
+            toast.error(
+                error instanceof Error ? error.message : 'Failed to delete Agent Skills conversation'
+            )
+        } finally {
+            setDeletingSkillConversationId(null)
+            setDeletingSkillConversationTitle("")
+        }
     }
 
     const formatDate = (timestamp: number) => {
@@ -250,6 +356,61 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                     <DropdownMenuItem
                         className="text-red-600 focus:text-red-600 cursor-pointer rounded-md"
                         onClick={() => handleDeleteChat(session.id, session.title)}
+                    >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Delete
+                    </DropdownMenuItem>
+                </DropdownMenuContent>
+            </DropdownMenu>
+        </div>
+    )
+
+    const SkillHistoryItem = ({ conversation }: { conversation: { id: number; title: string; updatedAt: number } }) => (
+        <div
+            className={cn(
+                "group grid grid-cols-[1fr_auto] items-center gap-1 rounded-md hover:bg-surface transition-all",
+                currentConversationId === conversation.id && "bg-primary/10"
+            )}
+        >
+            <Button
+                variant="ghost"
+                className={cn(
+                    "min-w-0 justify-start h-auto py-2 px-2 hover:bg-transparent overflow-hidden",
+                    currentConversationId === conversation.id && "text-primary"
+                )}
+                onClick={() => void handleSelectSkillConversation(conversation.id)}
+            >
+                <div className="flex flex-col items-start min-w-0 w-full">
+                    <span className="text-xs font-medium truncate w-full text-left" title={conversation.title}>
+                        {conversation.title}
+                    </span>
+                    <span className="text-[10px] text-text-muted">{formatDate(conversation.updatedAt)}</span>
+                </div>
+            </Button>
+
+            <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 mr-1 shrink-0 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-all"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <MoreVertical className="h-3 w-3" />
+                    </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="bg-white border-border shadow-lg rounded-lg">
+                    <DropdownMenuItem
+                        className="cursor-pointer rounded-md"
+                        onClick={() => handleRenameSkillStart(conversation.id, conversation.title)}
+                    >
+                        <Edit2 className="mr-2 h-4 w-4" />
+                        Rename
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                        className="text-red-600 focus:text-red-600 cursor-pointer rounded-md"
+                        onClick={() => handleDeleteSkillConversation(conversation.id, conversation.title)}
                     >
                         <Trash2 className="mr-2 h-4 w-4" />
                         Delete
@@ -403,6 +564,68 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                             </div>
                         )}
                     </div>
+
+                    {/* Agent Skills Section */}
+                    <div>
+                        <div className={cn(
+                            "rounded-lg transition-all",
+                            isActive('/agent-skills') && "bg-primary/10"
+                        )}>
+                            <div className="flex items-center gap-1 px-2 py-1">
+                                <Link to="/agent-skills" className="flex-1">
+                                    <Button
+                                        variant="ghost"
+                                        className={cn(
+                                            "w-full justify-start text-text-secondary hover:text-primary hover:bg-transparent transition-all px-2",
+                                            isActive('/agent-skills') && "text-primary font-medium"
+                                        )}
+                                    >
+                                        <span className="icon-tech-shell mr-3 flex h-8 w-8 items-center justify-center rounded-xl">
+                                            <Bot className="h-4 w-4" />
+                                        </span>
+                                        <span>Agent Skills</span>
+                                    </Button>
+                                </Link>
+                                {!isCollapsed && isActive('/agent-skills') && (
+                                    <>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className={cn(
+                                                "h-8 w-8 rounded-lg text-primary hover:bg-primary/20",
+                                                isCreatingSkillConversation && "animate-spin-once"
+                                            )}
+                                            onClick={() => void handleNewSkillConversation()}
+                                        >
+                                            <Plus className="h-4 w-4" />
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-8 w-8 text-primary hover:bg-primary/20 rounded-lg"
+                                            onClick={() => toggleSection('skills')}
+                                        >
+                                            {expandedSection === 'skills' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                                        </Button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        {!isCollapsed && isActive('/agent-skills') && expandedSection === 'skills' && (
+                            <div className="overflow-hidden animate-expand">
+                                <div className="ml-4 mt-2 space-y-1 border-l-2 border-border pl-3">
+                                    {skillConversations.length === 0 ? (
+                                        <div className="text-xs text-text-muted py-2 px-2">No Agent Skills history</div>
+                                    ) : (
+                                        skillConversations.map((conversation) => (
+                                            <SkillHistoryItem key={conversation.id} conversation={conversation} />
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </ScrollArea>
 
@@ -465,6 +688,61 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                             variant="destructive"
                             className="rounded-lg"
                             onClick={() => void handleDeleteConfirm()}
+                        >
+                            Delete
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={renamingSkillConversationId !== null} onOpenChange={(open) => !open && handleRenameSkillCancel()}>
+                <DialogContent className="bg-white rounded-xl">
+                    <DialogHeader>
+                        <DialogTitle>Rename Agent Skills Conversation</DialogTitle>
+                        <DialogDescription>Enter a new name for this Agent Skills conversation</DialogDescription>
+                    </DialogHeader>
+                    <div className="py-4">
+                        <Label htmlFor="skill-conversation-title">Conversation Name</Label>
+                        <Input
+                            id="skill-conversation-title"
+                            value={newSkillConversationTitle}
+                            onChange={(e) => setNewSkillConversationTitle(e.target.value)}
+                            className="mt-2 rounded-lg"
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    void handleRenameSkillConfirm()
+                                }
+                            }}
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={handleRenameSkillCancel} className="rounded-lg">Cancel</Button>
+                        <Button
+                            className="bg-primary hover:bg-primary-hover text-white rounded-lg"
+                            onClick={() => void handleRenameSkillConfirm()}
+                        >
+                            Rename
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={deletingSkillConversationId !== null} onOpenChange={(open) => !open && handleDeleteSkillCancel()}>
+                <DialogContent className="bg-white rounded-xl">
+                    <DialogHeader>
+                        <DialogTitle>Delete Agent Skills Conversation</DialogTitle>
+                        <DialogDescription>
+                            Are you sure you want to delete
+                            {deletingSkillConversationTitle ? ` "${deletingSkillConversationTitle}"` : " this conversation"}?
+                            This action cannot be undone.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={handleDeleteSkillCancel} className="rounded-lg">Cancel</Button>
+                        <Button
+                            variant="destructive"
+                            className="rounded-lg"
+                            onClick={() => void handleDeleteSkillConfirm()}
                         >
                             Delete
                         </Button>

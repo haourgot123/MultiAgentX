@@ -7,6 +7,7 @@ const AppLayout = lazy(() => import('./layout/AppLayout'))
 const ChatInterface = lazy(() => import('./components/chat/ChatInterface').then((module) => ({ default: module.ChatInterface })))
 const FilesPage = lazy(() => import('./pages/FilesPage'))
 const ChatWithFilePage = lazy(() => import('./pages/ChatWithFilePage'))
+const AgentSkillsPage = lazy(() => import('./pages/AgentSkillsPage'))
 const LoginPage = lazy(() => import('./store/LoginPage'))
 const RegisterPage = lazy(() => import('./store/RegisterPage'))
 
@@ -55,6 +56,10 @@ const router = createBrowserRouter([
       {
         path: 'chat-file',
         element: withSuspense(<ChatWithFilePage />)
+      },
+      {
+        path: 'agent-skills',
+        element: withSuspense(<AgentSkillsPage />)
       }
     ]
   }

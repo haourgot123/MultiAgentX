@@ -113,15 +113,9 @@ export const useAuthStore = create<AuthState>()(
 
           if (!res.ok) return false
 
-          const data = await res.json()
-          set({
-            isAuthenticated: true,
-            user: data.user,
-            accessToken: data.access_token,
-            refreshToken: data.refresh_token,
-          })
-
-          return true
+          // Register endpoint returns UserResponse (no tokens).
+          // Auto-login to obtain access & refresh tokens.
+          return await get().login(username, password)
         } catch {
           return false
         }

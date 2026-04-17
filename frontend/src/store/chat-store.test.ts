@@ -333,4 +333,87 @@ describe('useChatStore', () => {
         expect(useChatStore.getState().isLoading).toBe(false)
         expect(useChatStore.getState().statusSteps).toEqual([])
     })
+
+    it('shows the approved deep research plan immediately before the streamed answer completes', async () => {
+        useChatStore.setState({
+            currentChatId: 21,
+            activeChatIdByType: {
+                normal: 21,
+                file: null,
+            },
+            chatSessions: [
+                {
+                    id: 21,
+                    title: 'Deep Research Chat',
+                    createdAt: Date.parse('2026-04-15T10:00:00Z'),
+                    updatedAt: Date.parse('2026-04-15T10:00:00Z'),
+                    chatType: 'normal',
+                    fileIds: [],
+                    messageCount: 1,
+                },
+            ],
+            messagesByChat: { 21: [] },
+            pendingPlan: {
+                sessionId: 'session-1',
+                plan: ['Question A', 'Question B'],
+                message: 'Plan ready',
+            },
+        })
+
+        let resolveStream: (() => void) | undefined
+        apiFetchStreamMock.mockImplementationOnce(async (_path, _options, onEvent) => {
+            onEvent({ event: 'status', data: { message: 'Analyzing findings...' } })
+
+            await new Promise<void>((resolve) => {
+                resolveStream = resolve
+            })
+
+            onEvent({ event: 'token', data: { delta: 'Final answer' } })
+            onEvent({ event: 'done', data: {} })
+        })
+
+        apiFetchMock.mockResolvedValueOnce({
+            id: 21,
+            title: 'Deep Research Chat',
+            chat_type: 'normal',
+            file_ids: [],
+            message_count: 2,
+            created_at: '2026-04-15T10:00:00Z',
+            updated_at: '2026-04-15T10:00:03Z',
+            messages: [
+                {
+                    id: 2101,
+                    role: 'user',
+                    content: 'Research Plan Approved:\n1. Question A\n2. Question B',
+                    created_at: '2026-04-15T10:00:01Z',
+                    updated_at: '2026-04-15T10:00:01Z',
+                },
+                {
+                    id: 2102,
+                    role: 'assistant',
+                    content: 'Final answer',
+                    created_at: '2026-04-15T10:00:02Z',
+                    updated_at: '2026-04-15T10:00:02Z',
+                },
+            ],
+        })
+
+        const promise = useChatStore.getState().approveDeepResearchPlan('session-1', [
+            'Question A',
+            'Question B',
+        ])
+
+        expect(useChatStore.getState().messagesByChat[21][0]?.content).toBe(
+            'Research Plan Approved:\n1. Question A\n2. Question B'
+        )
+        expect(useChatStore.getState().pendingPlan).toBeNull()
+
+        resolveStream?.()
+        await promise
+
+        expect(useChatStore.getState().messagesByChat[21].map((message) => message.id)).toEqual([
+            2101,
+            2102,
+        ])
+    })
 })

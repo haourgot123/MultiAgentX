@@ -82,6 +82,7 @@ class GeneralAgentGraph:
         )
         image_state = ImageGenerationAgentState(
             user_question=state.user_question,
+            user_id=state.user_id,
             memories=state.memories,
         )
         image_graph = ImageGenerationAgentGraph().compiled_graph

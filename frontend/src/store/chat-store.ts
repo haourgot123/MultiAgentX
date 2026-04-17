@@ -70,6 +70,8 @@ type ChatStore = {
     activeCitation: FileCitation | null
     input: string
     isLoading: boolean
+    loadingChatId: number | null
+    conversationOpenScrollBehavior: 'auto' | 'smooth' | null
     statusSteps: string[]
     mode: 'normal' | 'file' | 'deepResearch' | 'webSearch'
     pendingPlan: PlanRequest | null
@@ -87,6 +89,7 @@ type ChatStore = {
         message: Omit<Message, 'id' | 'timestamp'>,
         chatType?: 'normal' | 'file'
     ) => Promise<void>
+    setConversationOpenScrollBehavior: (behavior: 'auto' | 'smooth' | null) => void
     setInput: (input: string) => void
     setIsLoading: (loading: boolean) => void
     setMode: (mode: ChatStore['mode']) => void
@@ -157,7 +160,7 @@ const appendMessage = (messages: Message[], message: Message): Message[] =>
     sortMessages([...messages, message])
 
 const mergeAssistantDelta = (
-    state: Pick<ChatStore, 'messagesByChat' | 'statusSteps' | 'isLoading'>,
+    state: Pick<ChatStore, 'messagesByChat' | 'statusSteps' | 'isLoading' | 'loadingChatId'>,
     chatId: number,
     delta: string
 ) => {
@@ -174,6 +177,7 @@ const mergeAssistantDelta = (
         return {
             statusSteps: [],
             isLoading: false,
+            loadingChatId: chatId,
             messagesByChat: {
                 ...state.messagesByChat,
                 [chatId]: updatedMessages,
@@ -184,6 +188,7 @@ const mergeAssistantDelta = (
     return {
         statusSteps: [],
         isLoading: false,
+        loadingChatId: chatId,
         messagesByChat: {
             ...state.messagesByChat,
             [chatId]: appendMessage(messages, {
@@ -266,6 +271,8 @@ export const useChatStore = create<ChatStore>()(
             activeCitation: null,
             input: '',
             isLoading: false,
+            loadingChatId: null,
+            conversationOpenScrollBehavior: null,
             statusSteps: [],
             mode: 'normal',
             pendingPlan: null,
@@ -342,34 +349,6 @@ export const useChatStore = create<ChatStore>()(
     },
 
     createNewChat: async (chatType = 'normal', options = {}) => {
-        const state = get()
-        const currentChatId = resolveActiveChatId(state, chatType)
-        const currentMessages = currentChatId
-            ? state.messagesByChat[currentChatId] || []
-            : []
-
-        if (currentChatId && currentMessages.length === 0) {
-            try {
-                await apiFetch(`/conversations/${currentChatId}`, { method: 'DELETE' })
-                set((currentState) => {
-                    const remainingMessages = { ...currentState.messagesByChat }
-                    delete remainingMessages[currentChatId]
-                    return {
-                        chatSessions: currentState.chatSessions.filter(
-                            (session) => session.id !== currentChatId
-                        ),
-                        activeChatIdByType: {
-                            ...currentState.activeChatIdByType,
-                            [chatType]: null,
-                        },
-                        messagesByChat: remainingMessages,
-                    }
-                })
-            } catch {
-                // Ignore delete failure for stale empty conversations.
-            }
-        }
-
         const payload: {
             chat_type: 'normal' | 'file'
             file_ids: number[]
@@ -495,6 +474,7 @@ export const useChatStore = create<ChatStore>()(
                 ),
             },
             isLoading: true,
+            loadingChatId: currentChatId,
             statusSteps: [],
         }))
 
@@ -518,6 +498,7 @@ export const useChatStore = create<ChatStore>()(
                         set((state) => ({
                             statusSteps: [...state.statusSteps, message],
                             isLoading: true,
+                            loadingChatId: currentChatId,
                         }))
                         return
                     }
@@ -538,6 +519,7 @@ export const useChatStore = create<ChatStore>()(
                             ...state,
                             statusSteps: [],
                             isLoading: false,
+                            loadingChatId: null,
                             ...(citations && citations.length > 0 && currentChatId ? {
                                 fileChatCitations: {
                                     ...state.fileChatCitations,
@@ -552,7 +534,7 @@ export const useChatStore = create<ChatStore>()(
                         const message =
                             typeof evt.data === 'string' ? evt.data : evt.data?.message || 'Error'
                         console.error('Streaming error event:', message)
-                        set({ isLoading: false })
+                        set({ isLoading: false, loadingChatId: null })
                     }
                 }
             )
@@ -570,10 +552,12 @@ export const useChatStore = create<ChatStore>()(
             }
             throw error
         } finally {
-            set({ isLoading: false, statusSteps: [] })
+            set({ isLoading: false, loadingChatId: null, statusSteps: [] })
         }
     },
 
+    setConversationOpenScrollBehavior: (conversationOpenScrollBehavior) =>
+        set({ conversationOpenScrollBehavior }),
     setInput: (input) => set({ input }),
     setIsLoading: (isLoading) => set({ isLoading }),
     setMode: (mode) => set({ mode }),
@@ -652,7 +636,11 @@ export const useChatStore = create<ChatStore>()(
     },
 
     createDeepResearchPlan: async (conversationId, userQuestion) => {
-        useChatStore.setState({ isLoading: true, researchPhase: 'planning' })
+        useChatStore.setState({
+            isLoading: true,
+            loadingChatId: conversationId,
+            researchPhase: 'planning',
+        })
 
         try {
             const response = await apiFetch<{
@@ -673,7 +661,11 @@ export const useChatStore = create<ChatStore>()(
                 message: response.message,
             }
         } catch (error) {
-            useChatStore.setState({ isLoading: false, researchPhase: 'idle' })
+            useChatStore.setState({
+                isLoading: false,
+                loadingChatId: null,
+                researchPhase: 'idle',
+            })
             throw error
         }
     },
@@ -686,12 +678,31 @@ export const useChatStore = create<ChatStore>()(
             throw new Error('No active conversation')
         }
 
-        set({
+        const approvedPlanMessage = `Research Plan Approved:\n${approvedPlan
+            .map((question, index) => `${index + 1}. ${question}`)
+            .join('\n')}`
+
+        const optimisticPlanMessage: Message = {
+            id: Date.now(),
+            role: 'user',
+            content: approvedPlanMessage,
+            timestamp: Date.now(),
+        }
+
+        set((currentState) => ({
             isLoading: true,
+            loadingChatId: currentChatId,
             statusSteps: [],
             pendingPlan: null,
             researchPhase: 'researching',
-        })
+            messagesByChat: {
+                ...currentState.messagesByChat,
+                [currentChatId]: appendMessage(
+                    currentState.messagesByChat[currentChatId] || [],
+                    optimisticPlanMessage
+                ),
+            },
+        }))
 
         try {
             await apiFetchStream(
@@ -711,6 +722,7 @@ export const useChatStore = create<ChatStore>()(
                         set((state) => ({
                             statusSteps: [...state.statusSteps, message],
                             isLoading: true,
+                            loadingChatId: currentChatId,
                         }))
                         return
                     }
@@ -729,6 +741,7 @@ export const useChatStore = create<ChatStore>()(
                             ...state,
                             statusSteps: [],
                             isLoading: false,
+                            loadingChatId: null,
                             researchPhase: 'idle',
                         }))
                         return
@@ -738,7 +751,7 @@ export const useChatStore = create<ChatStore>()(
                         const message =
                             typeof evt.data === 'string' ? evt.data : evt.data?.message || 'Error'
                         console.error('Deep research streaming error event:', message)
-                        set({ isLoading: false, researchPhase: 'idle' })
+                        set({ isLoading: false, loadingChatId: null, researchPhase: 'idle' })
                     }
                 }
             )
@@ -754,7 +767,7 @@ export const useChatStore = create<ChatStore>()(
             }
             throw error
         } finally {
-            set({ isLoading: false, researchPhase: 'idle' })
+            set({ isLoading: false, loadingChatId: null, researchPhase: 'idle' })
         }
     },
 

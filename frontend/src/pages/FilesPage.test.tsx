@@ -33,7 +33,7 @@ const createFile = (overrides: Partial<FileItem>): FileItem => ({
     type: 'text/plain',
     size: 1024,
     uploadedAt: Date.parse('2026-04-15T10:00:00Z'),
-    storagePath: 'tmp/file.txt',
+    sasUrl: null,
     ingestionStatus: 'completed',
     ingestionError: null,
     ingestedChunks: 1,

@@ -138,7 +138,7 @@ Identify:
 - Each section should:
   - Present the main finding with supporting evidence
   - Include specific data, statistics, or examples
-  - Cite sources using [1], [2] superscript notation
+    - Cite sources using inline markdown links like [1](URL), [2](URL)
   - Note the confidence level when evidence is limited
 
 ### 4. Analysis & Implications
@@ -163,7 +163,7 @@ Identify:
 ## Writing Quality Standards
 
 ### Citation Rules:
-- Use superscript-style [1], [2] citations immediately after key claims
+- Use inline markdown citations like [1](URL), [2](URL) immediately after key claims
 - Every statistic, specific fact, or unique claim MUST be cited
 - Don't over-cite obvious or general knowledge statements
 - The Sources section must list ALL referenced URLs with numbered links

@@ -21,7 +21,7 @@ type ConversationMessage = {
 type FilePayload = {
     id: number
     name: string
-    storage_path: string
+    sas_url: string | null
     mime_type: string
     size: number
     ingestion_status: string
@@ -318,7 +318,7 @@ test('runs file chat with grounded citations', async ({ page }) => {
             {
                 id: 50,
                 name: 'notes.txt',
-                storage_path: 'tmp/notes.txt',
+                sas_url: null,
                 mime_type: 'text/plain',
                 size: 512,
                 ingestion_status: 'completed',

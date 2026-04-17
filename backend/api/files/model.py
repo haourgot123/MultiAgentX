@@ -15,6 +15,7 @@ class StoredFile(Base):
         Integer, ForeignKey("User.id", ondelete="CASCADE"), index=True, nullable=False
     )
     name = Column(UnicodeText, nullable=False)
+    # Stores the blob path in Azure Blob Storage, e.g. "uploads/{user_id}/{uuid}.pdf"
     storage_path = Column(UnicodeText, nullable=False)
     mime_type = Column(UnicodeText, nullable=True, default="application/octet-stream")
     size = Column(BigInteger, nullable=False, default=0)
@@ -30,10 +31,19 @@ class FileRenameRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="New file name")
 
 
+class SasUrlRequest(BaseModel):
+    file_ids: list[int] = Field(..., description="File IDs to generate SAS URLs for")
+
+
+class FileSasResponse(BaseModel):
+    sas_url: str = Field(..., description="Presigned SAS URL for file access")
+    expires_at: str = Field(..., description="ISO-8601 UTC expiry of the SAS URL")
+
+
 class FileResponse(BaseModel):
     id: int = Field(..., description="File ID")
     name: str = Field(..., description="Original file name")
-    storage_path: str = Field(..., description="Storage path on server")
+    sas_url: Optional[str] = Field(None, description="Presigned SAS URL for file access")
     mime_type: Optional[str] = Field(None, description="MIME type")
     size: int = Field(..., description="File size in bytes")
     ingestion_status: str = Field(..., description="Ingestion status")

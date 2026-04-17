@@ -3,7 +3,7 @@ from typing import List, Optional
 from loguru import logger
 from openai import AzureOpenAI
 from pydantic import BaseModel
-from pymilvus import Collection, connections
+from pymilvus import Collection, connections, AsyncMilvusClient
 
 from backend.config.settings import _settings
 

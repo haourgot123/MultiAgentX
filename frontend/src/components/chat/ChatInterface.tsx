@@ -24,6 +24,9 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
         input,
         setInput,
         isLoading,
+        loadingChatId,
+        conversationOpenScrollBehavior,
+        setConversationOpenScrollBehavior,
         statusSteps,
         currentChatId,
         chatSessions,
@@ -39,9 +42,13 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
     const files = useFileStore((state) => state.files)
     const fileChatCitations = useChatStore((state) => state.fileChatCitations)
     const messages = getCurrentMessages()
+    const isCurrentChatLoading = currentChatId !== null && loadingChatId === currentChatId
+    const currentStatusSteps = isCurrentChatLoading ? statusSteps : []
     const scrollAreaRef = useRef<HTMLDivElement>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
     const shouldAutoScrollRef = useRef(true)
+    const pendingConversationJumpRef = useRef(true)
+    const previousChatIdRef = useRef<number | null>(null)
     const previousMessageCountRef = useRef(0)
     const previousLastMessageIdRef = useRef<number | null>(null)
 
@@ -129,6 +136,24 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
     }, [currentChatId, chatSessions, messagesByChat, loadConversation])
 
     useEffect(() => {
+        if (currentChatId === previousChatIdRef.current) {
+            return
+        }
+
+        previousChatIdRef.current = currentChatId
+        pendingConversationJumpRef.current = true
+        shouldAutoScrollRef.current = true
+        previousMessageCountRef.current = 0
+        previousLastMessageIdRef.current = null
+    }, [currentChatId])
+
+    useEffect(() => {
+        return () => {
+            setConversationOpenScrollBehavior(null)
+        }
+    }, [setConversationOpenScrollBehavior])
+
+    useEffect(() => {
         const viewport = scrollAreaRef.current?.querySelector(
             '[data-radix-scroll-area-viewport]'
         ) as HTMLDivElement | null
@@ -156,9 +181,35 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
         }
 
         const lastMessage = messages[messages.length - 1]
+
+        if (pendingConversationJumpRef.current) {
+            if (messages.length === 0) {
+                return
+            }
+
+            scrollRef.current.scrollIntoView({
+                behavior: conversationOpenScrollBehavior || "auto",
+                block: "end",
+            })
+
+            pendingConversationJumpRef.current = false
+            setConversationOpenScrollBehavior(null)
+            shouldAutoScrollRef.current = true
+            previousMessageCountRef.current = messages.length
+            previousLastMessageIdRef.current = lastMessage?.id ?? null
+            return
+        }
+
         const hasNewMessage = messages.length > previousMessageCountRef.current
         const hasMessageBoundaryChanged = lastMessage?.id !== previousLastMessageIdRef.current
         const isUserMessage = lastMessage?.role === 'user'
+        const isStreamingAssistantUpdate = isCurrentChatLoading && lastMessage?.role === 'assistant'
+
+        if (isStreamingAssistantUpdate) {
+            previousMessageCountRef.current = messages.length
+            previousLastMessageIdRef.current = lastMessage?.id ?? null
+            return
+        }
 
         if (!shouldAutoScrollRef.current && !isUserMessage) {
             previousMessageCountRef.current = messages.length
@@ -175,7 +226,7 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
 
         previousMessageCountRef.current = messages.length
         previousLastMessageIdRef.current = lastMessage?.id ?? null
-    }, [messages])
+    }, [messages, conversationOpenScrollBehavior, isCurrentChatLoading, setConversationOpenScrollBehavior])
 
     const handleSend = async () => {
         if (fileChatBlocked) {
@@ -281,14 +332,14 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
                                 />
                             ))}
                             {/* Deep Research - show current status */}
-                            {activeFeatures.deepResearch && isLoading && (
+                            {activeFeatures.deepResearch && isCurrentChatLoading && (
                                 <div className="flex items-center gap-3 p-4 animate-in fade-in duration-300">
                                     <div className="flex h-5 w-5 items-center justify-center">
                                         <Loader2 className="h-4 w-4 animate-spin text-primary" />
                                     </div>
                                     <span className="text-sm font-medium text-text-muted">
                                         {researchPhase === 'researching'
-                                            ? (statusSteps.length > 0 ? statusSteps[statusSteps.length - 1] : 'Researching...')
+                                            ? (currentStatusSteps.length > 0 ? currentStatusSteps[currentStatusSteps.length - 1] : 'Researching...')
                                             : researchPhase === 'planning'
                                                 ? 'Creating research plan...'
                                                 : (pendingPlan ? 'Review plan before starting...' : 'Processing...')}
@@ -296,10 +347,10 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
                                 </div>
                             )}
                             {/* Show status steps in Chat only when NOT using Deep Research */}
-                            {(isLoading || statusSteps.length > 0) && !activeFeatures.deepResearch && (
+                            {(isCurrentChatLoading || currentStatusSteps.length > 0) && !activeFeatures.deepResearch && (
                                 <div className="flex flex-col gap-2 p-4 animate-in fade-in duration-300">
-                                    {statusSteps.length > 0 ? (
-                                        statusSteps.map((step, idx) => (
+                                    {currentStatusSteps.length > 0 ? (
+                                        currentStatusSteps.map((step, idx) => (
                                             <div key={idx} className="flex items-center gap-3">
                                                 <div className="flex h-5 w-5 items-center justify-center">
                                                     <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -311,7 +362,7 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
                                         ))
                                     ) : (
                                         <div className="text-sm text-text-muted">
-                                            {isLoading && pendingPlan === null ? 'Processing...' : 
+                                            {isCurrentChatLoading && pendingPlan === null ? 'Processing...' : 
                                              pendingPlan ? 'Review plan before starting...' : 
                                              'Waiting for input...'}
                                         </div>
@@ -331,7 +382,7 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={handleKeyDown}
                             placeholder={inputPlaceholder}
-                            disabled={isLoading || fileChatBlocked}
+                            disabled={isCurrentChatLoading || fileChatBlocked}
                             className="min-h-[40px] max-h-[200px] w-full resize-none border-0 bg-transparent p-2 placeholder:text-text-muted focus-visible:ring-0 focus-visible:ring-offset-0 text-base"
                             rows={1}
                             style={{ height: 'auto', minHeight: '44px' }}
@@ -423,7 +474,7 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
                             <div className="flex items-center gap-2">
                                 <Button
                                     onClick={handleSend}
-                                    disabled={!input.trim() || isLoading || fileChatBlocked}
+                                    disabled={!input.trim() || isCurrentChatLoading || fileChatBlocked}
                                     size="icon"
                                     className={cn(
                                         "h-8 w-8 rounded-full transition-all duration-200",
@@ -461,20 +512,20 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
                     <div className="p-4 space-y-4 overflow-auto flex-1">
                         <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
                             <div className="text-xs font-medium text-primary mb-2 uppercase tracking-wider">Current Task</div>
-                            {statusSteps.length > 0 ? (
+                            {currentStatusSteps.length > 0 ? (
                                 <div className="space-y-2">
-                                    {statusSteps.map((step, idx) => (
+                                    {currentStatusSteps.map((step, idx) => (
                                         <div key={idx} className="text-sm text-text-primary animate-in fade-in duration-300 flex items-start gap-2">
                                             <Loader2 className="h-4 w-4 animate-spin text-primary mt-0.5 flex-shrink-0" />
                                             <span>{step}</span>
                                         </div>
                                     ))}
                                 </div>
-                            ) : isLoading && researchPhase === 'planning' ? (
+                            ) : isCurrentChatLoading && researchPhase === 'planning' ? (
                                 <div className="text-sm text-text-muted animate-pulse">
                                     Creating research plan...
                                 </div>
-                            ) : isLoading && researchPhase === 'researching' ? (
+                            ) : isCurrentChatLoading && researchPhase === 'researching' ? (
                                 <div className="text-sm text-text-muted animate-pulse">
                                     Researching...
                                 </div>

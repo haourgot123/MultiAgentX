@@ -1,7 +1,7 @@
 import { ChatInterface } from "@/components/chat/ChatInterface"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { FileText, Download, Trash2, RefreshCw, ChevronDown, FolderOpen, Upload, X, ChevronUp, ScanSearch } from "lucide-react"
+import { FileText, Download, Trash2, RefreshCw, ChevronDown, FolderOpen, Upload, X, ChevronUp, ScanSearch, Check } from "lucide-react"
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -16,9 +16,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
-import { API_BASE_URL } from "@/lib/api"
 import { fetchRetrievalRecords, parseBBoxJson, groupHighlightsByPage, type RetrievalRecordResponse } from "@/lib/retrieval-api"
-import { useAuthStore } from "@/store/auth-store"
 import { type FileItem, useFileStore } from "@/store/file-store"
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useSearchParams } from "react-router-dom"
@@ -30,7 +28,7 @@ const PdfViewer = lazy(() => import("@/components/pdf/PdfViewer").then((module) 
 export default function ChatWithFilePage() {
     const [searchParams] = useSearchParams()
     const fileIdFromUrl = searchParams.get('fileId')
-    const { files, fetchFiles, uploadFiles, isUploading, downloadFile } = useFileStore()
+    const { files, fetchFiles, uploadFiles, isUploading, downloadFile, refreshSasUrl } = useFileStore()
     const {
         createNewChat,
         currentChatId,
@@ -51,7 +49,7 @@ export default function ChatWithFilePage() {
     const [showAllFiles, setShowAllFiles] = useState(false)
     const [isStartingChat, setIsStartingChat] = useState(false)
     const [handledUrlFile, setHandledUrlFile] = useState(false)
-    const [previewType, setPreviewType] = useState<'none' | 'pdf' | 'image' | 'text' | 'unsupported'>('none')
+    const [previewType, setPreviewType] = useState<'none' | 'pdf' | 'image' | 'text' | 'office' | 'unsupported'>('none')
     const [previewText, setPreviewText] = useState("")
     const [previewUrl, setPreviewUrl] = useState<string | null>(null)
     const [previewError, setPreviewError] = useState<string | null>(null)
@@ -65,14 +63,20 @@ export default function ChatWithFilePage() {
     const [targetHighlightIndex, setTargetHighlightIndex] = useState<number | undefined>(undefined)
     // Counter that increments on every citation click to force scroll even for repeated clicks
     const scrollTriggerRef = useRef(0)
+    const selectedFileId = selectedFile?.id ?? null
+    const selectedFileType = selectedFile?.type ?? ''
+    const selectedFileName = selectedFile?.name ?? ''
 
     const highlights = useMemo(() => {
         const filtered = activeCitationLabel
-            ? retrievalRecords.filter(r => r.citation_label === activeCitationLabel)
+            ? retrievalRecords.filter((record) =>
+                record.citation_label === activeCitationLabel &&
+                (selectedFileId === null || record.file_id === selectedFileId)
+            )
             : []
         const bboxItems = filtered.flatMap(r => parseBBoxJson(r.bbox_json))
         return groupHighlightsByPage(bboxItems)
-    }, [retrievalRecords, activeCitationLabel])
+    }, [retrievalRecords, activeCitationLabel, selectedFileId])
 
     const loadRetrievalRecords = useCallback(async (messageId: number) => {
         if (!currentChatId) return
@@ -95,7 +99,7 @@ export default function ChatWithFilePage() {
         scrollTriggerRef.current += 1
         setTargetHighlightIndex(scrollTriggerRef.current)
 
-        if (citation.file_id && previewType === 'pdf') {
+        if (citation.file_id) {
             const citationFile = availableFiles.find(f => f.id === citation.file_id)
             if (citationFile && citationFile.id !== selectedFile?.id) {
                 setSelectedFile(citationFile)
@@ -105,7 +109,7 @@ export default function ChatWithFilePage() {
         if (messageId) {
             void loadRetrievalRecords(messageId)
         }
-    }, [previewType, availableFiles, selectedFile, loadRetrievalRecords])
+    }, [availableFiles, selectedFile, loadRetrievalRecords])
 
     const messages = currentChatId ? messagesByChat[currentChatId] : undefined
     const lastAssistantMsgId = messages
@@ -122,6 +126,8 @@ export default function ChatWithFilePage() {
         void loadRetrievalRecords(lastAssistantMsgId)
     }, [currentChatId, hasStartedChat, lastAssistantMsgId, loadRetrievalRecords])
 
+
+
     useEffect(() => {
         const loadFiles = async () => {
             try {
@@ -135,11 +141,6 @@ export default function ChatWithFilePage() {
 
     useEffect(() => {
         if (!currentChatId) {
-            if (!fileIdFromUrl && !isStartingChat) {
-                setHasStartedChat(false)
-                setAvailableFiles([])
-                setSelectedFile(null)
-            }
             return
         }
 
@@ -275,71 +276,54 @@ export default function ChatWithFilePage() {
     }, [fileIdFromUrl, files, handledUrlFile, createNewChat])
 
     useEffect(() => {
-        let objectUrl: string | null = null
         let isActive = true
 
         const loadPreview = async () => {
-            if (!selectedFile) {
+            if (!selectedFileId) {
                 setPreviewType('none')
                 setPreviewText("")
                 setPreviewError(null)
-                if (previewUrl) {
-                    URL.revokeObjectURL(previewUrl)
-                    setPreviewUrl(null)
-                }
+                setPreviewUrl(null)
                 return
             }
 
             setIsPreviewLoading(true)
             setPreviewError(null)
             setPreviewText("")
-
-            if (previewUrl) {
-                URL.revokeObjectURL(previewUrl)
-                setPreviewUrl(null)
-            }
+            setPreviewUrl(null)
 
             try {
-                const token = useAuthStore.getState().accessToken
-                const response = await fetch(
-                    `${API_BASE_URL}/files/${selectedFile.id}/download`,
-                    {
-                        headers: token ? { Token: token } : {},
-                    }
-                )
-
-                if (!response.ok) {
-                    throw new Error(`Cannot preview file (${response.status})`)
+                // Get a fresh SAS URL for this file
+                const sasUrl = await refreshSasUrl(selectedFileId)
+                if (!isActive) return
+                if (!sasUrl) {
+                    throw new Error('Unable to generate preview URL')
                 }
 
-                if (selectedFile.type.includes('pdf')) {
-                    const blob = await response.blob()
-                    objectUrl = URL.createObjectURL(blob)
-                    if (!isActive) {
-                        URL.revokeObjectURL(objectUrl)
-                        return
-                    }
+                if (selectedFileType.includes('pdf')) {
                     setPreviewType('pdf')
-                    setPreviewUrl(objectUrl)
-                } else if (selectedFile.type.includes('image')) {
-                    const blob = await response.blob()
-                    objectUrl = URL.createObjectURL(blob)
-                    if (!isActive) {
-                        URL.revokeObjectURL(objectUrl)
-                        return
-                    }
+                    setPreviewUrl(sasUrl)
+                } else if (selectedFileType.includes('image')) {
                     setPreviewType('image')
-                    setPreviewUrl(objectUrl)
+                    setPreviewUrl(sasUrl)
                 } else if (
-                    selectedFile.type.startsWith('text/') ||
-                    selectedFile.type.includes('json') ||
-                    selectedFile.type.includes('csv') ||
-                    selectedFile.type.includes('xml')
+                    selectedFileName.match(/\.(docx|xlsx|pptx)$/i)
                 ) {
-                    const textContent = await response.text()
-                    if (!isActive) {
-                        return
+                    setPreviewType('office')
+                    setPreviewUrl(sasUrl)
+                } else if (
+                    selectedFileType.startsWith('text/') ||
+                    selectedFileType.includes('json') ||
+                    selectedFileType.includes('csv') ||
+                    selectedFileType.includes('xml')
+                ) {
+                    const response = await fetch(sasUrl)
+                    if (!isActive) return
+                    if (!response.ok) {
+                        throw new Error(`Cannot preview file (${response.status})`)
                     }
+                    const textContent = await response.text()
+                    if (!isActive) return
                     setPreviewType('text')
                     setPreviewText(textContent.slice(0, 30000))
                 } else {
@@ -364,11 +348,8 @@ export default function ChatWithFilePage() {
 
         return () => {
             isActive = false
-            if (objectUrl) {
-                URL.revokeObjectURL(objectUrl)
-            }
         }
-    }, [selectedFile?.id, selectedFile?.type, previewReloadVersion])
+    }, [previewReloadVersion, refreshSasUrl, selectedFileId, selectedFileName, selectedFileType])
 
     const syncConversationFiles = async (nextFiles: FileItem[]) => {
         if (hasStartedChat && currentChatId) {
@@ -675,6 +656,7 @@ export default function ChatWithFilePage() {
                     <div className="flex-1 overflow-y-auto px-8">
                         <div className="grid grid-cols-2 gap-4 mb-6">
                             <Button
+                                type="button"
                                 variant="outline"
                                 className="h-32 flex flex-col gap-3 border-2 border-dashed border-border hover:border-primary hover:bg-primary/5 rounded-xl"
                                 onClick={() => setShowUploadDialog(true)}
@@ -689,6 +671,7 @@ export default function ChatWithFilePage() {
                             </Button>
 
                             <Button
+                                type="button"
                                 variant="outline"
                                 className="h-32 flex flex-col gap-3 border-2 border-dashed border-border hover:border-primary hover:bg-primary/5 rounded-xl"
                                 onClick={openLibraryDialog}
@@ -721,6 +704,7 @@ export default function ChatWithFilePage() {
                                                 </div>
                                             </div>
                                             <Button
+                                                type="button"
                                                 variant="ghost"
                                                 size="icon"
                                                 className="h-8 w-8 rounded-lg"
@@ -741,6 +725,7 @@ export default function ChatWithFilePage() {
                                     <h3 className="text-sm font-medium text-text-primary">Recent Files</h3>
                                     {hasMoreFiles && !showAllFiles && (
                                         <Button
+                                            type="button"
                                             variant="ghost"
                                             size="sm"
                                             className="text-xs text-primary"
@@ -756,8 +741,10 @@ export default function ChatWithFilePage() {
                                         return (
                                             <Button
                                                 key={file.id}
+                                                type="button"
                                                 variant="outline"
-                                                className={`h-auto p-3 justify-start rounded-lg ${isSelected ? 'bg-primary/10 border-primary' : ''}`}
+                                                aria-pressed={isSelected}
+                                                className={`h-auto p-3 justify-start rounded-lg transition-colors ${isSelected ? 'bg-primary/10 border-primary ring-1 ring-primary/30' : ''}`}
                                                 onClick={() => handleAvailableFileToggle(file)}
                                             >
                                                 <div className="flex items-center gap-2 w-full">
@@ -772,7 +759,9 @@ export default function ChatWithFilePage() {
                                                         </div>
                                                     </div>
                                                     {isSelected && (
-                                                        <div className="text-xs text-primary font-medium">✓</div>
+                                                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-white">
+                                                            <Check className="h-3.5 w-3.5" />
+                                                        </div>
                                                     )}
                                                 </div>
                                             </Button>
@@ -781,6 +770,7 @@ export default function ChatWithFilePage() {
                                 </div>
                                 {showAllFiles && hasMoreFiles && (
                                     <Button
+                                        type="button"
                                         variant="outline"
                                         size="sm"
                                         className="w-full mt-2 rounded-lg"
@@ -797,6 +787,7 @@ export default function ChatWithFilePage() {
                     {/* Footer - Fixed */}
                     <div className="p-8 pt-4 border-t border-border shrink-0 bg-white">
                         <Button
+                            type="button"
                             className="w-full bg-primary hover:bg-primary-hover text-white rounded-lg py-6 text-base font-medium"
                             onClick={() => void handleStartChat()}
                             disabled={availableFiles.length === 0}
@@ -827,8 +818,10 @@ export default function ChatWithFilePage() {
                                         return (
                                             <Button
                                                 key={file.id}
+                                                type="button"
                                                 variant="outline"
-                                                className={`w-full justify-start h-auto p-3 rounded-lg hover:bg-primary/10 hover:border-primary ${isSelected ? 'bg-primary/10 border-primary' : ''}`}
+                                                aria-pressed={isSelected}
+                                                className={`w-full justify-start h-auto p-3 rounded-lg hover:bg-primary/10 hover:border-primary transition-colors ${isSelected ? 'bg-primary/10 border-primary ring-1 ring-primary/30' : ''}`}
                                                 onClick={() => handleLibraryFileToggle(file)}
                                             >
                                                 <div className="flex items-center gap-3 w-full">
@@ -845,7 +838,10 @@ export default function ChatWithFilePage() {
                                                         </div>
                                                     </div>
                                                     {isSelected && (
-                                                        <div className="text-xs text-primary font-medium">✓ Selected</div>
+                                                        <div className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
+                                                            <Check className="h-3.5 w-3.5" />
+                                                            Selected
+                                                        </div>
                                                     )}
                                                 </div>
                                             </Button>
@@ -856,6 +852,7 @@ export default function ChatWithFilePage() {
                         </div>
                         <div className="flex justify-end gap-2 pt-4 border-t border-border">
                             <Button
+                                type="button"
                                 variant="outline"
                                 className="rounded-lg"
                                 onClick={handleLibraryCancel}
@@ -863,6 +860,7 @@ export default function ChatWithFilePage() {
                                 Cancel
                             </Button>
                             <Button
+                                type="button"
                                 className="bg-primary hover:bg-primary-hover text-white rounded-lg"
                                 onClick={() => void handleLibraryConfirm()}
                             >
@@ -927,6 +925,7 @@ export default function ChatWithFilePage() {
                                             </div>
                                             {!isUploading && (
                                                 <Button
+                                                    type="button"
                                                     variant="ghost"
                                                     size="icon"
                                                     className="h-8 w-8 rounded-lg"
@@ -944,6 +943,7 @@ export default function ChatWithFilePage() {
                         </div>
                         <div className="flex justify-end gap-2">
                             <Button
+                                type="button"
                                 variant="outline"
                                 onClick={handleUploadCancel}
                                 className="rounded-lg"
@@ -952,6 +952,7 @@ export default function ChatWithFilePage() {
                                 Cancel
                             </Button>
                             <Button
+                                type="button"
                                 className="bg-primary hover:bg-primary-hover text-white rounded-lg"
                                 onClick={() => void handleUploadConfirm()}
                                 disabled={uploadedFiles.length === 0 || isUploading}
@@ -989,7 +990,7 @@ export default function ChatWithFilePage() {
                     <div className="flex items-center gap-3">
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                                <Button variant="outline" className="gap-2 border-border bg-white hover:bg-surface rounded-lg">
+                                <Button type="button" variant="outline" className="gap-2 border-border bg-white hover:bg-surface rounded-lg">
                                     {selectedFile ? (
                                         <>
                                             <div className={`h-6 w-6 rounded-md flex items-center justify-center ${getFileTypeColor(selectedFile.type)}`}>
@@ -1040,6 +1041,7 @@ export default function ChatWithFilePage() {
                     </div>
                     <div className="flex items-center gap-1">
                         <Button
+                            type="button"
                             variant="ghost"
                             size="icon"
                             className="h-8 w-8 rounded-lg"
@@ -1049,6 +1051,7 @@ export default function ChatWithFilePage() {
                             <Download className="h-4 w-4" />
                         </Button>
                         <Button
+                            type="button"
                             variant="ghost"
                             size="icon"
                             className="h-8 w-8 rounded-lg"
@@ -1057,6 +1060,7 @@ export default function ChatWithFilePage() {
                             <RefreshCw className="h-4 w-4" />
                         </Button>
                         <Button
+                            type="button"
                             variant="ghost"
                             size="icon"
                             className="h-8 w-8 text-red-600 hover:text-red-700 rounded-lg"
@@ -1079,7 +1083,7 @@ export default function ChatWithFilePage() {
                         ) : previewType === 'pdf' && previewUrl ? (
                             <div className="h-full flex flex-col">
                                 {/* Active Citation Indicator */}
-                                {activeCitation && (
+                                {activeCitation && activeCitation.file_id === selectedFileId && (
                                     <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200 shrink-0">
                                         <div className="flex items-center gap-2 flex-1">
                                             <span className="inline-flex items-center justify-center min-w-[2rem] h-5 text-[10px] font-bold text-white bg-amber-500 rounded-full px-1.5">
@@ -1091,6 +1095,7 @@ export default function ChatWithFilePage() {
                                             </span>
                                         </div>
                                         <Button
+                                            type="button"
                                             variant="ghost"
                                             size="icon"
                                             className="h-5 w-5 rounded text-amber-600 hover:text-amber-800 hover:bg-amber-100"
@@ -1108,6 +1113,7 @@ export default function ChatWithFilePage() {
                                     }
                                 >
                                     <PdfViewer
+                                        key={`${selectedFileId}-${previewUrl}`}
                                         url={previewUrl}
                                         highlights={highlights}
                                         targetPage={targetPage}
@@ -1133,6 +1139,12 @@ export default function ChatWithFilePage() {
                                     {previewText || "This file has no text content."}
                                 </pre>
                             </div>
+                        ) : previewType === 'office' && previewUrl ? (
+                            <iframe
+                                src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(previewUrl)}`}
+                                className="h-full w-full border-0"
+                                title={selectedFile.name}
+                            />
                         ) : (
                             <div className="h-full flex flex-col items-center justify-center text-center space-y-4 p-6">
                                 <div className="h-20 w-20 bg-surface rounded-full flex items-center justify-center mx-auto">
@@ -1151,6 +1163,7 @@ export default function ChatWithFilePage() {
                                 </div>
                                 <div className="flex flex-col gap-2">
                                     <Button
+                                        type="button"
                                         variant="outline"
                                         className="border-border rounded-lg"
                                         onClick={() => void handleDownloadSelectedFile()}
@@ -1189,8 +1202,10 @@ export default function ChatWithFilePage() {
                                     return (
                                         <Button
                                             key={file.id}
+                                            type="button"
                                             variant="outline"
-                                            className={`w-full justify-start h-auto p-3 rounded-lg hover:bg-primary/10 hover:border-primary ${isSelected ? 'bg-primary/10 border-primary' : ''}`}
+                                            aria-pressed={isSelected}
+                                            className={`w-full justify-start h-auto p-3 rounded-lg hover:bg-primary/10 hover:border-primary transition-colors ${isSelected ? 'bg-primary/10 border-primary ring-1 ring-primary/30' : ''}`}
                                             onClick={() => handleLibraryFileToggle(file)}
                                         >
                                             <div className="flex items-center gap-3 w-full">
@@ -1207,7 +1222,10 @@ export default function ChatWithFilePage() {
                                                     </div>
                                                 </div>
                                                 {isSelected && (
-                                                    <div className="text-xs text-primary font-medium">✓ Selected</div>
+                                                    <div className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
+                                                        <Check className="h-3.5 w-3.5" />
+                                                        Selected
+                                                    </div>
                                                 )}
                                             </div>
                                         </Button>
@@ -1218,6 +1236,7 @@ export default function ChatWithFilePage() {
                     </div>
                     <div className="flex justify-end gap-2 pt-4 border-t border-border">
                         <Button
+                            type="button"
                             variant="outline"
                             className="rounded-lg"
                             onClick={handleLibraryCancel}
@@ -1225,6 +1244,7 @@ export default function ChatWithFilePage() {
                             Cancel
                         </Button>
                         <Button
+                            type="button"
                             className="bg-primary hover:bg-primary-hover text-white rounded-lg"
                             onClick={() => void handleLibraryConfirm()}
                         >
@@ -1289,6 +1309,7 @@ export default function ChatWithFilePage() {
                                         </div>
                                         {!isUploading && (
                                             <Button
+                                                type="button"
                                                 variant="ghost"
                                                 size="icon"
                                                 className="h-8 w-8 rounded-lg"
@@ -1306,6 +1327,7 @@ export default function ChatWithFilePage() {
                     </div>
                     <div className="flex justify-end gap-2">
                         <Button
+                            type="button"
                             variant="outline"
                             onClick={handleUploadCancel}
                             className="rounded-lg"
@@ -1314,6 +1336,7 @@ export default function ChatWithFilePage() {
                             Cancel
                         </Button>
                         <Button
+                            type="button"
                             className="bg-primary hover:bg-primary-hover text-white rounded-lg"
                             onClick={() => void handleUploadConfirm()}
                             disabled={uploadedFiles.length === 0 || isUploading}

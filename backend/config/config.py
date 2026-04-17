@@ -475,3 +475,45 @@ class Mem0Config:
         "MEM0_ENABLE_LONG_TERM_MEMORY",
         default=True
     )
+
+
+@dataclass
+class SkillsConfig:
+    """Agent Skills configuration for Claude Code integration."""
+
+    # Anthropic API credentials
+    anthropic_api_key: str = _env("ANTHROPIC_API_KEY", default="")
+
+    # Sandbox configuration
+    sandbox_base_dir: str = _env("SKILLS_SANDBOX_BASE_DIR", default="tmp/skills")
+    max_sandboxes: int = _env_int("SKILLS_MAX_SANDBOXES", default=10)
+
+    # Claude Code model settings
+    default_model: str = _env("SKILLS_DEFAULT_MODEL", default="claude-sonnet-4-5")
+    max_turns: int = _env_int("SKILLS_MAX_TURNS", default=10)
+
+    # Execution settings
+    timeout_seconds: int = _env_int("SKILLS_TIMEOUT_SECONDS", default=300)
+    enable_sandbox: bool = _env_bool("SKILLS_ENABLE_SANDBOX", default=True)
+
+    # Azure Anthropic Claude Configuration
+    azure_anthropic_base_url: str = _env("CLAUDE-SONNET-4-5-API-BASE", default="")
+    azure_anthropic_api_key: str = _env("CLAUDE-SONNET-4-5-API-KEY", default="")
+    azure_anthropic_deployment: str = _env("CLAUDE-SONNET-4-5-DEPLOYMENT-NAME", default="claude-sonnet-4-5")
+
+    # Docker Sandbox configuration
+    sandbox_image: str = _env("SANDBOX_IMAGE", default="multiagentx-sandbox:latest")
+    sandbox_cpu: str = _env("SANDBOX_CPU", default="1")
+    sandbox_memory: str = _env("SANDBOX_MEMORY", default="2g")
+    sandbox_timeout: int = _env_int("SANDBOX_TIMEOUT", default=300)
+
+
+@dataclass
+class AzureBlobStorageConfig:
+    """Azure Blob Storage configuration settings."""
+
+    connection_string: str = _env("BLOB-CONNECTION-STRING", "BLOB_CONNECTION_STRING", default="")
+    account_name: str = _env("AZURE-ACCOUNT-NAME", "AZURE_ACCOUNT_NAME", default="")
+    account_key: str = _env("AZURE-ACCOUNT-KEY", "AZURE_ACCOUNT_KEY", default="")
+    container_name: str = _env("BLOB-CONTAINER", "BLOB_CONTAINER", default="")
+    sas_expiry_hours: int = _env_int("SAS_EXPIRY_HOURS", default=1)

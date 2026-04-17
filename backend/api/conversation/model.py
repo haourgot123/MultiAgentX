@@ -25,6 +25,9 @@ conversation_files = Table(
 )
 
 
+ChatType = Literal["normal", "file", "skill"]
+
+
 class Conversation(Base):
     __tablename__ = "Conversation"
 
@@ -109,7 +112,7 @@ class RetrievalRecord(Base):
 
 class ConversationCreateRequest(BaseModel):
     title: Optional[str] = Field(None, max_length=255, description="Conversation title")
-    chat_type: Literal["normal", "file"] = Field(
+    chat_type: ChatType = Field(
         "normal", description="Conversation type"
     )
     file_ids: list[int] = Field(
@@ -146,7 +149,7 @@ class ConversationMessageResponse(BaseModel):
 class ConversationResponse(BaseModel):
     id: int = Field(..., description="Conversation ID")
     title: str = Field(..., description="Conversation title")
-    chat_type: Literal["normal", "file"] = Field(..., description="Conversation type")
+    chat_type: ChatType = Field(..., description="Conversation type")
     file_ids: list[int] = Field(default_factory=list, description="Attached file IDs")
     message_count: int = Field(0, description="Number of messages")
     created_at: datetime = Field(..., description="Created time")

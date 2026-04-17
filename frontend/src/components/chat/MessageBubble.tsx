@@ -21,6 +21,8 @@ interface Source {
     type: 'web' | 'citation'
 }
 
+const SOURCES_SECTION_HEADING_REGEX = /^(?:#{1,6}\s+)?(?:\d+(?:\.\d+)*\.?\s+)?(?:Sources|References)\s*:?$/im
+
 function getFaviconUrl(href: string): string | null {
     try {
         const url = new URL(href)
@@ -50,13 +52,12 @@ const sourceUrlMap: Record<string, string> = {
 // Parse ## Sources section to build citation map: number -> { url, title }
 function parseCitationMap(content: string): Map<number, { url: string; title: string }> {
     const map = new Map<number, { url: string; title: string }>()
-    // Find ## Sources or ## References section
-    const sectionMatch = content.match(/^##\s+(?:Sources|References)\s*$/m)
+    const sectionMatch = content.match(SOURCES_SECTION_HEADING_REGEX)
     if (!sectionMatch || sectionMatch.index === undefined) return map
     
     const sectionContent = content.slice(sectionMatch.index)
     // Match lines like: [1] [Title](url)  or  [1] Title - url  or  [1] url
-    const lineRegex = /^\[(\d+)\]\s+(?:\[([^\]]+)\]\(([^)]+)\)|(.+))/gm
+    const lineRegex = /^\s*\[(\d+)\]\s+(?:\[([^\]]+)\]\(([^)]+)\)|(.+))/gm
     let m
     while ((m = lineRegex.exec(sectionContent)) !== null) {
         const num = parseInt(m[1])
@@ -104,18 +105,20 @@ function extractSources(content: string, fileCitations?: FileCitation[]): { sour
     const seenUrls = new Set<string>()
     
     // Check if content has a References or Sources section - links there should remain clickable
-    const referencesIndex = content.indexOf('## References')
-    const sourcesIndex = content.indexOf('## Sources')
-    const sectionStartIndex = referencesIndex !== -1 || sourcesIndex !== -1
-        ? Math.min(
-            referencesIndex !== -1 ? referencesIndex : Infinity,
-            sourcesIndex !== -1 ? sourcesIndex : Infinity
-          )
-        : -1
+        const sourcesSectionMatch = content.match(SOURCES_SECTION_HEADING_REGEX)
+        const sectionStartIndex = sourcesSectionMatch?.index ?? -1
     const hasReferencesSection = sectionStartIndex !== -1
     
     // 1. Extract markdown links: [title](url)
     const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g
+    const stripNonNumericMarkdownLinks = (text: string) =>
+        text.replace(linkRegex, (_match, title, url) => {
+            if (/^\d+$/.test(title.trim())) {
+                return `[${title}](${url})`
+            }
+
+            return title
+        })
     let match
     
     while ((match = linkRegex.exec(content)) !== null) {
@@ -178,11 +181,11 @@ function extractSources(content: string, fileCitations?: FileCitation[]): { sour
         const sectionContent = processed.substring(sectionStartIndex)
         
         // Only replace links before References/Sources section
-        const beforeProcessed = beforeSection.replace(linkRegex, '$1')
+        const beforeProcessed = stripNonNumericMarkdownLinks(beforeSection)
         // Keep References/Sources section as-is (links remain clickable)
         contentWithoutSources = beforeProcessed + sectionContent
     } else {
-        contentWithoutSources = processed.replace(linkRegex, '$1')
+        contentWithoutSources = stripNonNumericMarkdownLinks(processed)
     }
     // Loại bỏ citation tags khỏi content
     contentWithoutSources = contentWithoutSources.replace(citationRegex, '')
@@ -321,46 +324,98 @@ function MessageBubbleComponent({ message, fileCitations, onFileCitationClick }:
                                             onFileCitationClick?.(citationObj, message.id)
                                         }
                                         return (
-                                            <a
-                                                href="#"
-                                                onClick={handleClick}
-                                                className="inline-flex items-center justify-center min-w-[2rem] h-5 text-[10px] font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-full px-1.5 no-underline cursor-pointer transition-all duration-200 hover:scale-110 shadow-sm mx-0.5 align-super"
-                                                title={`${fileName}${pageNo ? ` — Page ${pageNo}` : ''}`}
-                                                {...props}
-                                            >
-                                                {children}
-                                            </a>
+                                            <TooltipProvider delayDuration={120}>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <a
+                                                            href="#"
+                                                            onClick={handleClick}
+                                                            className="inline-flex items-center justify-center min-w-[2rem] h-5 text-[10px] font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-full px-1.5 no-underline cursor-pointer transition-all duration-200 hover:scale-110 shadow-sm mx-0.5 align-super"
+                                                            title={`${fileName}${pageNo ? ` — Page ${pageNo}` : ''}`}
+                                                            {...props}
+                                                        >
+                                                            {children}
+                                                        </a>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent side="top" className="max-w-xs">
+                                                        <div className="text-sm font-medium">{fileName || `Document citation ${label}`}</div>
+                                                        <div className="text-xs text-muted-foreground">
+                                                            {pageNo ? `Page ${pageNo}` : 'Document reference'}
+                                                        </div>
+                                                        <div className="text-xs text-muted-foreground">Click to open this citation</div>
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            </TooltipProvider>
                                         )
                                     }
                                     // Citation badge links - styled inline numbered badges
                                     if (className === 'citation-badge' || href?.startsWith('#citation-')) {
                                         const citationNum = href ? parseInt(href.replace('#citation-', '')) : NaN
                                         const citationInfo = !isNaN(citationNum) ? citationMap.get(citationNum) : undefined
+                                        const isClickable = Boolean(citationInfo?.url)
                                         const handleClick = (e: React.MouseEvent) => {
                                             e.preventDefault()
-                                            if (citationInfo?.url) {
+                                            if (isClickable && citationInfo?.url) {
                                                 window.open(citationInfo.url, '_blank', 'noreferrer')
                                             }
                                         }
                                         const tooltipText = citationInfo
                                             ? `${citationInfo.title}${citationInfo.url ? `\n${citationInfo.url}` : ''}`
-                                            : `Source ${children}`
+                                            : `Source ${children} is not available`
                                         return (
-                                            <a
-                                                href={citationInfo?.url || '#'}
-                                                target={citationInfo?.url ? '_blank' : undefined}
-                                                rel="noreferrer"
-                                                onClick={handleClick}
-                                                className="inline-flex items-center justify-center min-w-[1.25rem] h-5 text-[10px] font-bold text-white bg-primary hover:bg-primary/80 rounded-full px-1.5 no-underline cursor-pointer transition-all duration-200 hover:scale-110 shadow-sm mx-0.5 align-super"
-                                                title={tooltipText}
-                                                {...props}
-                                            >
-                                                {children}
-                                            </a>
+                                            <TooltipProvider delayDuration={120}>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <a
+                                                            href={isClickable ? citationInfo?.url : undefined}
+                                                            target={isClickable ? '_blank' : undefined}
+                                                            rel={isClickable ? 'noreferrer' : undefined}
+                                                            onClick={isClickable ? handleClick : undefined}
+                                                            aria-disabled={!isClickable}
+                                                            className={cn(
+                                                                "inline-flex items-center justify-center min-w-[1.25rem] h-5 text-[10px] font-bold rounded-full px-1.5 no-underline shadow-sm mx-0.5 align-super transition-all duration-200",
+                                                                isClickable
+                                                                    ? "text-white bg-primary hover:bg-primary/80 cursor-pointer hover:scale-110"
+                                                                    : "text-white/90 bg-muted-foreground/60 cursor-default"
+                                                            )}
+                                                            title={tooltipText}
+                                                            {...props}
+                                                        >
+                                                            {children}
+                                                        </a>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent side="top" className="max-w-xs">
+                                                        <div className="text-sm font-medium">
+                                                            {citationInfo?.title || `Source ${children}`}
+                                                        </div>
+                                                        <div className="text-xs text-muted-foreground break-all">
+                                                            {citationInfo?.url || 'Source link unavailable'}
+                                                        </div>
+                                                        <div className="text-xs text-muted-foreground">
+                                                            {isClickable ? 'Click to open source' : 'Preview unavailable'}
+                                                        </div>
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            </TooltipProvider>
                                         )
                                     }
                                     // Extracted source links - show as styled text
                                     if (sources.some(s => s.url === href)) {
+                                        const linkText = typeof children === 'string' ? children : Array.isArray(children) ? children.join('') : ''
+                                        if (/^\d+$/.test(linkText.trim())) {
+                                            return (
+                                                <a
+                                                    href={href}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="inline-flex items-center justify-center min-w-[1.25rem] h-5 text-[10px] font-bold text-white bg-primary hover:bg-primary/80 rounded-full px-1.5 no-underline cursor-pointer transition-all duration-200 hover:scale-110 shadow-sm mx-0.5 align-super"
+                                                    {...props}
+                                                >
+                                                    {children}
+                                                </a>
+                                            )
+                                        }
+
                                         return <span className="underline decoration-primary/60 hover:decoration-primary cursor-pointer">{children}</span>
                                     }
                                     // Regular external links

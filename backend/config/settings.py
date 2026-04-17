@@ -2,6 +2,7 @@ from pydantic_settings import BaseSettings
 
 from .config import (
     APIConfig,
+    AzureBlobStorageConfig,
     AzureChatOpenAIConfig,
     AzureDocumentIntelligenceConfig,
     AzureImageGenerationConfig,
@@ -22,6 +23,7 @@ from .config import (
     RAGConfig,
     RedisConfig,
     S3Config,
+    SkillsConfig,
     TavilySearchConfig,
     VLMConfig,
     ProcessingConfig,
@@ -57,6 +59,8 @@ class Settings(BaseSettings):
     processing: ProcessingConfig = ProcessingConfig()
     ingestion_summary: IngestionSummaryConfig = IngestionSummaryConfig()
     mem0: Mem0Config = Mem0Config()
+    skills: SkillsConfig = SkillsConfig()
+    azure_blob: AzureBlobStorageConfig = AzureBlobStorageConfig()
 
     def __str__(self) -> str:
         return f"""

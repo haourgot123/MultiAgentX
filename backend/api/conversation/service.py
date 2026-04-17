@@ -2,6 +2,7 @@ from time import time_ns
 from typing import Optional, List
 from datetime import datetime, timezone
 import json
+import re
 import uuid
 
 from fastapi import Request
@@ -36,6 +37,13 @@ service_logger = logger.bind(service="conversation-service")
 
 
 class ConversationService:
+    NUMERIC_CITATION_REGEX = re.compile(r"\[(\d+)\](?!\()")
+    SOURCES_SECTION_REGEX = re.compile(
+        r"(?:^|\n)((?:#{1,6}\s+)?(?:\d+(?:\.\d+)*\.?\s+)?(?:Sources|References):?\s*$)",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    SOURCES_LINE_REGEX = re.compile(r"^\s*\[(\d+)\]\s+", re.MULTILINE)
+
     @staticmethod
     def _get_request_logger(request: Request | None = None, user_id: int | None = None):
         return service_logger.bind(
@@ -56,6 +64,48 @@ class ConversationService:
                 created_at = get_utc_now()
             return cls._build_default_title(created_at)
         return title.strip()[:255]
+
+    @classmethod
+    def _sanitize_orphan_numeric_citations(cls, content: str) -> str:
+        if not content:
+            return content
+
+        section_match = cls.SOURCES_SECTION_REGEX.search(content)
+        if section_match:
+            section_start = section_match.start(1)
+            body = content[:section_start]
+            sources_section = content[section_start:]
+            available_labels = {
+                match.group(1) for match in cls.SOURCES_LINE_REGEX.finditer(sources_section)
+            }
+        else:
+            body = content
+            sources_section = ""
+            available_labels = set()
+
+        def replace_orphan_citation(match: re.Match[str]) -> str:
+            if match.group(1) in available_labels:
+                return match.group(0)
+
+            previous_char = body[match.start() - 1] if match.start() > 0 else ""
+            next_char = body[match.end()] if match.end() < len(body) else ""
+
+            if (
+                previous_char
+                and next_char
+                and not previous_char.isspace()
+                and not next_char.isspace()
+            ):
+                return " "
+
+            return ""
+
+        cleaned_body = cls.NUMERIC_CITATION_REGEX.sub(replace_orphan_citation, body)
+        cleaned_body = re.sub(r"[ \t]{2,}", " ", cleaned_body)
+        cleaned_body = re.sub(r"[ \t]+([,.;:!?])", r"\1", cleaned_body)
+        cleaned_body = re.sub(r"[ \t]+\n", "\n", cleaned_body)
+
+        return f"{cleaned_body}{sources_section}"
 
     def _get_user_conversation(
         self,
@@ -354,6 +404,7 @@ class ConversationService:
                 
             # After successful generation, store assistant message
             if full_response:
+                full_response = self._sanitize_orphan_numeric_citations(full_response)
                 _, _ = self.add_message(
                     request,
                     db_session,
@@ -513,6 +564,7 @@ class ConversationService:
             # Save assistant message
             assistant_message = None
             if full_response:
+                full_response = self._sanitize_orphan_numeric_citations(full_response)
                 msg_obj, _ = self.add_message(
                     request,
                     db_session,
@@ -788,6 +840,7 @@ class ConversationService:
             
             # Save result to conversation
             if conversation_id and full_response:
+                full_response = self._sanitize_orphan_numeric_citations(full_response)
                 try:
                     self.add_message(
                         request,

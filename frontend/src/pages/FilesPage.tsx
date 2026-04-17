@@ -25,7 +25,7 @@ import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
 export default function FilesPage() {
-    const { files, removeFile, fetchFiles, uploadFiles, renameFile, downloadFile, isUploading } = useFileStore()
+    const { files, removeFile, fetchFiles, uploadFiles, renameFile, downloadFile, refreshSasUrls, isUploading } = useFileStore()
     const navigate = useNavigate()
     const [sortOrder, setSortOrder] = useState("date-desc")
     const [filterType, setFilterType] = useState("all")
@@ -43,12 +43,13 @@ export default function FilesPage() {
         const loadFiles = async () => {
             try {
                 await fetchFiles()
+                await refreshSasUrls()
             } catch (error) {
                 toast.error(error instanceof Error ? error.message : 'Failed to load files')
             }
         }
         void loadFiles()
-    }, [fetchFiles])
+    }, [fetchFiles, refreshSasUrls])
 
     const formatSize = (bytes: number) => {
         if (bytes === 0) return '0 Bytes'

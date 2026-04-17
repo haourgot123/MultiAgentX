@@ -12,6 +12,17 @@ from backend.agents.prompts.rag import RAG_PROMPTS
 service_logger = logger.bind(service="rag-query-transform")
 
 
+def _clean_queries(*queries: str) -> list[str]:
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for query in queries:
+        normalized = (query or "").strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            cleaned.append(normalized)
+    return cleaned
+
+
 class TransformedQuery(BaseModel):
     primary_query: str = Field(description="Primary search query — direct, focused on core intent")
     secondary_query: str = Field(
@@ -90,12 +101,17 @@ class QueryTransformNode(Runnable):
         llm_with_structure = azure_chat_openai_gpt_5_1.with_structured_output(TransformedQuery)
         result = await llm_with_structure.ainvoke(messages)
 
-        primary_query = result.optimized_query
+        transformed_queries = _clean_queries(
+            result.primary_query,
+            result.secondary_query,
+            result.tertiary_query,
+        )
+        primary_query = transformed_queries[0] if transformed_queries else state.user_question
 
         service_logger.info(
             f"Transformed query: primary='{primary_query}', "
             f"keywords={result.keywords}, "
-            f"hypothetical='{result.hypothetical_answer[:80]}...'"
+            f"alternatives={transformed_queries[1:]}"
         )
 
         dispatch_custom_event(
@@ -108,4 +124,5 @@ class QueryTransformNode(Runnable):
 
         return {
             "transformed_query": primary_query,
+            "transformed_queries": transformed_queries,
         }

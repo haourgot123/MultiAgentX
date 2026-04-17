@@ -61,6 +61,15 @@ export async function apiFetch<T = unknown>(
         const refreshed = await refreshAccessToken()
         if (refreshed) {
             response = await executeRequest()
+        } else {
+            // Unrecoverable 401 — clear auth state so ProtectedRoute redirects to login
+            useAuthStore.setState({
+                isAuthenticated: false,
+                user: null,
+                accessToken: null,
+                refreshToken: null,
+            })
+            throw new Error("Session expired")
         }
     }
 
@@ -120,6 +129,14 @@ export async function apiFetchStream(
         const refreshed = await refreshAccessToken()
         if (refreshed) {
             response = await executeRequest()
+        } else {
+            useAuthStore.setState({
+                isAuthenticated: false,
+                user: null,
+                accessToken: null,
+                refreshToken: null,
+            })
+            throw new Error("Session expired")
         }
     }
 

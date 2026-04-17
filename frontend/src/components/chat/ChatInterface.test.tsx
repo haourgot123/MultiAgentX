@@ -31,6 +31,8 @@ const resetStores = () => {
         activeCitation: null,
         input: '',
         isLoading: false,
+        loadingChatId: null,
+        conversationOpenScrollBehavior: null,
         statusSteps: [],
         mode: 'normal',
         pendingPlan: null,
@@ -122,7 +124,7 @@ describe('ChatInterface', () => {
                     type: 'application/pdf',
                     size: 2048,
                     uploadedAt: Date.parse('2026-04-15T10:00:00Z'),
-                    storagePath: 'tmp/ocr.pdf',
+                    sasUrl: null,
                     ingestionStatus: 'processing',
                     ingestionError: null,
                     ingestedChunks: 0,
@@ -176,7 +178,7 @@ describe('ChatInterface', () => {
                     type: 'application/pdf',
                     size: 1024,
                     uploadedAt: Date.parse('2026-04-15T10:00:00Z'),
-                    storagePath: 'tmp/ready.pdf',
+                    sasUrl: null,
                     ingestionStatus: 'completed',
                     ingestionError: null,
                     ingestedChunks: 5,
@@ -231,6 +233,170 @@ describe('ChatInterface', () => {
         })
 
         loadConversationMock.mockRestore()
+    })
+
+    it('jumps to the last turn immediately when opening a conversation', () => {
+        const scrollIntoViewMock = vi.fn()
+        const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
+        HTMLElement.prototype.scrollIntoView = scrollIntoViewMock
+
+        useChatStore.setState({
+            currentChatId: 15,
+            chatSessions: [
+                {
+                    id: 15,
+                    title: 'Existing Chat',
+                    createdAt: Date.parse('2026-04-15T10:00:00Z'),
+                    updatedAt: Date.parse('2026-04-15T10:05:00Z'),
+                    chatType: 'normal',
+                    fileIds: [],
+                    messageCount: 2,
+                },
+            ],
+            messagesByChat: {
+                15: [
+                    {
+                        id: 1,
+                        role: 'user',
+                        content: 'First question',
+                        timestamp: Date.parse('2026-04-15T10:00:00Z'),
+                    },
+                    {
+                        id: 2,
+                        role: 'assistant',
+                        content: 'Latest answer',
+                        timestamp: Date.parse('2026-04-15T10:05:00Z'),
+                    },
+                ],
+            },
+        })
+
+        render(
+            <MemoryRouter initialEntries={['/']}>
+                <ChatInterface />
+            </MemoryRouter>
+        )
+
+        expect(scrollIntoViewMock).toHaveBeenCalledWith({
+            behavior: 'auto',
+            block: 'end',
+        })
+
+        HTMLElement.prototype.scrollIntoView = originalScrollIntoView
+    })
+
+    it('smoothly scrolls to the last turn when a conversation is opened from the sidebar', () => {
+        const scrollIntoViewMock = vi.fn()
+        const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
+        HTMLElement.prototype.scrollIntoView = scrollIntoViewMock
+
+        useChatStore.setState({
+            currentChatId: 17,
+            conversationOpenScrollBehavior: 'smooth',
+            chatSessions: [
+                {
+                    id: 17,
+                    title: 'Sidebar Chat',
+                    createdAt: Date.parse('2026-04-15T10:00:00Z'),
+                    updatedAt: Date.parse('2026-04-15T10:05:00Z'),
+                    chatType: 'normal',
+                    fileIds: [],
+                    messageCount: 2,
+                },
+            ],
+            messagesByChat: {
+                17: [
+                    {
+                        id: 1,
+                        role: 'user',
+                        content: 'Open this conversation',
+                        timestamp: Date.parse('2026-04-15T10:00:00Z'),
+                    },
+                    {
+                        id: 2,
+                        role: 'assistant',
+                        content: 'Most recent turn',
+                        timestamp: Date.parse('2026-04-15T10:05:00Z'),
+                    },
+                ],
+            },
+        })
+
+        render(
+            <MemoryRouter initialEntries={['/']}>
+                <ChatInterface />
+            </MemoryRouter>
+        )
+
+        expect(scrollIntoViewMock).toHaveBeenCalledWith({
+            behavior: 'smooth',
+            block: 'end',
+        })
+        expect(useChatStore.getState().conversationOpenScrollBehavior).toBeNull()
+
+        HTMLElement.prototype.scrollIntoView = originalScrollIntoView
+    })
+
+    it('clears stale smooth scroll behavior after leaving chat so re-enter jumps immediately', () => {
+        const scrollIntoViewMock = vi.fn()
+        const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
+        HTMLElement.prototype.scrollIntoView = scrollIntoViewMock
+
+        useChatStore.setState({
+            currentChatId: 18,
+            conversationOpenScrollBehavior: 'smooth',
+            chatSessions: [
+                {
+                    id: 18,
+                    title: 'Return Chat',
+                    createdAt: Date.parse('2026-04-15T10:00:00Z'),
+                    updatedAt: Date.parse('2026-04-15T10:05:00Z'),
+                    chatType: 'normal',
+                    fileIds: [],
+                    messageCount: 2,
+                },
+            ],
+            messagesByChat: {
+                18: [
+                    {
+                        id: 1,
+                        role: 'user',
+                        content: 'Open this conversation',
+                        timestamp: Date.parse('2026-04-15T10:00:00Z'),
+                    },
+                    {
+                        id: 2,
+                        role: 'assistant',
+                        content: 'Most recent turn',
+                        timestamp: Date.parse('2026-04-15T10:05:00Z'),
+                    },
+                ],
+            },
+        })
+
+        const firstRender = render(
+            <MemoryRouter initialEntries={['/']}>
+                <ChatInterface />
+            </MemoryRouter>
+        )
+
+        firstRender.unmount()
+        expect(useChatStore.getState().conversationOpenScrollBehavior).toBeNull()
+
+        scrollIntoViewMock.mockClear()
+
+        render(
+            <MemoryRouter initialEntries={['/']}>
+                <ChatInterface />
+            </MemoryRouter>
+        )
+
+        expect(scrollIntoViewMock).toHaveBeenLastCalledWith({
+            behavior: 'auto',
+            block: 'end',
+        })
+
+        HTMLElement.prototype.scrollIntoView = originalScrollIntoView
     })
 
     it('stops auto-scrolling while streaming when the user scrolls up', async () => {
@@ -316,6 +482,95 @@ describe('ChatInterface', () => {
         })
 
         expect(scrollIntoViewMock).not.toHaveBeenCalled()
+        HTMLElement.prototype.scrollIntoView = originalScrollIntoView
+    })
+
+    it('does not auto-scroll while the assistant is streaming even if the user is near the bottom', () => {
+        const scrollIntoViewMock = vi.fn()
+        const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
+        HTMLElement.prototype.scrollIntoView = scrollIntoViewMock
+
+        useChatStore.setState({
+            currentChatId: 16,
+            chatSessions: [
+                {
+                    id: 16,
+                    title: 'Streaming Chat',
+                    createdAt: Date.parse('2026-04-15T10:00:00Z'),
+                    updatedAt: Date.parse('2026-04-15T10:00:00Z'),
+                    chatType: 'normal',
+                    fileIds: [],
+                    messageCount: 2,
+                },
+            ],
+            messagesByChat: {
+                16: [
+                    {
+                        id: 1,
+                        role: 'user',
+                        content: 'Tell me more',
+                        timestamp: Date.parse('2026-04-15T10:00:00Z'),
+                    },
+                    {
+                        id: 2,
+                        role: 'assistant',
+                        content: 'Initial answer',
+                        timestamp: Date.parse('2026-04-15T10:00:01Z'),
+                    },
+                ],
+            },
+        })
+
+        const { container } = render(
+            <MemoryRouter initialEntries={['/']}>
+                <ChatInterface />
+            </MemoryRouter>
+        )
+
+        const viewport = container.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement
+
+        Object.defineProperty(viewport, 'scrollHeight', {
+            configurable: true,
+            value: 1200,
+        })
+        Object.defineProperty(viewport, 'clientHeight', {
+            configurable: true,
+            value: 400,
+        })
+        Object.defineProperty(viewport, 'scrollTop', {
+            configurable: true,
+            writable: true,
+            value: 760,
+        })
+
+        fireEvent.scroll(viewport)
+        scrollIntoViewMock.mockClear()
+
+        act(() => {
+            useChatStore.setState({
+                isLoading: true,
+                loadingChatId: 16,
+                messagesByChat: {
+                    16: [
+                        {
+                            id: 1,
+                            role: 'user',
+                            content: 'Tell me more',
+                            timestamp: Date.parse('2026-04-15T10:00:00Z'),
+                        },
+                        {
+                            id: 2,
+                            role: 'assistant',
+                            content: 'Initial answer with more streamed tokens',
+                            timestamp: Date.parse('2026-04-15T10:00:01Z'),
+                        },
+                    ],
+                },
+            })
+        })
+
+        expect(scrollIntoViewMock).not.toHaveBeenCalled()
+
         HTMLElement.prototype.scrollIntoView = originalScrollIntoView
     })
 

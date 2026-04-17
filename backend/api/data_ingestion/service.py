@@ -599,85 +599,94 @@ class DataIngestionService:
         request_logger,
         on_progress: Callable[[str, int, int], None] | None = None,
     ) -> tuple[int, str | None]:
-        path = Path(stored_file.storage_path)
-        request_logger.info("Starting ingestion pipeline for path={}", path)
-        if not path.exists():
-            raise ObjectNotFoundException(message=Message.MESSAGE_FILE_NOT_FOUND)
+        from backend.utils.blob_storage import blob_storage_client
 
-        if on_progress:
-            on_progress("parsing", 20, 0)
-        blocks = extract_service.extract_text_blocks(path)
-        request_logger.debug("Extracted text blocks, count={}", len(blocks))
+        blob_path = stored_file.storage_path
+        request_logger.info("Starting ingestion pipeline for blob_path={}", blob_path)
 
-        if on_progress:
-            on_progress("chunking", 45, 0)
-        chunks = self._build_chunks(blocks)
-        if not chunks:
-            raise InvalidRequestException(message="No text extracted for ingestion")
-        request_logger.debug("Built chunks from extracted blocks, chunk_count={}", len(chunks))
+        # Download blob to a local temp file for processing
+        suffix = Path(blob_path).suffix or ".bin"
+        tmp_path = blob_storage_client.download_to_temp_file(blob_path, suffix=suffix)
+        request_logger.debug("Downloaded blob to temp file={}", tmp_path)
 
-        # --- Debug: write extraction + chunking results to JSON for verification ---
         try:
-            debug_dir = Path(__file__).resolve().parent.parent.parent / "tmp" / "ingestion_debug"
-            debug_dir.mkdir(parents=True, exist_ok=True)
-            debug_file = debug_dir / f"ingestion_debug_{stored_file.id}.json"
+            if on_progress:
+                on_progress("parsing", 20, 0)
+            blocks = extract_service.extract_text_blocks(tmp_path)
+            request_logger.debug("Extracted text blocks, count={}", len(blocks))
 
-            debug_blocks = []
-            for i, block in enumerate(blocks):
-                debug_blocks.append({
-                    "index": i,
-                    "block_type": block.block_type,
-                    "docling_label": block.metadata.get("docling_label", ""),
-                    "page_no": block.page_no,
-                    "text": block.text[:300],
-                    "bbox": block.bbox,
-                    "all_bboxes": block.metadata.get("all_bboxes", []),
-                })
+            if on_progress:
+                on_progress("chunking", 45, 0)
+            chunks = self._build_chunks(blocks)
+            if not chunks:
+                raise InvalidRequestException(message="No text extracted for ingestion")
+            request_logger.debug("Built chunks from extracted blocks, chunk_count={}", len(chunks))
 
-            debug_chunks = []
-            for chunk in chunks:
-                debug_chunks.append({
-                    "chunk_index": chunk.chunk_index,
-                    "page_no": chunk.page_no,
-                    "text_preview": chunk.text[:500],
-                    "text_length": len(chunk.text),
-                    "block_types": chunk.block_types,
-                    "bboxes_count": len(chunk.bboxes),
-                    "bboxes": chunk.bboxes,
-                })
+            # --- Debug: write extraction + chunking results to JSON for verification ---
+            try:
+                debug_dir = Path(__file__).resolve().parent.parent.parent / "tmp" / "ingestion_debug"
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                debug_file = debug_dir / f"ingestion_debug_{stored_file.id}.json"
 
-            debug_payload = {
-                "file_id": stored_file.id,
-                "file_name": stored_file.original_name,
-                "total_blocks": len(blocks),
-                "total_chunks": len(chunks),
-                "blocks": debug_blocks,
-                "chunks": debug_chunks,
-            }
-            debug_file.write_text(
-                json.dumps(debug_payload, ensure_ascii=False, indent=2),
-                encoding="utf-8",
+                debug_blocks = []
+                for i, block in enumerate(blocks):
+                    debug_blocks.append({
+                        "index": i,
+                        "block_type": block.block_type,
+                        "docling_label": block.metadata.get("docling_label", ""),
+                        "page_no": block.page_no,
+                        "text": block.text[:300],
+                        "bbox": block.bbox,
+                        "all_bboxes": block.metadata.get("all_bboxes", []),
+                    })
+
+                debug_chunks = []
+                for chunk in chunks:
+                    debug_chunks.append({
+                        "chunk_index": chunk.chunk_index,
+                        "page_no": chunk.page_no,
+                        "text_preview": chunk.text[:500],
+                        "text_length": len(chunk.text),
+                        "block_types": chunk.block_types,
+                        "bboxes_count": len(chunk.bboxes),
+                        "bboxes": chunk.bboxes,
+                    })
+
+                debug_payload = {
+                    "file_id": stored_file.id,
+                    "file_name": stored_file.name,
+                    "total_blocks": len(blocks),
+                    "total_chunks": len(chunks),
+                    "blocks": debug_blocks,
+                    "chunks": debug_chunks,
+                }
+                debug_file.write_text(
+                    json.dumps(debug_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                request_logger.info("Wrote ingestion debug JSON to {}", debug_file)
+            except Exception as e:
+                request_logger.warning("Failed to write debug JSON: {}", e)
+            # --- End debug ---
+
+            if on_progress:
+                on_progress("indexing", 70, len(chunks))
+            vectors = self._embed_chunks(chunks)
+
+            if on_progress:
+                on_progress("indexing", 90, len(chunks))
+            self._upsert_chunks(
+                user_id=stored_file.user_id,
+                stored_file=stored_file,
+                chunks=chunks,
+                vectors=vectors,
+                request_logger=request_logger,
             )
-            request_logger.info("Wrote ingestion debug JSON to {}", debug_file)
-        except Exception as e:
-            request_logger.warning("Failed to write debug JSON: {}", e)
-        # --- End debug ---
-
-        if on_progress:
-            on_progress("indexing", 70, len(chunks))
-        vectors = self._embed_chunks(chunks)
-
-        if on_progress:
-            on_progress("indexing", 90, len(chunks))
-        self._upsert_chunks(
-            user_id=stored_file.user_id,
-            stored_file=stored_file,
-            chunks=chunks,
-            vectors=vectors,
-            request_logger=request_logger,
-        )
-        request_logger.info("Ingestion pipeline completed")
-        return len(chunks), None
+            request_logger.info("Ingestion pipeline completed")
+            return len(chunks), None
+        finally:
+            # Always clean up the local temp file
+            tmp_path.unlink(missing_ok=True)
 
     def ingest_file(
         self,

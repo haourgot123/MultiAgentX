@@ -14,3 +14,7 @@ opencode.json
 .pytest_cache
 .ruff_cache
 .deepeval
+AGENTS.md
+test_skill.md
+test_data
+scripts
