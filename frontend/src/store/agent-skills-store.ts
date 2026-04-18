@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { API_BASE_URL, apiFetch, apiFetchStream, type StreamEvent } from '@/lib/api'
+import { io, type Socket } from 'socket.io-client'
+import { API_BASE_URL, SOCKET_BASE_URL, apiFetch, apiFetchStream, type StreamEvent } from '@/lib/api'
 import { useAuthStore } from './auth-store'
 
 export type Skill = {
@@ -95,6 +96,11 @@ type SandboxApiResponse = {
     completed_at: string | null
 }
 
+type SandboxSocketEvent = SandboxApiResponse & {
+    user_id?: number | null
+    updated_at: string
+}
+
 type ConversationApiResponse = {
     id: number
     title: string
@@ -171,6 +177,8 @@ interface AgentSkillsState {
     downloadSandboxFile: (sandboxIndex: number, filename: string) => Promise<void>
     fetchConversationArtifacts: (conversationId: number) => Promise<void>
     downloadArtifact: (artifactId: number) => Promise<void>
+    connectSandboxSocket: () => void
+    disconnectSandboxSocket: () => void
 }
 
 const mapSkillResponse = (skill: SkillApiResponse): Skill => ({
@@ -207,6 +215,9 @@ const mapConversationResponse = (conversation: ConversationApiResponse): SkillCo
 const sortConversations = (conversations: SkillConversation[]) =>
     [...conversations].sort((left, right) => right.updatedAt - left.updatedAt)
 
+const sortSandboxes = (sandboxes: Sandbox[]) =>
+    [...sandboxes].sort((left, right) => left.sandboxIndex - right.sandboxIndex)
+
 const upsertConversation = (
     conversations: SkillConversation[],
     conversation: SkillConversation
@@ -214,6 +225,20 @@ const upsertConversation = (
     conversation,
     ...conversations.filter((item) => item.id !== conversation.id),
 ])
+
+const upsertSandbox = (
+    sandboxes: Sandbox[],
+    sandbox: Sandbox
+): Sandbox[] => sortSandboxes([
+    sandbox,
+    ...sandboxes.filter(
+        (item) => item.id !== sandbox.id && item.sandboxIndex !== sandbox.sandboxIndex
+    ),
+])
+
+let sandboxSocket: Socket | null = null
+let sandboxSocketToken: string | null = null
+let sandboxSocketSubscriberCount = 0
 
 const deriveRunsFromMessages = (messages: MessageApiResponse[]): SkillExecutionRun[] => {
     const runs: SkillExecutionRun[] = []
@@ -434,7 +459,7 @@ export const useAgentSkillsStore = create<AgentSkillsState>((set, get) => ({
 
     fetchSandboxes: async () => {
         const sandboxes = await apiFetch<SandboxApiResponse[]>('/skills/sandboxes/list')
-        set({ sandboxes: sandboxes.map(mapSandboxResponse) })
+        set({ sandboxes: sortSandboxes(sandboxes.map(mapSandboxResponse)) })
     },
 
     executeSkills: async (userMessage, conversationId, skillIds, attachedFileIds = []) => {
@@ -746,5 +771,80 @@ export const useAgentSkillsStore = create<AgentSkillsState>((set, get) => ({
             console.error('Failed to download artifact:', error)
             throw error
         }
+    },
+
+    connectSandboxSocket: () => {
+        const token = useAuthStore.getState().accessToken
+        if (!token) {
+            return
+        }
+
+        sandboxSocketSubscriberCount += 1
+        const requiresReconnect = !sandboxSocket || sandboxSocketToken !== token
+        if (!requiresReconnect) {
+            return
+        }
+
+        if (sandboxSocket) {
+            sandboxSocket.removeAllListeners()
+            sandboxSocket.disconnect()
+            sandboxSocket = null
+        }
+
+        sandboxSocketToken = token
+        sandboxSocket = io(SOCKET_BASE_URL, {
+            path: '/socket.io',
+            transports: ['polling', 'websocket'],
+            query: { token },
+            auth: { token },
+            reconnection: true,
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 1000,
+            timeout: 10000,
+        })
+
+        sandboxSocket.on('sandbox_status', (payload: SandboxSocketEvent) => {
+            if (!payload || typeof payload.sandbox_index !== 'number') {
+                return
+            }
+
+            const mappedSandbox = mapSandboxResponse(payload)
+            const hasSandboxInStore = useAgentSkillsStore
+                .getState()
+                .sandboxes.some(
+                    (sandbox) =>
+                        sandbox.id === mappedSandbox.id ||
+                        sandbox.sandboxIndex === mappedSandbox.sandboxIndex
+                )
+
+            if (!hasSandboxInStore) {
+                void useAgentSkillsStore.getState().fetchSandboxes().catch(() => {})
+                return
+            }
+
+            set((state) => ({
+                sandboxes: upsertSandbox(state.sandboxes, mappedSandbox),
+            }))
+        })
+
+        sandboxSocket.on('connect', () => {
+            if (useAgentSkillsStore.getState().sandboxes.length === 0) {
+                void useAgentSkillsStore.getState().fetchSandboxes().catch(() => {})
+            }
+        })
+    },
+
+    disconnectSandboxSocket: () => {
+        sandboxSocketSubscriberCount = Math.max(0, sandboxSocketSubscriberCount - 1)
+        if (sandboxSocketSubscriberCount > 0) {
+            return
+        }
+
+        if (sandboxSocket) {
+            sandboxSocket.removeAllListeners()
+            sandboxSocket.disconnect()
+            sandboxSocket = null
+        }
+        sandboxSocketToken = null
     },
 }))

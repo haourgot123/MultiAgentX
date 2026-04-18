@@ -54,6 +54,18 @@ vi.mock('@/components/chat/ChatInterface', () => ({
             >
                 Open Citation File 1
             </button>
+            <button
+                type="button"
+                onClick={() => onFileCitationClick?.({
+                    citation_label: '2.2',
+                    file_id: 0,
+                    file_name: '',
+                    page_no: null,
+                    chunk_index: 0,
+                }, 88)}
+            >
+                Open Stale Citation File 2
+            </button>
         </div>
     ),
 }))
@@ -322,6 +334,99 @@ describe('ChatWithFilePage', () => {
         })
     })
 
+    it('resolves stale citation metadata from the clicked message before switching files', async () => {
+        const user = userEvent.setup()
+        const refreshSasUrlMock = vi.fn().mockImplementation(async (id: number) => `https://example.com/file-${id}.pdf`)
+
+        fetchRetrievalRecordsMock.mockImplementation(async (_conversationId: number, messageId: number) => {
+            if (messageId === 77) {
+                return [
+                    {
+                        id: 1,
+                        chunk_id: 'chunk-1',
+                        file_id: 1,
+                        file_name: 'transformer.pdf',
+                        chunk_index: 0,
+                        citation_label: '1.1',
+                        page_no: 4,
+                        bbox_json: null,
+                        chunk_text: null,
+                        relevance_score: null,
+                    },
+                ]
+            }
+
+            if (messageId === 88) {
+                return [
+                    {
+                        id: 2,
+                        chunk_id: 'chunk-2',
+                        file_id: 2,
+                        file_name: 'report_246.pdf',
+                        chunk_index: 0,
+                        citation_label: '2.2',
+                        page_no: 2,
+                        bbox_json: null,
+                        chunk_text: null,
+                        relevance_score: null,
+                    },
+                ]
+            }
+
+            return []
+        })
+
+        useFileStore.setState({
+            files: [
+                createFile({ id: 1, name: 'transformer.pdf', type: 'application/pdf', ingestionStatus: 'completed' }),
+                createFile({ id: 2, name: 'report_246.pdf', type: 'application/pdf', ingestionStatus: 'completed' }),
+            ],
+            refreshSasUrl: refreshSasUrlMock,
+        })
+
+        useChatStore.setState({
+            currentChatId: 81,
+            chatSessions: [
+                {
+                    id: 81,
+                    title: 'Citation history',
+                    createdAt: Date.parse('2026-04-16T10:00:00Z'),
+                    updatedAt: Date.parse('2026-04-16T10:00:00Z'),
+                    chatType: 'file',
+                    fileIds: [1, 2],
+                    messageCount: 0,
+                },
+            ],
+            messagesByChat: { 81: [] },
+        })
+
+        render(
+            <MemoryRouter initialEntries={['/chat-file']}>
+                <ChatWithFilePage />
+            </MemoryRouter>
+        )
+
+        await waitFor(() => {
+            expect(screen.getByText('PDF Viewer: https://example.com/file-1.pdf')).toBeInTheDocument()
+        })
+
+        await user.click(screen.getByRole('button', { name: /open citation file 1/i }))
+
+        await waitFor(() => {
+            expect(fetchRetrievalRecordsMock).toHaveBeenCalledWith(81, 77)
+            expect(screen.getByText(/page 4/i)).toBeInTheDocument()
+        })
+
+        await user.click(screen.getByRole('button', { name: /open stale citation file 2/i }))
+
+        await waitFor(() => {
+            expect(fetchRetrievalRecordsMock).toHaveBeenCalledWith(81, 88)
+            expect(refreshSasUrlMock).toHaveBeenCalledWith(2)
+            expect(screen.getByText('PDF Viewer: https://example.com/file-2.pdf')).toBeInTheDocument()
+            expect(screen.getByText(/page 2/i)).toBeInTheDocument()
+        })
+    })
+
     it('switches preview from the dropdown and clears a stale citation banner', async () => {
         const user = userEvent.setup()
         const refreshSasUrlMock = vi.fn().mockImplementation(async (id: number) => `https://example.com/file-${id}.pdf`)
@@ -369,7 +474,7 @@ describe('ChatWithFilePage', () => {
         })
 
         await user.click(screen.getByRole('button', { name: /report_246\.pdf/i }))
-        await user.click(await screen.findByRole('menuitem', { name: /transformer\.pdf/i }))
+        await user.click(await screen.findByRole('button', { name: /transformer\.pdf/i }))
 
         await waitFor(() => {
             expect(screen.getByText('PDF Viewer: https://example.com/file-1.pdf')).toBeInTheDocument()
@@ -377,5 +482,48 @@ describe('ChatWithFilePage', () => {
 
         expect(screen.queryByText(/page 2/i)).not.toBeInTheDocument()
         expect(screen.queryByText(/\[2\.2\]/i)).not.toBeInTheDocument()
+    })
+
+    it('opens upload flow from add files menu after chat has started', async () => {
+        const user = userEvent.setup()
+
+        useFileStore.setState({
+            files: [
+                createFile({ id: 1, name: 'transformer.pdf', type: 'application/pdf', ingestionStatus: 'completed' }),
+            ],
+            refreshSasUrl: vi.fn().mockResolvedValue('https://example.com/file-1.pdf'),
+        })
+
+        useChatStore.setState({
+            currentChatId: 10,
+            chatSessions: [
+                {
+                    id: 10,
+                    title: 'Upload files',
+                    createdAt: Date.parse('2026-04-16T10:00:00Z'),
+                    updatedAt: Date.parse('2026-04-16T10:00:00Z'),
+                    chatType: 'file',
+                    fileIds: [1],
+                    messageCount: 0,
+                },
+            ],
+            messagesByChat: { 10: [] },
+        })
+
+        render(
+            <MemoryRouter initialEntries={['/chat-file']}>
+                <ChatWithFilePage />
+            </MemoryRouter>
+        )
+
+        await waitFor(() => {
+            expect(screen.getByText('PDF Viewer: https://example.com/file-1.pdf')).toBeInTheDocument()
+        })
+
+        await user.click(screen.getByRole('button', { name: /add files/i }))
+        await user.click(await screen.findByRole('menuitem', { name: /upload files/i }))
+
+        expect(await screen.findByText(/upload files/i)).toBeInTheDocument()
+        expect(screen.getByText(/select one or more files from your computer/i)).toBeInTheDocument()
     })
 })

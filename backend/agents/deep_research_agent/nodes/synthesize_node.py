@@ -2,8 +2,9 @@ from langchain_core.runnables import Runnable
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.callbacks import dispatch_custom_event
 from loguru import logger
+import re
 
-from backend.agents.deep_research_agent.state import DeepResearchAgentState, Tag
+from backend.agents.deep_research_agent.state import DeepResearchAgentState, Tag, SearchResult
 from backend.utils.llm import azure_chat_openai_gpt_5_1
 from backend.agents.prompts.deep_research import DEEP_RESEARCH_PROMPTS
 
@@ -23,7 +24,7 @@ Original Question: {user_question}
 ## Research Findings by Iteration:
 {findings_text}
 
-## Source References (use these URLs to create inline citations like [1](URL), [2](URL)):
+## Source References (use these URLs to create inline citations like [1], [2], [3]):
 {sources_text}
 
 ## Research Plan Coverage:
@@ -33,11 +34,13 @@ Original Question: {user_question}
 1. Create a comprehensive report following the structure in your system instructions
 2. Start with an executive summary (2-3 paragraphs)
 3. Organize findings into 3-5 thematic sections with clear headings
-4. Use inline markdown citations like [1](URL), [2](URL) immediately after key claims — use the matching URLs from the source references above
+4. Use inline numeric citations like [1], [2], [3] immediately after key claims — the number must match the source references above
 5. Include specific data, statistics, and examples from the findings
 6. Acknowledge limitations and any conflicting information
 7. End with clear conclusions and recommendations
-8. Add a "## Sources" section at the end with numbered markdown links
+8. Add a "## Sources" section at the end with numbered markdown links in this exact format:
+   [1] [Source Title](URL)
+   [2] [Another Source](URL)
 
 Format: Use markdown with proper headings, bullet points, and emphasis.
 Language: Match the language of the original question ({detected_language}).
@@ -45,8 +48,57 @@ Citations: Be selective — cite important claims, not every sentence."""
 
 
 class SynthesizeNode(Runnable):
+    SOURCES_SECTION_REGEX = re.compile(
+        r"(?:^|\n)(?:#{1,6}\s+)?(?:\d+(?:\.\d+)*\.?\s+)?(?:Sources|References|Nguon|Nguồn|Tai lieu tham khao|Tài liệu tham khảo)\s*:?\s*$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+
     def __init__(self):
         super().__init__()
+
+    @staticmethod
+    def _build_sources_index(search_results: list[SearchResult]) -> list[tuple[str, str, str]]:
+        ordered_sources: list[tuple[str, str, str]] = []
+        seen_urls: set[str] = set()
+
+        for result in search_results:
+            if not result.url or result.url in seen_urls:
+                continue
+
+            seen_urls.add(result.url)
+            ordered_sources.append(
+                (
+                    result.url,
+                    (result.title or "Source").strip(),
+                    (result.snippet or "").strip(),
+                )
+            )
+
+        return ordered_sources
+
+    @classmethod
+    def _strip_existing_sources_section(cls, report: str) -> str:
+        if not report:
+            return report
+
+        matches = list(cls.SOURCES_SECTION_REGEX.finditer(report))
+        if not matches:
+            return report.rstrip()
+
+        return report[:matches[-1].start()].rstrip()
+
+    @staticmethod
+    def _append_canonical_sources_section(
+        report_body: str, sources_index: list[tuple[str, str, str]]
+    ) -> str:
+        if not sources_index:
+            return report_body.rstrip()
+
+        sources_lines = [
+            f"[{idx}] [{title}]({url})"
+            for idx, (url, title, _snippet) in enumerate(sources_index, 1)
+        ]
+        return f"{report_body.rstrip()}\n\n## Sources\n" + "\n".join(sources_lines)
 
     def invoke(self, state: DeepResearchAgentState, **kwargs):
         pass
@@ -72,19 +124,14 @@ class SynthesizeNode(Runnable):
                 findings_text += f"\n**Sources Used:** {', '.join(finding.sources[:3])}\n"
         
         # Build deduplicated sources text with proper numbering
-        sources_dict = {}  # url -> (title, snippet)
-        for result in state.search_results:
-            if result.url not in sources_dict and result.url:
-                title = result.title if result.title else "Source"
-                snippet = result.snippet[:250] if result.snippet else ""
-                sources_dict[result.url] = (title, snippet)
+        sources_index = self._build_sources_index(state.search_results)
         
         sources_text = ""
-        for idx, (url, (title, snippet)) in enumerate(sources_dict.items(), 1):
+        for idx, (url, title, snippet) in enumerate(sources_index, 1):
             sources_text += f"\n[{idx}] Title: {title}\n"
             sources_text += f"    URL: {url}\n"
             if snippet:
-                sources_text += f"    Key Info: {snippet}...\n"
+                sources_text += f"    Key Info: {snippet[:250]}...\n"
         
         # Coverage analysis for the synthesis
         covered_topics = set()
@@ -110,7 +157,7 @@ class SynthesizeNode(Runnable):
             HumanMessage(content=SYNTHESIZE_USER.format(
                 user_question=state.user_question,
                 total_iterations=state.current_iteration,
-                total_sources=len(sources_dict),
+                total_sources=len(sources_index),
                 sub_questions=sub_questions,
                 findings_text=findings_text[:8000],
                 sources_text=sources_text[:5000],
@@ -121,7 +168,7 @@ class SynthesizeNode(Runnable):
 
         service_logger.info(
             f"Synthesizing final report: {len(state.findings)} findings, "
-            f"{len(sources_dict)} unique sources, {state.current_iteration} iterations"
+            f"{len(sources_index)} unique sources, {state.current_iteration} iterations"
         )
 
         # Stream tokens natively using tagged config so the outer graph's
@@ -137,12 +184,17 @@ class SynthesizeNode(Runnable):
                 continue
             full_output += content
 
+        # Replace any model-generated sources block with a canonical markdown list
+        # so the frontend can always resolve numeric citations to real URLs.
+        full_output = self._strip_existing_sources_section(full_output)
+
         # Append research metadata summary
         metadata_summary = (
             f"\n\n---\n*Research completed: {state.current_iteration} iteration(s), "
-            f"{len(sources_dict)} sources analyzed, {len(state.findings)} finding groups.*"
+            f"{len(sources_index)} sources analyzed, {len(state.findings)} finding groups.*"
         )
         full_output += metadata_summary
+        full_output = self._append_canonical_sources_section(full_output, sources_index)
 
         service_logger.info(f"Final report synthesized: {len(full_output)} characters")
 

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal, Optional, List
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Table, UnicodeText
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Table, UnicodeText, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from backend.databases.db import Base
@@ -10,18 +10,20 @@ from backend.databases.db import Base
 conversation_files = Table(
     "Conversation_File",
     Base.metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
     Column(
         "conversation_id",
         Integer,
         ForeignKey("Conversation.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     ),
     Column(
         "file_id",
         Integer,
         ForeignKey("FileAsset.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     ),
+    UniqueConstraint("conversation_id", "file_id", name="uq_conversation_file_pair"),
 )
 
 
@@ -37,6 +39,7 @@ class Conversation(Base):
     )
     title = Column(UnicodeText, nullable=False, default="New Chat")
     chat_type = Column(UnicodeText, nullable=False, default="normal")
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -45,7 +48,11 @@ class Conversation(Base):
         back_populates="conversation",
         cascade="all, delete-orphan",
     )
-    files = relationship("StoredFile", secondary=conversation_files)
+    files = relationship(
+        "StoredFile",
+        secondary=conversation_files,
+        order_by=conversation_files.c.id,
+    )
 
 
 class ConversationMessage(Base):
@@ -178,6 +185,10 @@ class ChatRequest(BaseModel):
     is_web_search_enabled: Optional[bool] = Field(False, description="Is web search enabled")
     is_deep_research_enabled: Optional[bool] = Field(False, description="Is deep research enabled")
     is_generate_image_enabled: Optional[bool] = Field(False, description="Is generate image enabled")
+    route_preference: Optional[Literal["auto", "websearch_agent", "deep_research_agent", "image_generation_agent"]] = Field(
+        "auto",
+        description="Manual route preference from the UI. 'auto' lets the router decide from the prompt.",
+    )
     is_rag_enabled: Optional[bool] = Field(False, description="Is RAG enabled")
     file_ids: Optional[List[int]] = Field(default_factory=list, description="File IDs for RAG")
     approved_research_plan: Optional[List[str]] = Field(None, description="Approved research plan for deep research (optional)")
@@ -213,4 +224,3 @@ class RetrievalRecordResponse(BaseModel):
     relevance_score: Optional[str] = Field(None, description="Relevance score")
 
     model_config = ConfigDict(from_attributes=True)
-

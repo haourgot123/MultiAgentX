@@ -17,6 +17,7 @@ from backend.api.conversation.model import (
     ConversationMessageCreateRequest,
     ConversationRenameRequest,
     RetrievalRecord,
+    conversation_files,
 )
 from backend.api.files.model import StoredFile
 from backend.api.conversation.model import DeepResearchPlanResponse
@@ -39,10 +40,13 @@ service_logger = logger.bind(service="conversation-service")
 class ConversationService:
     NUMERIC_CITATION_REGEX = re.compile(r"\[(\d+)\](?!\()")
     SOURCES_SECTION_REGEX = re.compile(
-        r"(?:^|\n)((?:#{1,6}\s+)?(?:\d+(?:\.\d+)*\.?\s+)?(?:Sources|References):?\s*$)",
+        r"(?:^|\n)((?:#{1,6}\s+)?(?:\d+(?:\.\d+)*\.?\s+)?(?:Sources|References|Nguon|Nguồn|Tai lieu tham khao|Tài liệu tham khảo):?\s*$)",
         re.IGNORECASE | re.MULTILINE,
     )
-    SOURCES_LINE_REGEX = re.compile(r"^\s*\[(\d+)\]\s+", re.MULTILINE)
+    SOURCES_LINE_REGEX = re.compile(
+        r"^\s*(?:\[(\d+)\]|(\d+)\.)\s+",
+        re.MULTILINE,
+    )
 
     @staticmethod
     def _get_request_logger(request: Request | None = None, user_id: int | None = None):
@@ -76,7 +80,8 @@ class ConversationService:
             body = content[:section_start]
             sources_section = content[section_start:]
             available_labels = {
-                match.group(1) for match in cls.SOURCES_LINE_REGEX.finditer(sources_section)
+                match.group(1) or match.group(2)
+                for match in cls.SOURCES_LINE_REGEX.finditer(sources_section)
             }
         else:
             body = content
@@ -120,7 +125,11 @@ class ConversationService:
                 selectinload(Conversation.files),
                 selectinload(Conversation.messages),
             )
-            .filter(Conversation.id == conversation_id, Conversation.user_id == user_id)
+            .filter(
+                Conversation.id == conversation_id,
+                Conversation.user_id == user_id,
+                Conversation.deleted_at.is_(None),
+            )
             .first()
         )
         if not conversation:
@@ -142,7 +151,10 @@ class ConversationService:
                 selectinload(Conversation.files),
                 selectinload(Conversation.messages),
             )
-            .filter(Conversation.user_id == user_id)
+            .filter(
+                Conversation.user_id == user_id,
+                Conversation.deleted_at.is_(None),
+            )
         )
         if chat_type:
             query = query.filter(Conversation.chat_type == chat_type)
@@ -154,6 +166,37 @@ class ConversationService:
             len(conversations),
         )
         return conversations
+
+    @staticmethod
+    def _get_active_files_by_ids(
+        db_session: Session,
+        user_id: int,
+        file_ids: list[int],
+    ) -> list[StoredFile]:
+        if not file_ids:
+            return []
+
+        files = (
+            db_session.query(StoredFile)
+            .filter(
+                StoredFile.user_id == user_id,
+                StoredFile.deleted_at.is_(None),
+                StoredFile.id.in_(file_ids),
+            )
+            .all()
+        )
+        files_by_id = {file.id: file for file in files}
+        if len(files_by_id) != len(set(file_ids)):
+            raise InvalidRequestException(message=Message.MESSAGE_FILE_NOT_FOUND)
+
+        ordered_files: list[StoredFile] = []
+        seen_ids: set[int] = set()
+        for file_id in file_ids:
+            if file_id in seen_ids:
+                continue
+            ordered_files.append(files_by_id[file_id])
+            seen_ids.add(file_id)
+        return ordered_files
 
     def create_conversation(
         self,
@@ -178,15 +221,11 @@ class ConversationService:
         )
 
         if create_request.file_ids:
-            files = (
-                db_session.query(StoredFile)
-                .filter(
-                    StoredFile.user_id == user_id, StoredFile.id.in_(create_request.file_ids)
-                )
-                .all()
+            files = self._get_active_files_by_ids(
+                db_session,
+                user_id,
+                create_request.file_ids,
             )
-            if len(files) != len(set(create_request.file_ids)):
-                raise InvalidRequestException(message=Message.MESSAGE_FILE_NOT_FOUND)
             conversation.files = files
             request_logger.debug("Creating file conversation with file_count={}", len(files))
 
@@ -244,9 +283,11 @@ class ConversationService:
         conversation = self._get_user_conversation(
             db_session, user_id, conversation_id, request_logger
         )
-        db_session.delete(conversation)
+        now = get_utc_now()
+        conversation.deleted_at = now
+        conversation.updated_at = now
         db_session.commit()
-        request_logger.info("Deleted conversation")
+        request_logger.info("Soft deleted conversation")
         return {"message": Message.MESSAGE_CONVERSATION_DELETED_SUCCESSFULLY}
 
     def update_conversation_files(
@@ -264,24 +305,21 @@ class ConversationService:
         if conversation.chat_type != "file":
             raise InvalidRequestException(message=Message.MESSAGE_INVALID_REQUEST)
 
-        if not files_request.file_ids:
-            conversation.files = []
-            conversation.updated_at = get_utc_now()
-            db_session.commit()
-            db_session.refresh(conversation)
-            request_logger.info("Detached all files from conversation")
-            return self._get_user_conversation(
-                db_session, user_id, conversation_id, request_logger
+        current_file_ids = [file.id for file in conversation.files]
+        requested_file_ids = list(dict.fromkeys(files_request.file_ids))
+        missing_current_ids = [
+            file_id for file_id in current_file_ids if file_id not in requested_file_ids
+        ]
+        if missing_current_ids:
+            raise InvalidRequestException(
+                message="Files already attached to this conversation cannot be removed."
             )
 
-        files = (
-            db_session.query(StoredFile)
-            .filter(StoredFile.user_id == user_id, StoredFile.id.in_(files_request.file_ids))
-            .all()
+        files = self._get_active_files_by_ids(
+            db_session,
+            user_id,
+            requested_file_ids,
         )
-        if len(files) != len(set(files_request.file_ids)):
-            raise InvalidRequestException(message=Message.MESSAGE_FILE_NOT_FOUND)
-
         conversation.files = files
         conversation.updated_at = get_utc_now()
         db_session.commit()
@@ -341,6 +379,7 @@ class ConversationService:
         is_web_search_enabled: Optional[bool] = False,
         is_deep_research_enabled: Optional[bool] = False,
         is_generate_image_enabled: Optional[bool] = False,
+        route_preference: Optional[str] = "auto",
     ):
         request_logger = self._get_request_logger(request, user_id)
         conversation = self._get_user_conversation(
@@ -371,6 +410,7 @@ class ConversationService:
             is_web_search_enabled=is_web_search_enabled,
             is_deep_research_enabled=is_deep_research_enabled,
             is_generate_image_enabled=is_generate_image_enabled,
+            route_preference=route_preference or "auto",
             websearch_results=[],
             route="",
         )
@@ -473,6 +513,7 @@ class ConversationService:
         user_id: int,
         conversation_id: int,
         user_question: str,
+        file_ids: Optional[List[int]] = None,
     ):
         """Chat with uploaded files using RAG agent with evaluation loop."""
         request_logger = self._get_request_logger(request, user_id)
@@ -484,10 +525,18 @@ class ConversationService:
             raise InvalidRequestException(message=Message.MESSAGE_INVALID_REQUEST)
 
         # Get file IDs from conversation
-        file_ids = [file.id for file in conversation.files]
-        if not file_ids:
+        conversation_file_ids = [file.id for file in conversation.files]
+        if not conversation_file_ids:
             raise InvalidRequestException(
                 message="No files attached to this conversation. Please upload files first."
+            )
+        requested_file_ids = list(dict.fromkeys(file_ids or conversation_file_ids))
+        invalid_file_ids = [
+            file_id for file_id in requested_file_ids if file_id not in conversation_file_ids
+        ]
+        if invalid_file_ids:
+            raise InvalidRequestException(
+                message="One or more selected files do not belong to this conversation."
             )
 
         # Save user message
@@ -512,7 +561,7 @@ class ConversationService:
             memories=messages,
             user_id=user_id,
             conversation_id=conversation_id,
-            file_ids=file_ids,
+            file_ids=requested_file_ids,
         )
 
         full_response = ""

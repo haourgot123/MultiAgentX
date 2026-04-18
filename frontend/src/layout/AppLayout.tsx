@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Menu, FolderOpen, LogOut, User } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useAuthStore } from "@/store/auth-store"
+import { useAgentSkillsStore } from "@/store/agent-skills-store"
 import { useFileStore } from "@/store/file-store"
 import { UserProfile } from "@/components/user/UserProfile"
 import { cn } from "@/lib/utils"
@@ -38,6 +39,8 @@ export default function AppLayout() {
     const logout = useAuthStore((state) => state.logout)
     const connectIngestionSocket = useFileStore((state) => state.connectIngestionSocket)
     const disconnectIngestionSocket = useFileStore((state) => state.disconnectIngestionSocket)
+    const connectSandboxSocket = useAgentSkillsStore((state) => state.connectSandboxSocket)
+    const disconnectSandboxSocket = useAgentSkillsStore((state) => state.disconnectSandboxSocket)
 
     const handleLogout = async () => {
         try {
@@ -51,13 +54,22 @@ export default function AppLayout() {
     useEffect(() => {
         if (!accessToken) {
             disconnectIngestionSocket()
+            disconnectSandboxSocket()
             return
         }
         connectIngestionSocket()
+        connectSandboxSocket()
         return () => {
             disconnectIngestionSocket()
+            disconnectSandboxSocket()
         }
-    }, [accessToken, connectIngestionSocket, disconnectIngestionSocket])
+    }, [
+        accessToken,
+        connectIngestionSocket,
+        connectSandboxSocket,
+        disconnectIngestionSocket,
+        disconnectSandboxSocket,
+    ])
 
     useEffect(() => {
         if (typeof window === "undefined") {

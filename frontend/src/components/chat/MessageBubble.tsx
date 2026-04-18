@@ -21,7 +21,7 @@ interface Source {
     type: 'web' | 'citation'
 }
 
-const SOURCES_SECTION_HEADING_REGEX = /^(?:#{1,6}\s+)?(?:\d+(?:\.\d+)*\.?\s+)?(?:Sources|References)\s*:?$/im
+const SOURCES_SECTION_HEADING_REGEX = /^(?:#{1,6}\s+)?(?:\d+(?:\.\d+)*\.?\s+)?(?:Sources|References|Nguon|Nguồn|Tai lieu tham khao|Tài liệu tham khảo)\s*:?$/im
 
 function getFaviconUrl(href: string): string | null {
     try {
@@ -56,17 +56,21 @@ function parseCitationMap(content: string): Map<number, { url: string; title: st
     if (!sectionMatch || sectionMatch.index === undefined) return map
     
     const sectionContent = content.slice(sectionMatch.index)
-    // Match lines like: [1] [Title](url)  or  [1] Title - url  or  [1] url
-    const lineRegex = /^\s*\[(\d+)\]\s+(?:\[([^\]]+)\]\(([^)]+)\)|(.+))/gm
+    // Match lines like:
+    // [1] [Title](url)
+    // 1. [Title](url)
+    // [1] Title - url
+    // 1. Title - url
+    const lineRegex = /^\s*(?:\[(\d+)\]|(\d+)\.)\s+(?:\[([^\]]+)\]\(([^)]+)\)|(.+))/gm
     let m
     while ((m = lineRegex.exec(sectionContent)) !== null) {
-        const num = parseInt(m[1])
-        if (m[3]) {
-            // markdown link form: [1] [Title](url)
-            map.set(num, { url: m[3], title: m[2] || m[3] })
-        } else if (m[4]) {
-            // plain text form: [1] Some text (maybe a URL)
-            const rawText = m[4].trim()
+        const num = parseInt(m[1] || m[2])
+        if (m[4]) {
+            // markdown link form
+            map.set(num, { url: m[4], title: m[3] || m[4] })
+        } else if (m[5]) {
+            // plain text form
+            const rawText = m[5].trim()
             const urlMatch = rawText.match(/https?:\/\/\S+/)
             map.set(num, { url: urlMatch ? urlMatch[0] : '', title: rawText })
         }

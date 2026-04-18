@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse as FastAPIFileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse, RedirectResponse
 
@@ -54,13 +54,14 @@ def _to_skill_response(skill) -> SkillResponse:
     )
 
 
-def _to_sandbox_response(sandbox) -> SandboxResponse:
+def _to_sandbox_response(sandbox, viewer_user_id: int) -> SandboxResponse:
+    is_owned_by_viewer = sandbox.user_id == viewer_user_id and sandbox.status == "busy"
     return SandboxResponse(
         id=sandbox.id,
         sandbox_index=sandbox.sandbox_index,
         status=sandbox.status,
-        current_skill_id=sandbox.current_skill_id,
-        task_description=sandbox.task_description,
+        current_skill_id=sandbox.current_skill_id if is_owned_by_viewer else None,
+        task_description=sandbox.task_description if is_owned_by_viewer else None,
         progress=sandbox.progress,
         started_at=sandbox.started_at,
         completed_at=sandbox.completed_at,
@@ -147,7 +148,7 @@ def toggle_skill_selection(
 def list_sandboxes(request: Request, db_session: Session = Depends(get_db)):
     user_id = request.state.user_id
     sandboxes = sandbox_service.list_sandboxes(request, db_session, user_id)
-    return [_to_sandbox_response(sandbox) for sandbox in sandboxes]
+    return [_to_sandbox_response(sandbox, user_id) for sandbox in sandboxes]
 
 
 @router.get("/sandboxes/{sandbox_index}/files", status_code=status.HTTP_200_OK)
@@ -157,7 +158,7 @@ def list_sandbox_files(
     db_session: Session = Depends(get_db),
 ):
     user_id = request.state.user_id
-    files = sandbox_service.docker_manager.list_output_files(user_id, sandbox_index)
+    files = sandbox_service.list_sandbox_files(db_session, user_id, sandbox_index)
     return {"files": files}
 
 
@@ -175,7 +176,9 @@ def preview_sandbox_file(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"message": "Invalid filename"}
         )
-    file_path = sandbox_service.docker_manager.get_output_file(user_id, sandbox_index, safe_name)
+    file_path = sandbox_service.get_sandbox_output_file(
+        db_session, user_id, sandbox_index, safe_name
+    )
     if not file_path:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -221,7 +224,9 @@ def download_sandbox_file(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"message": "Invalid filename"}
         )
-    file_path = sandbox_service.docker_manager.get_output_file(user_id, sandbox_index, safe_name)
+    file_path = sandbox_service.get_sandbox_output_file(
+        db_session, user_id, sandbox_index, safe_name
+    )
     if not file_path:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,

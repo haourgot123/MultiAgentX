@@ -118,7 +118,7 @@ class QueryTransformNode(Runnable):
             "status",
             {
                 "step": "rag_query_transform",
-                "message": f"Optimized query ...'",
+                "message": f"Optimized query ...",
             },
         )
 

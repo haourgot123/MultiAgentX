@@ -15,6 +15,7 @@ class GeneralAgentState(BaseModel):
     is_web_search_enabled: bool
     is_deep_research_enabled: bool
     is_generate_image_enabled: bool
+    route_preference: str = "auto"
     websearch_results: List[SearchResults] = []
     route: str = ""
     output: str = ""

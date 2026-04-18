@@ -7,6 +7,7 @@ from typing import Sequence
 
 from fastapi import UploadFile
 from loguru import logger
+from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from fastapi import Request
@@ -67,7 +68,11 @@ class FileService:
     ) -> StoredFile:
         stored_file = (
             db_session.query(StoredFile)
-            .filter(StoredFile.id == file_id, StoredFile.user_id == user_id)
+            .filter(
+                StoredFile.id == file_id,
+                StoredFile.user_id == user_id,
+                StoredFile.deleted_at.is_(None),
+            )
             .first()
         )
         if not stored_file:
@@ -79,7 +84,10 @@ class FileService:
         request_logger = self._get_request_logger(request, user_id)
         files = (
             db_session.query(StoredFile)
-            .filter(StoredFile.user_id == user_id)
+            .filter(
+                StoredFile.user_id == user_id,
+                StoredFile.deleted_at.is_(None),
+            )
             .order_by(StoredFile.created_at.desc())
             .all()
         )
@@ -287,11 +295,34 @@ class FileService:
     ) -> dict:
         request_logger = self._get_request_logger(request, user_id)
         stored_file = self._get_user_file(db_session, user_id, file_id, request_logger)
+        from backend.api.conversation.model import Conversation, conversation_files
+
+        attached_conversation_count = (
+            db_session.query(func.count(Conversation.id))
+            .join(
+                conversation_files,
+                conversation_files.c.conversation_id == Conversation.id,
+            )
+            .filter(
+                Conversation.user_id == user_id,
+                Conversation.chat_type == "file",
+                Conversation.deleted_at.is_(None),
+                conversation_files.c.file_id == stored_file.id,
+            )
+            .scalar()
+        )
+        if attached_conversation_count:
+            raise InvalidRequestException(
+                message="This file is attached to an active conversation and cannot be deleted."
+            )
+
         blob_path = stored_file.storage_path
         deleting_file_id = stored_file.id
-        request_logger.info("Deleting file and vectors")
+        now = get_utc_now()
+        request_logger.info("Soft deleting file and vectors")
 
-        db_session.delete(stored_file)
+        stored_file.deleted_at = now
+        stored_file.updated_at = now
         db_session.commit()
 
         try:
@@ -319,7 +350,7 @@ class FileService:
                 e,
             )
 
-        request_logger.info("Deleted file successfully")
+        request_logger.info("Soft deleted file successfully")
 
         return {"message": Message.MESSAGE_FILE_DELETED_SUCCESSFULLY}
 

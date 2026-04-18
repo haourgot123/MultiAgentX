@@ -1,7 +1,8 @@
 import { ChatInterface } from "@/components/chat/ChatInterface"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { FileText, Download, Trash2, RefreshCw, ChevronDown, FolderOpen, Upload, X, ChevronUp, ScanSearch, Check } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { FileText, Download, RefreshCw, ChevronDown, FolderOpen, Upload, X, ChevronUp, ScanSearch, Check } from "lucide-react"
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -25,6 +26,19 @@ import { toast } from "sonner"
 
 const PdfViewer = lazy(() => import("@/components/pdf/PdfViewer").then((module) => ({ default: module.PdfViewer })))
 
+function mapRetrievalRecordToCitation(
+    record: RetrievalRecordResponse,
+    fallback: FileCitation
+): FileCitation {
+    return {
+        citation_label: record.citation_label,
+        file_id: record.file_id,
+        file_name: record.file_name || fallback.file_name,
+        page_no: record.page_no,
+        chunk_index: record.chunk_index,
+    }
+}
+
 export default function ChatWithFilePage() {
     const [searchParams] = useSearchParams()
     const fileIdFromUrl = searchParams.get('fileId')
@@ -44,6 +58,7 @@ export default function ChatWithFilePage() {
     const [showLibraryDialog, setShowLibraryDialog] = useState(false)
     const [availableFiles, setAvailableFiles] = useState<FileItem[]>([])
     const [pendingLibraryFiles, setPendingLibraryFiles] = useState<FileItem[]>([])
+    const [selectedChatFileIds, setSelectedChatFileIds] = useState<number[]>([])
     const [hasStartedChat, setHasStartedChat] = useState(false)
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
     const [showAllFiles, setShowAllFiles] = useState(false)
@@ -66,6 +81,31 @@ export default function ChatWithFilePage() {
     const selectedFileId = selectedFile?.id ?? null
     const selectedFileType = selectedFile?.type ?? ''
     const selectedFileName = selectedFile?.name ?? ''
+    const selectedChatFileIdSet = useMemo(
+        () => new Set(selectedChatFileIds),
+        [selectedChatFileIds]
+    )
+    const conversationFileOrder = useMemo(
+        () => new Map(availableFiles.map((file, index) => [file.id, index + 1])),
+        [availableFiles]
+    )
+    const orderedSelectedChatFiles = useMemo(
+        () => availableFiles.filter((file) => selectedChatFileIdSet.has(file.id)),
+        [availableFiles, selectedChatFileIdSet]
+    )
+    const hasCompletedSelectedChatFile = orderedSelectedChatFiles.some(
+        (file) => file.ingestionStatus === 'completed'
+    )
+
+    const orderFilesByIds = useCallback(
+        (orderedIds: number[], sourceFiles: FileItem[]) => {
+            const fileMap = new Map(sourceFiles.map((file) => [file.id, file]))
+            return orderedIds
+                .map((fileId) => fileMap.get(fileId))
+                .filter((file): file is FileItem => Boolean(file))
+        },
+        []
+    )
 
     const highlights = useMemo(() => {
         const filtered = activeCitationLabel
@@ -79,35 +119,46 @@ export default function ChatWithFilePage() {
     }, [retrievalRecords, activeCitationLabel, selectedFileId])
 
     const loadRetrievalRecords = useCallback(async (messageId: number) => {
-        if (!currentChatId) return
+        if (!currentChatId) return []
         try {
             const records = await fetchRetrievalRecords(currentChatId, messageId)
             setRetrievalRecords(records)
+            return records
         } catch {
             // Ignore retrieval fetch errors
+            return []
         }
     }, [currentChatId])
 
-    const handleFileCitationClick = useCallback((citation: FileCitation, messageId?: number) => {
-        setActiveCitation(citation)
-        setActiveCitationLabel(citation.citation_label)
+    const handleFileCitationClick = useCallback(async (citation: FileCitation, messageId?: number) => {
+        let resolvedCitation = citation
 
-        const pageNo = citation.page_no ?? undefined
+        if (messageId) {
+            const records = await loadRetrievalRecords(messageId)
+            const matchedRecord = records.find(
+                (record) => record.citation_label === citation.citation_label
+            )
+
+            if (matchedRecord) {
+                resolvedCitation = mapRetrievalRecordToCitation(matchedRecord, citation)
+            }
+        }
+
+        setActiveCitation(resolvedCitation)
+        setActiveCitationLabel(resolvedCitation.citation_label)
+
+        const pageNo = resolvedCitation.page_no ?? undefined
         setTargetPage(pageNo)
         // Increment scroll trigger to force PdfViewer to re-scroll,
         // even when clicking the same citation repeatedly
         scrollTriggerRef.current += 1
         setTargetHighlightIndex(scrollTriggerRef.current)
 
-        if (citation.file_id) {
-            const citationFile = availableFiles.find(f => f.id === citation.file_id)
+        if (resolvedCitation.file_id) {
+            const citationFile = availableFiles.find(f => f.id === resolvedCitation.file_id)
             if (citationFile && citationFile.id !== selectedFile?.id) {
                 setSelectedFile(citationFile)
             }
-        }
-
-        if (messageId) {
-            void loadRetrievalRecords(messageId)
         }
     }, [availableFiles, selectedFile, loadRetrievalRecords])
 
@@ -147,9 +198,7 @@ export default function ChatWithFilePage() {
         const currentSession = chatSessions.find((session) => session.id === currentChatId)
 
         if (currentSession?.chatType === 'file') {
-            const attachedFiles = files.filter((file) =>
-                currentSession.fileIds.includes(file.id)
-            )
+            const attachedFiles = orderFilesByIds(currentSession.fileIds, files)
             const canStartChat = attachedFiles.length > 0
             setHasStartedChat(canStartChat)
             setAvailableFiles(attachedFiles)
@@ -158,6 +207,21 @@ export default function ChatWithFilePage() {
                 attachedFiles[0] ||
                 null
             )
+            setSelectedChatFileIds((currentSelectedIds) => {
+                const attachedFileIdSet = new Set(attachedFiles.map((file) => file.id))
+                const completedAttachedIds = attachedFiles
+                    .filter((file) => file.ingestionStatus === 'completed')
+                    .map((file) => file.id)
+                const nextSelectedIds = currentSelectedIds.filter((fileId) =>
+                    attachedFileIdSet.has(fileId)
+                )
+
+                if (nextSelectedIds.length > 0) {
+                    return nextSelectedIds
+                }
+
+                return completedAttachedIds
+            })
             const hasConversationLoaded = messagesByChat[currentChatId] !== undefined
             if (canStartChat && !hasConversationLoaded) {
                 void loadConversation(currentChatId)
@@ -172,6 +236,7 @@ export default function ChatWithFilePage() {
             setHasStartedChat(false)
             setAvailableFiles([])
             setSelectedFile(null)
+            setSelectedChatFileIds([])
         }
     }, [
         currentChatId,
@@ -181,6 +246,7 @@ export default function ChatWithFilePage() {
         fileIdFromUrl,
         isStartingChat,
         loadConversation,
+        orderFilesByIds,
     ])
 
     useEffect(() => {
@@ -188,6 +254,7 @@ export default function ChatWithFilePage() {
             setHasStartedChat(false)
             setAvailableFiles([])
             setSelectedFile(null)
+            setSelectedChatFileIds([])
         }
     }, [currentChatId, fileIdFromUrl, isStartingChat])
 
@@ -219,6 +286,9 @@ export default function ChatWithFilePage() {
             }
             return fileMap.get(previousSelectedFile.id) || null
         })
+        setSelectedChatFileIds((currentSelectedIds) =>
+            currentSelectedIds.filter((fileId) => fileMap.has(fileId))
+        )
     }, [files])
 
     useEffect(() => {
@@ -228,6 +298,7 @@ export default function ChatWithFilePage() {
         setHasStartedChat(false)
         setAvailableFiles([])
         setSelectedFile(null)
+        setSelectedChatFileIds([])
         setShowAllFiles(false)
         setUploadedFiles([])
         setShowUploadDialog(false)
@@ -360,6 +431,20 @@ export default function ChatWithFilePage() {
         }
     }
 
+    const toggleChatFileSelection = (file: FileItem) => {
+        if (file.ingestionStatus !== 'completed') {
+            return
+        }
+
+        setSelectedChatFileIds((currentSelectedIds) => {
+            const exists = currentSelectedIds.includes(file.id)
+            if (exists) {
+                return currentSelectedIds.filter((fileId) => fileId !== file.id)
+            }
+            return [...currentSelectedIds, file.id]
+        })
+    }
+
     const handleAvailableFileToggle = (file: FileItem) => {
         const exists = availableFiles.some((item) => item.id === file.id)
         const nextFiles = exists
@@ -379,18 +464,18 @@ export default function ChatWithFilePage() {
     }
 
     const openLibraryDialog = () => {
-        setPendingLibraryFiles(availableFiles)
+        setPendingLibraryFiles(hasStartedChat ? [] : availableFiles)
         setShowLibraryDialog(true)
     }
 
     const handleLibraryDialogChange = (open: boolean) => {
         if (open) {
-            setPendingLibraryFiles(availableFiles)
+            setPendingLibraryFiles(hasStartedChat ? [] : availableFiles)
             setShowLibraryDialog(true)
             return
         }
 
-        setPendingLibraryFiles(availableFiles)
+        setPendingLibraryFiles(hasStartedChat ? [] : availableFiles)
         setShowLibraryDialog(false)
     }
 
@@ -404,14 +489,16 @@ export default function ChatWithFilePage() {
     }
 
     const handleLibraryCancel = () => {
-        setPendingLibraryFiles(availableFiles)
+        setPendingLibraryFiles(hasStartedChat ? [] : availableFiles)
         setShowLibraryDialog(false)
     }
 
     const handleLibraryConfirm = async () => {
         const previousFiles = availableFiles
         const previousSelectedFile = selectedFile
-        const nextFiles = pendingLibraryFiles
+        const nextFiles = hasStartedChat
+            ? [...availableFiles, ...pendingLibraryFiles.filter((file) => !availableFiles.some((item) => item.id === file.id))]
+            : pendingLibraryFiles
 
         setAvailableFiles(nextFiles)
         setSelectedFile((currentSelectedFile) => {
@@ -428,6 +515,15 @@ export default function ChatWithFilePage() {
 
         try {
             await syncConversationFiles(nextFiles)
+            if (hasStartedChat) {
+                const newlyAddedCompletedIds = pendingLibraryFiles
+                    .filter((file) => file.ingestionStatus === 'completed')
+                    .map((file) => file.id)
+                setSelectedChatFileIds((currentSelectedIds) => [
+                    ...currentSelectedIds,
+                    ...newlyAddedCompletedIds.filter((fileId) => !currentSelectedIds.includes(fileId)),
+                ])
+            }
             setShowLibraryDialog(false)
         } catch (error) {
             setAvailableFiles(previousFiles)
@@ -481,6 +577,15 @@ export default function ChatWithFilePage() {
                 setAvailableFiles(nextFiles)
                 if (!selectedFile && nextFiles.length > 0) {
                     setSelectedFile(nextFiles[0])
+                }
+                const uploadedCompletedIds = createdFiles
+                    .filter((file) => file.ingestionStatus === 'completed')
+                    .map((file) => file.id)
+                if (uploadedCompletedIds.length > 0) {
+                    setSelectedChatFileIds((currentSelectedIds) => [
+                        ...currentSelectedIds,
+                        ...uploadedCompletedIds.filter((fileId) => !currentSelectedIds.includes(fileId)),
+                    ])
                 }
                 await syncConversationFiles(nextFiles)
                 toast.success(`Uploaded ${createdFiles.length} file${createdFiles.length > 1 ? 's' : ''}`)
@@ -539,9 +644,7 @@ export default function ChatWithFilePage() {
             return
         }
 
-        const attachedFiles = latestStoreState.files.filter((file) =>
-            activeSession.fileIds.includes(file.id)
-        )
+        const attachedFiles = orderFilesByIds(activeSession.fileIds, latestStoreState.files)
         setAvailableFiles(attachedFiles)
         setSelectedFile(
             attachedFiles.find((file) => file.id === selectedFile?.id) ||
@@ -552,27 +655,12 @@ export default function ChatWithFilePage() {
         toast.success('File list refreshed')
     }
 
-    const handleRemoveSelectedFromConversation = async () => {
-        if (!selectedFile) {
-            return
-        }
-        const previousFiles = availableFiles
-        const previousSelectedFile = selectedFile
-        const nextFiles = availableFiles.filter((file) => file.id !== selectedFile.id)
-        setAvailableFiles(nextFiles)
-        setSelectedFile(nextFiles[0] || null)
-        try {
-            await syncConversationFiles(nextFiles)
-            toast.success('Removed file from this conversation')
-        } catch (error) {
-            setAvailableFiles(previousFiles)
-            setSelectedFile(previousSelectedFile)
-            toast.error(
-                error instanceof Error
-                    ? error.message
-                    : 'Failed to update files for this conversation'
-            )
-        }
+    const handlePreviewFileSelect = (file: FileItem) => {
+        setSelectedFile(file)
+        setActiveCitation(null)
+        setActiveCitationLabel(null)
+        setTargetPage(undefined)
+        setTargetHighlightIndex(undefined)
     }
 
     const getFileTypeDisplay = (type: string) => {
@@ -693,6 +781,9 @@ export default function ChatWithFilePage() {
                                 <div className="space-y-2 max-h-64 overflow-y-auto">
                                     {availableFiles.map((file) => (
                                         <div key={file.id} className="flex items-center gap-3 p-3 bg-surface rounded-lg border border-border">
+                                            <div className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-primary/10 px-2 text-xs font-semibold text-primary">
+                                                {availableFiles.findIndex((item) => item.id === file.id) + 1}
+                                            </div>
                                             <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${getFileTypeColor(file.type)}`}>
                                                 <span className="text-xs font-bold">{getFileTypeDisplay(file.type)}</span>
                                             </div>
@@ -979,63 +1070,122 @@ export default function ChatWithFilePage() {
             {/* Left Panel: Chat */}
             <div className="w-1/2 h-full border-r border-border flex flex-col bg-white">
                 <div className="flex-1 overflow-hidden">
-                    <ChatInterface onFileCitationClick={handleFileCitationClick} />
+                    <ChatInterface
+                        onFileCitationClick={handleFileCitationClick}
+                        selectedFileIds={selectedChatFileIds}
+                    />
                 </div>
             </div>
 
             {/* Right Panel: File Viewer */}
             <div className="w-1/2 h-full flex flex-col bg-surface">
                 {/* Sticky Header with File Selector */}
-                <div className="h-14 border-b border-border flex items-center px-4 justify-between bg-white sticky top-0 z-10 shadow-sm">
-                    <div className="flex items-center gap-3">
+                <div className="min-h-14 border-b border-border flex items-center px-4 py-2 justify-between bg-white sticky top-0 z-10 shadow-sm gap-3">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                                <Button type="button" variant="outline" className="gap-2 border-border bg-white hover:bg-surface rounded-lg">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="h-auto min-h-10 max-w-[30rem] flex-1 justify-between gap-3 border-border bg-white px-3 py-2 hover:bg-surface rounded-lg"
+                                >
                                     {selectedFile ? (
                                         <>
-                                            <div className={`h-6 w-6 rounded-md flex items-center justify-center ${getFileTypeColor(selectedFile.type)}`}>
-                                                <span className="text-[10px] font-bold">{getFileTypeDisplay(selectedFile.type)}</span>
-                                            </div>
-                                            <div className="text-left">
-                                                <div className="font-medium text-sm truncate max-w-[150px]">{selectedFile.name}</div>
-                                                <div className={`text-[10px] ${getIngestionTextClass(selectedFile)}`}>
-                                                    {getIngestionLabel(selectedFile)}
+                                            <div className="flex min-w-0 items-center gap-3">
+                                                <div className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-primary/10 px-2 text-xs font-semibold text-primary">
+                                                    {conversationFileOrder.get(selectedFile.id) || 0}
                                                 </div>
+                                                <div className={`h-7 w-7 rounded-md flex items-center justify-center ${getFileTypeColor(selectedFile.type)}`}>
+                                                    <span className="text-[10px] font-bold">{getFileTypeDisplay(selectedFile.type)}</span>
+                                                </div>
+                                                <div className="min-w-0 text-left">
+                                                    <div className="truncate text-sm font-medium">{selectedFile.name}</div>
+                                                    <div className={`text-[10px] ${getIngestionTextClass(selectedFile)}`}>
+                                                        {getIngestionLabel(selectedFile)}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex shrink-0 items-center gap-2">
+                                                <span className="inline-flex items-center justify-center rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">
+                                                    {selectedChatFileIds.length}/{availableFiles.length} chat
+                                                </span>
+                                                <ChevronDown className="h-4 w-4 text-text-muted" />
                                             </div>
                                         </>
                                     ) : (
-                                        <span className="text-sm text-text-muted">No file selected</span>
+                                        <>
+                                            <span className="text-sm text-text-muted">No file selected</span>
+                                            <ChevronDown className="h-4 w-4 text-text-muted" />
+                                        </>
                                     )}
-                                    <ChevronDown className="h-4 w-4 ml-2" />
                                 </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start" className="w-64 bg-white border-border shadow-lg rounded-lg">
-                                {availableFiles.map((file) => (
-                                    <DropdownMenuItem
-                                        key={file.id}
-                                        onClick={() => setSelectedFile(file)}
-                                        className="flex items-center gap-3 p-3 cursor-pointer rounded-md"
-                                    >
-                                        <div className={`h-8 w-8 rounded-md flex items-center justify-center shrink-0 ${getFileTypeColor(file.type)}`}>
-                                            <span className="text-xs font-bold">{getFileTypeDisplay(file.type)}</span>
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="font-medium text-sm truncate">{file.name}</div>
-                                            <div className="text-xs text-text-muted">{formatSize(file.size)}</div>
-                                            <div className={`text-[11px] ${getIngestionTextClass(file)}`}>
-                                                {getIngestionLabel(file)}
+                            <DropdownMenuContent align="start" className="w-[28rem] bg-white border-border shadow-lg rounded-xl p-2">
+                                <div className="px-2 pb-2">
+                                    <div className="text-sm font-medium text-text-primary">Conversation files</div>
+                                    <p className="mt-1 text-xs text-text-muted">
+                                        Click a file to preview it. Tick the checkbox to include it in the next chat message.
+                                    </p>
+                                </div>
+                                <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+                                    {availableFiles.map((file) => {
+                                        const isPreviewFile = selectedFile?.id === file.id
+                                        const isSelectedForChat = selectedChatFileIds.includes(file.id)
+                                        const isSelectableForChat = file.ingestionStatus === 'completed'
+
+                                        return (
+                                            <div
+                                                key={file.id}
+                                                className={`flex items-center gap-2 rounded-lg border p-2 ${isPreviewFile ? 'border-primary bg-primary/5' : 'border-border/70 bg-white'}`}
+                                            >
+                                                <button
+                                                    type="button"
+                                                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                                                    onClick={() => handlePreviewFileSelect(file)}
+                                                >
+                                                    <div className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-primary/10 px-2 text-xs font-semibold text-primary">
+                                                        {conversationFileOrder.get(file.id) || 0}
+                                                    </div>
+                                                    <div className={`h-8 w-8 rounded-md flex items-center justify-center shrink-0 ${getFileTypeColor(file.type)}`}>
+                                                        <span className="text-xs font-bold">{getFileTypeDisplay(file.type)}</span>
+                                                    </div>
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="truncate text-sm font-medium">{file.name}</div>
+                                                        <div className="text-xs text-text-muted">{formatSize(file.size)}</div>
+                                                        <div className={`text-[11px] ${getIngestionTextClass(file)}`}>
+                                                            {getIngestionLabel(file)}
+                                                        </div>
+                                                    </div>
+                                                    {isPreviewFile && (
+                                                        <span className="shrink-0 rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">
+                                                            Preview
+                                                        </span>
+                                                    )}
+                                                </button>
+                                                <div
+                                                    className={`flex shrink-0 items-center gap-2 rounded-md border px-2 py-2 text-xs font-medium ${isSelectableForChat ? 'border-border bg-surface text-text-primary' : 'border-border/60 bg-slate-50 text-text-muted'}`}
+                                                >
+                                                    <Checkbox
+                                                        aria-label={`Use ${file.name} in chat`}
+                                                        checked={isSelectedForChat}
+                                                        disabled={!isSelectableForChat}
+                                                        className="rounded-none border-2"
+                                                        onCheckedChange={() => toggleChatFileSelection(file)}
+                                                    />
+                                                    <span>{isSelectableForChat ? 'Use in chat' : 'Processing'}</span>
+                                                </div>
                                             </div>
-                                        </div>
-                                    </DropdownMenuItem>
-                                ))}
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                    className="cursor-pointer rounded-md text-primary focus:text-primary font-medium"
-                                    onClick={openLibraryDialog}
-                                >
-                                    <FolderOpen className="mr-2 h-4 w-4" />
-                                    Select from Library
-                                </DropdownMenuItem>
+                                        )
+                                    })}
+                                </div>
+                                {!hasCompletedSelectedChatFile && (
+                                    <>
+                                        <DropdownMenuSeparator />
+                                        <p className="px-2 py-1 text-xs text-amber-600">
+                                            Select at least one completed file to enable chat.
+                                        </p>
+                                    </>
+                                )}
                             </DropdownMenuContent>
                         </DropdownMenu>
                     </div>
@@ -1059,16 +1209,35 @@ export default function ChatWithFilePage() {
                         >
                             <RefreshCw className="h-4 w-4" />
                         </Button>
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-red-600 hover:text-red-700 rounded-lg"
-                            onClick={() => void handleRemoveSelectedFromConversation()}
-                            disabled={!selectedFile}
-                        >
-                            <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    className="h-8 rounded-lg px-3"
+                                >
+                                    <FolderOpen className="mr-2 h-4 w-4" />
+                                    Add files
+                                    <ChevronDown className="ml-2 h-4 w-4" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-56 bg-white border-border shadow-lg rounded-lg">
+                                <DropdownMenuItem
+                                    className="cursor-pointer rounded-md"
+                                    onClick={() => setShowUploadDialog(true)}
+                                >
+                                    <Upload className="mr-2 h-4 w-4" />
+                                    Upload files
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                    className="cursor-pointer rounded-md"
+                                    onClick={openLibraryDialog}
+                                >
+                                    <FolderOpen className="mr-2 h-4 w-4" />
+                                    Select from library
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
                     </div>
                 </div>
 
@@ -1198,15 +1367,24 @@ export default function ChatWithFilePage() {
                         ) : (
                             <div className="grid gap-2">
                                 {sortedFiles.map((file) => {
-                                    const isSelected = pendingLibraryFiles.some(f => f.id === file.id)
+                                    const isAttached = hasStartedChat && availableFiles.some((item) => item.id === file.id)
+                                    const isSelected = hasStartedChat
+                                        ? pendingLibraryFiles.some((item) => item.id === file.id)
+                                        : pendingLibraryFiles.some((item) => item.id === file.id)
                                     return (
                                         <Button
                                             key={file.id}
                                             type="button"
                                             variant="outline"
                                             aria-pressed={isSelected}
-                                            className={`w-full justify-start h-auto p-3 rounded-lg hover:bg-primary/10 hover:border-primary transition-colors ${isSelected ? 'bg-primary/10 border-primary ring-1 ring-primary/30' : ''}`}
-                                            onClick={() => handleLibraryFileToggle(file)}
+                                            className={`w-full justify-start h-auto p-3 rounded-lg transition-colors ${isSelected ? 'bg-primary/10 border-primary ring-1 ring-primary/30' : ''}`}
+                                            onClick={() => {
+                                                if (isAttached) {
+                                                    return
+                                                }
+                                                handleLibraryFileToggle(file)
+                                            }}
+                                            disabled={isAttached}
                                         >
                                             <div className="flex items-center gap-3 w-full">
                                                 <div className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 ${getFileTypeColor(file.type)}`}>
@@ -1221,7 +1399,11 @@ export default function ChatWithFilePage() {
                                                         {getIngestionLabel(file)}
                                                     </div>
                                                 </div>
-                                                {isSelected && (
+                                                {isAttached ? (
+                                                    <div className="inline-flex shrink-0 items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
+                                                        Attached
+                                                    </div>
+                                                ) : isSelected && (
                                                     <div className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
                                                         <Check className="h-3.5 w-3.5" />
                                                         Selected
@@ -1248,7 +1430,7 @@ export default function ChatWithFilePage() {
                             className="bg-primary hover:bg-primary-hover text-white rounded-lg"
                             onClick={() => void handleLibraryConfirm()}
                         >
-                            Done
+                            {hasStartedChat ? 'Add selected files' : 'Done'}
                         </Button>
                     </div>
                 </DialogContent>

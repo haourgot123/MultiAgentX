@@ -140,6 +140,16 @@ class SocketIOManager:
             room=self._room_for_user(user_id),
         )
 
+    async def emit_sandbox_status(self, *, user_id: int, payload: dict[str, Any]) -> None:
+        await self.sio.emit(
+            "sandbox_status",
+            payload,
+            room=self._room_for_user(user_id),
+        )
+
+    async def emit_global_sandbox_status(self, *, payload: dict[str, Any]) -> None:
+        await self.sio.emit("sandbox_status", payload)
+
     def emit_ingestion_status_sync(self, *, user_id: int, payload: dict[str, Any]) -> None:
         loop = self._resolve_loop()
         if loop:
@@ -169,6 +179,68 @@ class SocketIOManager:
                 "Unable to emit ingestion socket event without running loop user_id={} file_id={}: {}",
                 user_id,
                 payload.get("file_id"),
+                exc,
+            )
+
+    def emit_sandbox_status_sync(self, *, user_id: int, payload: dict[str, Any]) -> None:
+        loop = self._resolve_loop()
+        if loop:
+            future = asyncio.run_coroutine_threadsafe(
+                self.emit_sandbox_status(user_id=user_id, payload=payload),
+                loop,
+            )
+
+            def _on_done(task_future):
+                try:
+                    task_future.result()
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to emit sandbox socket event for user_id={} sandbox_id={}: {}",
+                        user_id,
+                        payload.get("id"),
+                        exc,
+                    )
+
+            future.add_done_callback(_on_done)
+            return
+
+        try:
+            asyncio.run(self.emit_sandbox_status(user_id=user_id, payload=payload))
+        except Exception as exc:
+            logger.warning(
+                "Unable to emit sandbox socket event without running loop user_id={} sandbox_id={}: {}",
+                user_id,
+                payload.get("id"),
+                exc,
+            )
+
+    def emit_global_sandbox_status_sync(self, *, payload: dict[str, Any]) -> None:
+        loop = self._resolve_loop()
+        if loop:
+            future = asyncio.run_coroutine_threadsafe(
+                self.emit_global_sandbox_status(payload=payload),
+                loop,
+            )
+
+            def _on_done(task_future):
+                try:
+                    task_future.result()
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to emit global sandbox socket event for sandbox_id={}: {}",
+                        payload.get("id"),
+                        exc,
+                    )
+
+            future.add_done_callback(_on_done)
+            return
+
+        try:
+            asyncio.run(self.emit_global_sandbox_status(payload=payload))
+        except Exception as exc:
+            logger.warning(
+                "Unable to emit global sandbox socket event without running loop sandbox_id={}: {}",
+                payload.get("id"),
                 exc,
             )
 

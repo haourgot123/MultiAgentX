@@ -574,6 +574,122 @@ describe('ChatInterface', () => {
         HTMLElement.prototype.scrollIntoView = originalScrollIntoView
     })
 
+    it('does not show Processing while a file-chat assistant message is already streaming', () => {
+        useChatStore.setState({
+            currentChatId: 18,
+            loadingChatId: 18,
+            isLoading: true,
+            statusSteps: [],
+            chatSessions: [
+                {
+                    id: 18,
+                    title: 'File Chat Streaming',
+                    createdAt: Date.parse('2026-04-15T10:00:00Z'),
+                    updatedAt: Date.parse('2026-04-15T10:00:00Z'),
+                    chatType: 'file',
+                    fileIds: [52],
+                    messageCount: 2,
+                },
+            ],
+            messagesByChat: {
+                18: [
+                    {
+                        id: 1,
+                        role: 'user',
+                        content: 'Summarize this file',
+                        timestamp: Date.parse('2026-04-15T10:00:00Z'),
+                    },
+                    {
+                        id: 2,
+                        role: 'assistant',
+                        content: 'This document describes',
+                        timestamp: Date.parse('2026-04-15T10:00:01Z'),
+                    },
+                ],
+            },
+        })
+
+        useFileStore.setState({
+            files: [
+                {
+                    id: 52,
+                    name: 'ready.pdf',
+                    type: 'application/pdf',
+                    size: 1024,
+                    uploadedAt: Date.parse('2026-04-15T10:00:00Z'),
+                    sasUrl: null,
+                    ingestionStatus: 'completed',
+                    ingestionError: null,
+                    ingestedChunks: 5,
+                    ingestedAt: Date.parse('2026-04-15T10:05:00Z'),
+                    ingestionStage: 'completed',
+                    ingestionProgress: 100,
+                },
+            ],
+            isLoading: false,
+            isUploading: false,
+        })
+
+        render(
+            <MemoryRouter initialEntries={['/chat-file']}>
+                <ChatInterface />
+            </MemoryRouter>
+        )
+
+        expect(screen.getByText('This document describes')).toBeInTheDocument()
+        expect(screen.queryByText('Processing...')).not.toBeInTheDocument()
+    })
+
+    it('shows only the latest progress steps instead of the full status list', () => {
+        useChatStore.setState({
+            currentChatId: 19,
+            loadingChatId: 19,
+            isLoading: true,
+            statusSteps: [
+                'Optimizing query for document search...',
+                'Optimized query ...',
+                'Searching documents with multiple queries...',
+                'Found relevant passages ...',
+                'Organizing retrieved passages with citations...',
+                'Evaluating relevance of retrieved passages ...',
+                'Context is relevant. Generating answer...',
+            ],
+            chatSessions: [
+                {
+                    id: 19,
+                    title: 'Progress Chat',
+                    createdAt: Date.parse('2026-04-15T10:00:00Z'),
+                    updatedAt: Date.parse('2026-04-15T10:00:00Z'),
+                    chatType: 'normal',
+                    fileIds: [],
+                    messageCount: 1,
+                },
+            ],
+            messagesByChat: {
+                19: [
+                    {
+                        id: 1,
+                        role: 'user',
+                        content: 'Summarize these files',
+                        timestamp: Date.parse('2026-04-15T10:00:00Z'),
+                    },
+                ],
+            },
+        })
+
+        render(
+            <MemoryRouter initialEntries={['/']}>
+                <ChatInterface />
+            </MemoryRouter>
+        )
+
+        expect(screen.queryByText('Optimizing query for document search...')).not.toBeInTheDocument()
+        expect(screen.queryByText('Found relevant passages ...')).not.toBeInTheDocument()
+        expect(screen.getByText('Organizing retrieved passages with citations...')).toBeInTheDocument()
+        expect(screen.getByText('Evaluating relevance of retrieved passages ...')).toBeInTheDocument()
+        expect(screen.getByText('Context is relevant. Generating answer...')).toBeInTheDocument()
+    })
+
     it('sends a normal chat message through the store', async () => {
         const user = userEvent.setup()
         const streamChatMock = vi
@@ -616,9 +732,10 @@ describe('ChatInterface', () => {
             },
             'normal',
             {
-                is_web_search_enabled: false,
+                is_web_search_enabled: true,
                 is_deep_research_enabled: false,
-                is_generate_image_enabled: false,
+                is_generate_image_enabled: true,
+                route_preference: 'auto',
             }
         )
         expect(input).toHaveValue('')

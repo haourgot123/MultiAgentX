@@ -147,4 +147,50 @@ describe('MessageBubble', () => {
         await user.hover(citationBadge)
         expect((await screen.findAllByText('https://finance.yahoo.com')).length).toBeGreaterThan(0)
     })
+
+    it('resolves citations when the references section uses ordered-list numbering', async () => {
+        const user = userEvent.setup()
+
+        render(
+            <MessageBubble
+                message={{
+                    id: 8,
+                    role: 'assistant',
+                    content: 'A supported claim [2].\n\n## References\n1. [OpenAI](https://openai.com)\n2. [Anthropic](https://anthropic.com)',
+                    timestamp: Date.parse('2026-04-15T10:07:00Z'),
+                }}
+            />
+        )
+
+        const citationBadge = screen.getAllByText('2')[0]
+
+        fireEvent.click(citationBadge)
+        expect(windowOpenMock).toHaveBeenCalledWith('https://anthropic.com', '_blank', 'noreferrer')
+
+        await user.hover(citationBadge)
+        expect((await screen.findAllByText('https://anthropic.com')).length).toBeGreaterThan(0)
+    })
+
+    it('resolves citations from Vietnamese Nguồn headings', async () => {
+        const user = userEvent.setup()
+
+        render(
+            <MessageBubble
+                message={{
+                    id: 9,
+                    role: 'assistant',
+                    content: 'Một nhận định có dẫn nguồn [3].\n\n### 7. Nguồn\n[1] [Statista](https://www.statista.com)\n[2] [Gartner](https://www.gartner.com)\n[3] [ManpowerGroup](https://www.manpowergroup.com)',
+                    timestamp: Date.parse('2026-04-15T10:08:00Z'),
+                }}
+            />
+        )
+
+        const citationBadge = screen.getAllByText('3')[0]
+
+        fireEvent.click(citationBadge)
+        expect(windowOpenMock).toHaveBeenCalledWith('https://www.manpowergroup.com', '_blank', 'noreferrer')
+
+        await user.hover(citationBadge)
+        expect((await screen.findAllByText('https://www.manpowergroup.com')).length).toBeGreaterThan(0)
+    })
 })

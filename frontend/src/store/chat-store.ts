@@ -110,6 +110,8 @@ type ChatStore = {
             is_web_search_enabled?: boolean
             is_deep_research_enabled?: boolean
             is_generate_image_enabled?: boolean
+            route_preference?: 'auto' | 'websearch_agent' | 'deep_research_agent' | 'image_generation_agent'
+            file_ids?: number[]
         }
     ) => Promise<void>
     

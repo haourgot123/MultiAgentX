@@ -7,9 +7,12 @@ import shutil
 import uuid
 import yaml
 import zipfile
+from collections import deque
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncGenerator, Dict, List, Optional, Sequence, Any
+from time import monotonic
+from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
 
 import docker
 from docker.errors import DockerException, NotFound, APIError
@@ -22,6 +25,7 @@ from fastapi import Request
 from backend.api.skills.model import (
     AgentSkill,
     SandboxSession,
+    SandboxSocketEvent,
     SkillExecutionArtifact,
     SkillUpdateRequest,
 )
@@ -30,6 +34,7 @@ from backend.api.conversation.service import conversation_service
 from backend.config.settings import _settings
 from backend.databases.db import get_utc_now
 from backend.exceptions.model import InvalidRequestException, ObjectNotFoundException
+from backend.realtime.socketio import socketio_manager
 from backend.utils.blob_storage import blob_storage_client
 from backend.utils.constants import Message
 
@@ -397,39 +402,33 @@ class DockerSandboxManager:
             service_logger.error("Failed to initialize Docker client: {}", e)
             self.client = None
 
-    def _get_container_name(self, user_id: int, sandbox_index: int) -> str:
-        return f"multiagentx-sandbox-{user_id}-{sandbox_index}"
+    @staticmethod
+    def _get_container_name(sandbox_index: int) -> str:
+        return f"multiagentx-sandbox-{sandbox_index}"
+
+    @staticmethod
+    def _get_sandbox_dir(sandbox_index: int) -> Path:
+        return (
+            Path(_settings.skills.sandbox_base_dir).resolve()
+            / "pool"
+            / f"sandbox_{sandbox_index}"
+        )
 
     def _create_sandbox_container(
         self,
-        user_id: int,
         sandbox_index: int,
         skills: Sequence[AgentSkill],
-        user_message: str,
     ) -> Optional[docker.models.containers.Container]:
         if not self.client:
             service_logger.error("Docker client not available")
             return None
 
-        container_name = self._get_container_name(user_id, sandbox_index)
-
-        try:
-            old_container = self.client.containers.get(container_name)
-            old_container.stop(timeout=5)
-            old_container.remove(force=True)
-            service_logger.info("Removed old sandbox container: {}", container_name)
-        except NotFound:
-            pass
-        except APIError as e:
-            service_logger.warning("Error cleaning up old container: {}", e)
-
-        sandbox_dir = Path(_settings.skills.sandbox_base_dir).resolve() / str(user_id) / f"sandbox_{sandbox_index}"
+        container_name = self._get_container_name(sandbox_index)
+        sandbox_dir = self._get_sandbox_dir(sandbox_index)
         sandbox_dir.mkdir(parents=True, exist_ok=True)
 
         primary_skill = skills[0]
         skill_folder_path = Path(primary_skill.storage_path).resolve()
-
-        self._prepare_sandbox_workspace(sandbox_dir, skills, user_message)
 
         try:
             container = self.client.containers.run(
@@ -453,10 +452,10 @@ class DockerSandboxManager:
                 labels={
                     "app": "multiagentx",
                     "type": "sandbox",
-                    "user_id": str(user_id),
                     "sandbox_index": str(sandbox_index),
                     "skill_id": str(primary_skill.id),
                 },
+                name=container_name,
             )
 
             service_logger.info(
@@ -472,6 +471,106 @@ class DockerSandboxManager:
         except Exception as e:
             service_logger.error("Unexpected error creating container: {}", e)
             return None
+
+    def _get_container(
+        self, sandbox_index: int
+    ) -> Optional[docker.models.containers.Container]:
+        if not self.client:
+            return None
+        try:
+            return self.client.containers.get(self._get_container_name(sandbox_index))
+        except NotFound:
+            return None
+        except Exception as exc:
+            service_logger.warning(
+                "Unable to inspect sandbox container index={}: {}",
+                sandbox_index,
+                exc,
+            )
+            return None
+
+    def _probe_container(self, container: docker.models.containers.Container) -> bool:
+        try:
+            result = container.exec_run(
+                cmd=["sh", "-c", "test -d /workspace && test -d /workspace/output && whoami"],
+                stdout=True,
+                stderr=True,
+                tty=False,
+                user="sandbox",
+            )
+            return result.exit_code == 0
+        except Exception as exc:
+            service_logger.warning("Sandbox health probe failed: {}", exc)
+            return False
+
+    def _ensure_container_running(
+        self,
+        sandbox_index: int,
+        skills: Sequence[AgentSkill],
+    ) -> Optional[docker.models.containers.Container]:
+        if not self.client:
+            service_logger.error("Docker client not available")
+            return None
+
+        container = self._get_container(sandbox_index)
+        if container:
+            try:
+                container.reload()
+                if container.status != "running":
+                    container.start()
+                    container.reload()
+                if self._probe_container(container):
+                    return container
+                self.cleanup_sandbox(sandbox_index)
+            except Exception as exc:
+                service_logger.warning(
+                    "Existing sandbox container was not reusable index={}: {}",
+                    sandbox_index,
+                    exc,
+                )
+                self.cleanup_sandbox(sandbox_index)
+
+        return self._create_sandbox_container(sandbox_index, skills)
+
+    def reset_workspace(self, sandbox_index: int) -> Path:
+        sandbox_dir = self._get_sandbox_dir(sandbox_index)
+        sandbox_dir.mkdir(parents=True, exist_ok=True)
+
+        for child_name in (
+            "output",
+            "input",
+            ".claude",
+            "user_task.txt",
+            "CLAUDE.md",
+            "execute_task.sh",
+            "beta_proxy.js",
+        ):
+            target = sandbox_dir / child_name
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+            else:
+                target.unlink(missing_ok=True)
+
+        return sandbox_dir
+
+    def prepare_workspace(
+        self,
+        sandbox_index: int,
+        skills: Sequence[AgentSkill],
+        user_task: str,
+    ) -> Path:
+        sandbox_dir = self.reset_workspace(sandbox_index)
+        self._prepare_sandbox_workspace(sandbox_dir, skills, user_task)
+        return sandbox_dir
+
+    def ensure_sandbox_container(
+        self,
+        sandbox_index: int,
+        skills: Sequence[AgentSkill],
+        user_task: str,
+    ) -> Optional[docker.models.containers.Container]:
+        self.prepare_workspace(sandbox_index, skills, user_task)
+        return self._ensure_container_running(sandbox_index, skills)
 
     def _prepare_sandbox_workspace(
         self,
@@ -704,11 +803,11 @@ exec claude -p "$USER_TASK" \\
         except Exception as e:
             yield ("error", str(e))
 
-    def cleanup_sandbox(self, user_id: int, sandbox_index: int) -> bool:
+    def cleanup_sandbox(self, sandbox_index: int) -> bool:
         if not self.client:
             return False
 
-        container_name = self._get_container_name(user_id, sandbox_index)
+        container_name = self._get_container_name(sandbox_index)
 
         try:
             container = self.client.containers.get(container_name)
@@ -722,11 +821,11 @@ exec claude -p "$USER_TASK" \\
             service_logger.error("Error cleaning up sandbox: {}", e)
             return False
 
-    def get_container_status(self, user_id: int, sandbox_index: int) -> Optional[str]:
+    def get_container_status(self, sandbox_index: int) -> Optional[str]:
         if not self.client:
             return None
 
-        container_name = self._get_container_name(user_id, sandbox_index)
+        container_name = self._get_container_name(sandbox_index)
 
         try:
             container = self.client.containers.get(container_name)
@@ -736,13 +835,8 @@ exec claude -p "$USER_TASK" \\
         except Exception:
             return None
 
-    def list_output_files(self, user_id: int, sandbox_index: int) -> List[Dict[str, Any]]:
-        if not self.client:
-            return []
-
-        container_name = self._get_container_name(user_id, sandbox_index)
-        sandbox_dir = Path(_settings.skills.sandbox_base_dir).resolve() / str(user_id) / f"sandbox_{sandbox_index}"
-        output_dir = sandbox_dir / "output"
+    def list_output_files(self, sandbox_index: int) -> List[Dict[str, Any]]:
+        output_dir = self._get_sandbox_dir(sandbox_index) / "output"
 
         # Only surface deliverable file types to the user.
         # Intermediate files (scripts, thumbnail images, temp files) are excluded.
@@ -771,9 +865,8 @@ exec claude -p "$USER_TASK" \\
                 })
         return files
 
-    def get_output_file(self, user_id: int, sandbox_index: int, filename: str) -> Optional[Path]:
-        sandbox_dir = Path(_settings.skills.sandbox_base_dir).resolve() / str(user_id) / f"sandbox_{sandbox_index}"
-        output_dir = (sandbox_dir / "output").resolve()
+    def get_output_file(self, sandbox_index: int, filename: str) -> Optional[Path]:
+        output_dir = (self._get_sandbox_dir(sandbox_index) / "output").resolve()
         file_path = (output_dir / filename).resolve()
 
         if not file_path.is_relative_to(output_dir):
@@ -782,14 +875,14 @@ exec claude -p "$USER_TASK" \\
             return file_path
         return None
 
-    def list_user_sandboxes(self, user_id: int) -> List[Dict[str, Any]]:
+    def list_global_sandboxes(self) -> List[Dict[str, Any]]:
         if not self.client:
             return []
 
         try:
             containers = self.client.containers.list(
                 filters={
-                    "label": f"app=multiagentx,type=sandbox,user_id={user_id}"
+                    "label": "app=multiagentx,type=sandbox"
                 },
                 all=True,
             )
@@ -812,13 +905,15 @@ exec claude -p "$USER_TASK" \\
 
 
 class SandboxService:
-    MAX_SANDBOXES = 10
-
     def __init__(self):
-        self.sandbox_root = (
-            Path(_settings.process_file.root_download_folder).resolve() / "sandboxes"
-        )
         self.docker_manager = DockerSandboxManager()
+        self.pool_size = max(1, _settings.skills.global_pool_size)
+        self.queue_timeout_seconds = max(
+            1, _settings.skills.global_queue_timeout_seconds
+        )
+        self.idle_ttl_seconds = max(60, _settings.skills.global_idle_ttl_seconds)
+        self._queue_condition = asyncio.Condition()
+        self._wait_queue: deque[str] = deque()
 
     @staticmethod
     def _get_request_logger(request: Request | None = None, user_id: int | None = None):
@@ -829,156 +924,254 @@ class SandboxService:
             else getattr(getattr(request, "state", None), "user_id", "-"),
         )
 
-    def initialize_user_sandboxes(
-        self, db_session: Session, user_id: int
-    ) -> List[SandboxSession]:
-        existing = (
+    @staticmethod
+    def _is_public_owner(viewer_user_id: int, sandbox: SandboxSession) -> bool:
+        return sandbox.user_id == viewer_user_id and sandbox.status == "busy"
+
+    @staticmethod
+    def _build_public_socket_payload(sandbox: SandboxSession) -> SandboxSocketEvent:
+        return SandboxSocketEvent(
+            id=sandbox.id,
+            user_id=None,
+            sandbox_index=sandbox.sandbox_index,
+            status=sandbox.status,
+            current_skill_id=None,
+            task_description=None,
+            progress=sandbox.progress,
+            started_at=sandbox.started_at,
+            completed_at=sandbox.completed_at,
+            updated_at=sandbox.updated_at or get_utc_now(),
+        )
+
+    def _emit_sandbox_status(self, sandbox: SandboxSession) -> None:
+        socketio_manager.emit_global_sandbox_status_sync(
+            payload=self._build_public_socket_payload(sandbox).model_dump(mode="json")
+        )
+
+    def _notify_waiters(self) -> None:
+        async def _notify() -> None:
+            async with self._queue_condition:
+                self._queue_condition.notify_all()
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(_notify())
+
+    def initialize_global_sandboxes(self, db_session: Session) -> List[SandboxSession]:
+        existing = {
+            sandbox.sandbox_index: sandbox
+            for sandbox in db_session.query(SandboxSession).all()
+        }
+        now = get_utc_now()
+        created = []
+
+        for index in range(self.pool_size):
+            if index in existing:
+                continue
+            sandbox = SandboxSession(
+                user_id=None,
+                sandbox_index=index,
+                status="ready",
+                progress=0,
+                created_at=now,
+                updated_at=now,
+            )
+            db_session.add(sandbox)
+            created.append(sandbox)
+
+        if created:
+            db_session.commit()
+
+        sandboxes = (
             db_session.query(SandboxSession)
-            .filter(SandboxSession.user_id == user_id)
+            .filter(SandboxSession.sandbox_index < self.pool_size)
+            .order_by(SandboxSession.sandbox_index)
+            .all()
+        )
+        return sandboxes
+
+    def _mark_sandbox_ready(
+        self,
+        db_session: Session,
+        sandbox: SandboxSession,
+        *,
+        progress: int = 0,
+    ) -> SandboxSession:
+        sandbox.user_id = None
+        sandbox.status = "ready"
+        sandbox.progress = progress
+        sandbox.current_skill_id = None
+        sandbox.task_description = None
+        sandbox.started_at = None
+        sandbox.completed_at = get_utc_now()
+        sandbox.updated_at = get_utc_now()
+        db_session.commit()
+        db_session.refresh(sandbox)
+        self._emit_sandbox_status(sandbox)
+        self._notify_waiters()
+        return sandbox
+
+    def _reap_idle_sandboxes(self, db_session: Session) -> None:
+        now = get_utc_now()
+        sandboxes = (
+            db_session.query(SandboxSession)
+            .filter(
+                SandboxSession.sandbox_index < self.pool_size,
+                SandboxSession.status == "ready",
+            )
             .all()
         )
 
-        if len(existing) >= self.MAX_SANDBOXES:
-            for sandbox in existing:
-                container_status = self.docker_manager.get_container_status(
-                    user_id, sandbox.sandbox_index
-                )
-                if container_status is None and sandbox.status == "busy":
-                    sandbox.status = "ready"
-                    sandbox.current_skill_id = None
-                    sandbox.progress = 0
-                    sandbox.updated_at = get_utc_now()
+        for sandbox in sandboxes:
+            if sandbox.updated_at is None:
+                continue
+            age = (now - sandbox.updated_at).total_seconds()
+            if age < self.idle_ttl_seconds:
+                continue
+            if self.docker_manager.get_container_status(sandbox.sandbox_index):
+                self.docker_manager.cleanup_sandbox(sandbox.sandbox_index)
 
-            db_session.commit()
-            return existing
+    def _synchronize_sandbox_states(self, db_session: Session) -> List[SandboxSession]:
+        sandboxes = self.initialize_global_sandboxes(db_session)
+        changed = False
 
-        now = get_utc_now()
-        sandboxes = []
+        for sandbox in sandboxes:
+            container_status = self.docker_manager.get_container_status(
+                sandbox.sandbox_index
+            )
 
-        for i in range(self.MAX_SANDBOXES):
-            if not any(s.sandbox_index == i for s in existing):
-                sandbox = SandboxSession(
-                    user_id=user_id,
-                    sandbox_index=i,
-                    status="ready",
-                    progress=0,
-                    created_at=now,
-                    updated_at=now,
-                )
-                db_session.add(sandbox)
-                sandboxes.append(sandbox)
+            if sandbox.status == "busy" and container_status != "running":
+                sandbox.user_id = None
+                sandbox.status = "ready"
+                sandbox.progress = 0
+                sandbox.current_skill_id = None
+                sandbox.task_description = None
+                sandbox.started_at = None
+                sandbox.completed_at = get_utc_now()
+                sandbox.updated_at = get_utc_now()
+                changed = True
+            elif sandbox.status == "ready" and container_status == "running":
+                # Warm container available; slot remains ready.
+                continue
 
-        if sandboxes:
+        if changed:
             db_session.commit()
             for sandbox in sandboxes:
                 db_session.refresh(sandbox)
 
-        return existing + sandboxes
+        self._reap_idle_sandboxes(db_session)
+        return sandboxes
 
     def list_sandboxes(
         self, request: Request, db_session: Session, user_id: int
     ) -> List[SandboxSession]:
         request_logger = self._get_request_logger(request, user_id)
-        sandboxes = self.initialize_user_sandboxes(db_session, user_id)
-
-        for sandbox in sandboxes:
-            container_status = self.docker_manager.get_container_status(
-                user_id, sandbox.sandbox_index
-            )
-
-            if container_status is None:
-                if sandbox.status == "busy":
-                    sandbox.status = "ready"
-                    sandbox.current_skill_id = None
-                    sandbox.progress = 0
-                    sandbox.updated_at = get_utc_now()
-            else:
-                if container_status == "running":
-                    if sandbox.status != "busy":
-                        sandbox.status = "busy"
-                        sandbox.updated_at = get_utc_now()
-
-        db_session.commit()
-        sandboxes.sort(key=lambda s: s.sandbox_index)
-        request_logger.debug("Listed sandboxes, count={}", len(sandboxes))
+        sandboxes = self._synchronize_sandbox_states(db_session)
+        request_logger.debug("Listed global sandboxes, count={}", len(sandboxes))
         return sandboxes
 
-    def get_available_sandbox(
-        self, db_session: Session, user_id: int
+    def _claim_ready_sandbox(
+        self,
+        db_session: Session,
+        user_id: int,
+        skill_id: int,
+        task_description: str,
     ) -> Optional[SandboxSession]:
         sandbox = (
             db_session.query(SandboxSession)
             .filter(
-                SandboxSession.user_id == user_id,
+                SandboxSession.sandbox_index < self.pool_size,
                 SandboxSession.status == "ready",
             )
             .order_by(SandboxSession.sandbox_index)
+            .with_for_update(skip_locked=True)
             .first()
         )
-
-        if sandbox:
-            container_status = self.docker_manager.get_container_status(
-                user_id, sandbox.sandbox_index
-            )
-            if container_status == "running":
-                self.docker_manager.cleanup_sandbox(user_id, sandbox.sandbox_index)
-
-        return sandbox
-
-    def occupy_sandbox(
-        self,
-        db_session: Session,
-        sandbox_id: int,
-        skill_id: int,
-        task_description: str,
-        user_id: int,
-    ) -> SandboxSession:
-        sandbox = db_session.query(SandboxSession).filter(
-            SandboxSession.id == sandbox_id
-        ).first()
-
         if not sandbox:
-            raise ObjectNotFoundException(message="Sandbox not found")
+            db_session.rollback()
+            return None
 
+        now = get_utc_now()
+        sandbox.user_id = user_id
         sandbox.status = "busy"
         sandbox.current_skill_id = skill_id
         sandbox.task_description = task_description
         sandbox.progress = 0
-        sandbox.started_at = get_utc_now()
+        sandbox.started_at = now
         sandbox.completed_at = None
-        sandbox.updated_at = get_utc_now()
-
+        sandbox.updated_at = now
         db_session.commit()
         db_session.refresh(sandbox)
+        self._emit_sandbox_status(sandbox)
         return sandbox
+
+    async def acquire_sandbox(
+        self,
+        db_session: Session,
+        user_id: int,
+        skill_id: int,
+        task_description: str,
+    ) -> Optional[SandboxSession]:
+        token = uuid.uuid4().hex
+        deadline = monotonic() + self.queue_timeout_seconds
+
+        async with self._queue_condition:
+            self._wait_queue.append(token)
+            while True:
+                if self._wait_queue and self._wait_queue[0] == token:
+                    self._synchronize_sandbox_states(db_session)
+                    sandbox = self._claim_ready_sandbox(
+                        db_session,
+                        user_id,
+                        skill_id,
+                        task_description,
+                    )
+                    if sandbox:
+                        self._wait_queue.popleft()
+                        self._queue_condition.notify_all()
+                        return sandbox
+
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    with suppress(ValueError):
+                        self._wait_queue.remove(token)
+                    self._queue_condition.notify_all()
+                    return None
+
+                try:
+                    await asyncio.wait_for(
+                        self._queue_condition.wait(),
+                        timeout=remaining,
+                    )
+                except asyncio.TimeoutError:
+                    with suppress(ValueError):
+                        self._wait_queue.remove(token)
+                    self._queue_condition.notify_all()
+                    return None
 
     def release_sandbox(
         self,
         db_session: Session,
         sandbox_id: int,
-        user_id: int,
-        status: str = "ready",
+        *,
+        destroy_container: bool = False,
         progress: int = 100,
     ) -> SandboxSession:
-        sandbox = db_session.query(SandboxSession).filter(
-            SandboxSession.id == sandbox_id
-        ).first()
+        sandbox = (
+            db_session.query(SandboxSession)
+            .filter(SandboxSession.id == sandbox_id)
+            .first()
+        )
 
         if not sandbox:
             raise ObjectNotFoundException(message="Sandbox not found")
 
-        self.docker_manager.cleanup_sandbox(user_id, sandbox.sandbox_index)
+        if destroy_container:
+            self.docker_manager.cleanup_sandbox(sandbox.sandbox_index)
 
-        sandbox.status = status
-        sandbox.progress = progress
-        sandbox.current_skill_id = None
-        sandbox.task_description = None
-        sandbox.completed_at = get_utc_now()
-        sandbox.updated_at = get_utc_now()
-
-        db_session.commit()
-        db_session.refresh(sandbox)
-        return sandbox
+        return self._mark_sandbox_ready(db_session, sandbox, progress=progress)
 
     def update_sandbox_progress(
         self,
@@ -987,9 +1180,11 @@ class SandboxService:
         progress: int,
         status: Optional[str] = None,
     ) -> SandboxSession:
-        sandbox = db_session.query(SandboxSession).filter(
-            SandboxSession.id == sandbox_id
-        ).first()
+        sandbox = (
+            db_session.query(SandboxSession)
+            .filter(SandboxSession.id == sandbox_id)
+            .first()
+        )
 
         if not sandbox:
             raise ObjectNotFoundException(message="Sandbox not found")
@@ -1001,7 +1196,44 @@ class SandboxService:
 
         db_session.commit()
         db_session.refresh(sandbox)
+        self._emit_sandbox_status(sandbox)
         return sandbox
+
+    def _get_sandbox_for_output_access(
+        self,
+        db_session: Session,
+        user_id: int,
+        sandbox_index: int,
+    ) -> SandboxSession:
+        sandbox = (
+            db_session.query(SandboxSession)
+            .filter(SandboxSession.sandbox_index == sandbox_index)
+            .first()
+        )
+        if not sandbox:
+            raise ObjectNotFoundException(message="Sandbox not found")
+        if sandbox.user_id != user_id:
+            raise ObjectNotFoundException(message="Sandbox output not available")
+        return sandbox
+
+    def list_sandbox_files(
+        self,
+        db_session: Session,
+        user_id: int,
+        sandbox_index: int,
+    ) -> List[Dict[str, Any]]:
+        self._get_sandbox_for_output_access(db_session, user_id, sandbox_index)
+        return self.docker_manager.list_output_files(sandbox_index)
+
+    def get_sandbox_output_file(
+        self,
+        db_session: Session,
+        user_id: int,
+        sandbox_index: int,
+        filename: str,
+    ) -> Optional[Path]:
+        self._get_sandbox_for_output_access(db_session, user_id, sandbox_index)
+        return self.docker_manager.get_output_file(sandbox_index, filename)
 
     async def execute_skill_stream(
         self,
@@ -1014,6 +1246,13 @@ class SandboxService:
     ) -> AsyncGenerator[str, None]:
         request_logger = self._get_request_logger(request, user_id)
 
+        if not _settings.skills.enable_sandbox:
+            yield self._format_sse_event(
+                "error",
+                {"message": "Sandbox execution is disabled by server configuration."},
+            )
+            return
+
         conversation = conversation_service.get_conversation(
             request,
             db_session,
@@ -1022,21 +1261,6 @@ class SandboxService:
         )
         if conversation.chat_type != "skill":
             raise InvalidRequestException(message=Message.MESSAGE_INVALID_REQUEST)
-
-        conversation_service.add_message(
-            request,
-            db_session,
-            user_id,
-            conversation_id,
-            ConversationMessageCreateRequest(role="user", content=user_message),
-        )
-
-        sandbox = self.get_available_sandbox(db_session, user_id)
-        if not sandbox:
-            yield self._format_sse_event(
-                "error", {"message": "No available sandboxes. Please wait for one to become free."}
-            )
-            return
 
         skills = (
             db_session.query(AgentSkill)
@@ -1054,241 +1278,291 @@ class SandboxService:
             )
             return
 
-        skill = skills[0]
-        self.occupy_sandbox(
-            db_session, sandbox.id, skill.id, user_message, user_id
+        conversation_service.add_message(
+            request,
+            db_session,
+            user_id,
+            conversation_id,
+            ConversationMessageCreateRequest(role="user", content=user_message),
         )
+
+        skill = skills[0]
+        sandbox = await self.acquire_sandbox(
+            db_session,
+            user_id,
+            skill.id,
+            user_message,
+        )
+        if not sandbox:
+            yield self._format_sse_event(
+                "error",
+                {"message": "All sandboxes are busy. Please retry shortly."},
+            )
+            return
+
+        destroy_container = False
 
         try:
             skill_names = ", ".join(s.name for s in skills)
             yield self._format_sse_event(
-                "status", {"step": "creating", "message": f"Creating sandbox with skill(s): {skill_names}"}
+                "status",
+                {
+                    "step": "creating",
+                    "message": f"Preparing sandbox with skill(s): {skill_names}",
+                },
             )
 
-            container = self.docker_manager._create_sandbox_container(
-                user_id, sandbox.sandbox_index, skills, user_message
+            container = self.docker_manager.ensure_sandbox_container(
+                sandbox.sandbox_index,
+                skills,
+                user_message,
             )
-
             if not container:
+                destroy_container = True
                 yield self._format_sse_event(
-                    "error", {"message": "Failed to create Docker sandbox"}
+                    "error", {"message": "Failed to provision Docker sandbox"}
                 )
                 return
 
             yield self._format_sse_event(
-                "status", {"step": "executing", "message": "Running Claude CLI in sandbox..."}
+                "status",
+                {"step": "executing", "message": "Running Claude CLI in sandbox..."},
             )
 
             self.update_sandbox_progress(db_session, sandbox.id, 25, "busy")
 
-            full_output = []
-            generated_files = []
+            full_output: list[str] = []
             command = "bash /workspace/execute_task.sh"
 
             async for stream_type, content in self._async_stream_execute(
-                container.id, command
+                container.id,
+                command,
+                timeout=_settings.skills.sandbox_timeout,
             ):
                 if stream_type == "error":
+                    destroy_container = True
                     yield self._format_sse_event("error", {"message": content})
                     return
-                else:
-                    # Parse Claude CLI stream-json output
-                    for line in content.split("\n"):
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            event = json.loads(line)
-                        except (json.JSONDecodeError, ValueError):
-                            # Plain text output (non-JSON), pass through
-                            full_output.append(line + "\n")
-                            yield self._format_sse_event("token", {"delta": line + "\n"})
-                            continue
 
-                        event_type = event.get("type", "")
+                for line in content.split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        full_output.append(line + "\n")
+                        yield self._format_sse_event("token", {"delta": line + "\n"})
+                        continue
 
-                        if event_type == "assistant" and "message" in event:
-                            # message is a dict with content[] array of blocks
-                            msg = event["message"]
-                            if isinstance(msg, dict):
-                                for block in msg.get("content", []):
-                                    if not isinstance(block, dict):
-                                        continue
-                                    if block.get("type") == "thinking":
-                                        thinking_text = block.get("thinking", "") or block.get("text", "")
-                                        if thinking_text:
-                                            brief = (thinking_text[:120].replace("\n", " ") + "...") if len(thinking_text) > 120 else thinking_text.replace("\n", " ")
-                                            yield self._format_sse_event("thinking", {"message": brief})
-                                    elif block.get("type") == "text":
-                                        text = block.get("text", "")
-                                        if text:
-                                            full_output.append(text)
-                                            yield self._format_sse_event("token", {"delta": text})
-                            elif isinstance(msg, str) and msg:
-                                full_output.append(msg)
-                                yield self._format_sse_event("token", {"delta": msg})
+                    event_type = event.get("type", "")
 
-                        elif event_type == "tool_use":
-                            tool_name = event.get("name", "tool")
-                            tool_input = event.get("input", {})
-                            if tool_name == "bash":
-                                cmd = str(tool_input.get("command", "")).strip()
-                                brief = (cmd[:80] + "...") if len(cmd) > 80 else cmd
-                                label = f"Running: {brief}"
-                            else:
-                                label = f"Using tool: {tool_name}"
-                            yield self._format_sse_event("tool_use", {"tool": tool_name, "message": label})
-
-                        elif event_type == "content_block_delta":
-                            delta = event.get("delta", {})
-                            text = delta.get("text", "")
-                            if text:
-                                full_output.append(text)
-                                yield self._format_sse_event("token", {"delta": text})
-
-                        elif event_type == "result":
-                            result_text = event.get("result", "")
-                            if result_text and not full_output:
-                                full_output.append(result_text)
-                                yield self._format_sse_event("token", {"delta": result_text})
-
-                        elif event_type == "system":
-                            msg = event.get("message", "")
-                            if msg:
-                                yield self._format_sse_event(
-                                    "status", {"step": "system", "message": msg}
-                                )
+                    if event_type == "assistant" and "message" in event:
+                        msg = event["message"]
+                        if isinstance(msg, dict):
+                            for block in msg.get("content", []):
+                                if not isinstance(block, dict):
+                                    continue
+                                if block.get("type") == "thinking":
+                                    thinking_text = block.get("thinking", "") or block.get("text", "")
+                                    if thinking_text:
+                                        brief = (
+                                            thinking_text[:120].replace("\n", " ") + "..."
+                                            if len(thinking_text) > 120
+                                            else thinking_text.replace("\n", " ")
+                                        )
+                                        yield self._format_sse_event(
+                                            "thinking", {"message": brief}
+                                        )
+                                elif block.get("type") == "text":
+                                    text = block.get("text", "")
+                                    if text:
+                                        full_output.append(text)
+                                        yield self._format_sse_event(
+                                            "token", {"delta": text}
+                                        )
+                        elif isinstance(msg, str) and msg:
+                            full_output.append(msg)
+                            yield self._format_sse_event("token", {"delta": msg})
+                    elif event_type == "tool_use":
+                        tool_name = event.get("name", "tool")
+                        tool_input = event.get("input", {})
+                        if tool_name == "bash":
+                            cmd = str(tool_input.get("command", "")).strip()
+                            brief = (cmd[:80] + "...") if len(cmd) > 80 else cmd
+                            label = f"Running: {brief}"
+                        else:
+                            label = f"Using tool: {tool_name}"
+                        yield self._format_sse_event(
+                            "tool_use", {"tool": tool_name, "message": label}
+                        )
+                    elif event_type == "content_block_delta":
+                        delta = event.get("delta", {})
+                        text = delta.get("text", "")
+                        if text:
+                            full_output.append(text)
+                            yield self._format_sse_event("token", {"delta": text})
+                    elif event_type == "result":
+                        result_text = event.get("result", "")
+                        if result_text and not full_output:
+                            full_output.append(result_text)
+                            yield self._format_sse_event(
+                                "token", {"delta": result_text}
+                            )
+                    elif event_type == "system":
+                        msg = event.get("message", "")
+                        if msg:
+                            yield self._format_sse_event(
+                                "status", {"step": "system", "message": msg}
+                            )
 
             result = "".join(full_output)
-
             self.update_sandbox_progress(db_session, sandbox.id, 100, "busy")
 
-            # Get list of generated files
-            output_files = self.docker_manager.list_output_files(user_id, sandbox.sandbox_index)
+            output_files = self.docker_manager.list_output_files(sandbox.sandbox_index)
             sandbox_out_dir = (
-                Path(_settings.skills.sandbox_base_dir).resolve()
-                / str(user_id)
-                / f"sandbox_{sandbox.sandbox_index}"
-                / "output"
+                self.docker_manager._get_sandbox_dir(sandbox.sandbox_index) / "output"
             )
 
-            # Add file information to the response
             file_attachments = []
-            for f in output_files:
+            for file_info in output_files:
                 blob_url: str | None = None
+                blob_key: str | None = None
                 try:
-                    file_path = sandbox_out_dir / f["name"]
+                    file_path = sandbox_out_dir / file_info["name"]
                     if file_path.is_file():
-                        blob_key = f"skill-outputs/{user_id}/{sandbox.sandbox_index}/{f['name']}"
-                        content_type = mimetypes.guess_type(f["name"])[0] or "application/octet-stream"
+                        blob_key = (
+                            f"skill-outputs/{user_id}/{conversation_id}/"
+                            f"{uuid.uuid4().hex}_{file_info['name']}"
+                        )
+                        content_type = (
+                            mimetypes.guess_type(file_info["name"])[0]
+                            or "application/octet-stream"
+                        )
                         with open(file_path, "rb") as file_data:
                             blob_storage_client.upload_bytes(
                                 blob_path=blob_key,
                                 data=file_data,
                                 content_type=content_type,
                             )
-                        blob_url = blob_storage_client.generate_sas_url(blob_key, expiry_hours=24)
-                        request_logger.info("Uploaded sandbox output to blob: {}", blob_key)
-                        # Delete from local host filesystem
-                        try:
-                            file_path.unlink()
-                        except Exception as del_exc:
-                            request_logger.warning("Failed to delete local output file {}: {}", file_path, del_exc)
+                        blob_url = blob_storage_client.generate_sas_url(
+                            blob_key,
+                            expiry_hours=24,
+                        )
+                        request_logger.info(
+                            "Uploaded sandbox output to blob: {}",
+                            blob_key,
+                        )
+                        file_path.unlink(missing_ok=True)
                 except Exception as blob_exc:
-                    request_logger.warning("Failed to upload output file to blob: {}", blob_exc)
+                    request_logger.warning(
+                        "Failed to upload output file to blob: {}",
+                        blob_exc,
+                    )
 
-                file_info = {
-                    "name": f["name"],
-                    "size": f["size"],
+                output_payload = {
+                    "name": file_info["name"],
+                    "size": file_info["size"],
                     "sandbox_index": sandbox.sandbox_index,
-                    "download_url": f"/skills/sandboxes/{sandbox.sandbox_index}/files/{f['name']}",
+                    "download_url": f"/skills/sandboxes/{sandbox.sandbox_index}/files/{file_info['name']}",
                     "blob_url": blob_url,
+                    "_blob_path": blob_key,
                 }
-                file_attachments.append(file_info)
-                yield self._format_sse_event("file", file_info)
+                file_attachments.append(output_payload)
+                yield_payload = {k: v for k, v in output_payload.items() if not k.startswith("_")}
+                yield self._format_sse_event("file", yield_payload)
 
-            # Create message content with file references
             message_content = result or "Execution completed without textual output."
             if file_attachments:
-                message_content += f"\n\n📎 Generated {len(file_attachments)} file(s):"
-                for f in file_attachments:
-                    message_content += f"\n- {f['name']} ({f['size']:,} bytes)"
+                message_content += f"\n\nGenerated {len(file_attachments)} file(s):"
+                for attachment in file_attachments:
+                    message_content += (
+                        f"\n- {attachment['name']} ({attachment['size']:,} bytes)"
+                    )
 
             new_message, _ = conversation_service.add_message(
                 request,
                 db_session,
                 user_id,
                 conversation_id,
-                ConversationMessageCreateRequest(role="assistant", content=message_content),
+                ConversationMessageCreateRequest(
+                    role="assistant",
+                    content=message_content,
+                ),
             )
 
-            # Persist artifacts to database for permanent access
-            for f in file_attachments:
-                if f.get("blob_url"):
-                    try:
-                        blob_key = f"skill-outputs/{user_id}/{sandbox.sandbox_index}/{f['name']}"
-                        artifact = SkillExecutionArtifact(
-                            user_id=user_id,
-                            conversation_id=conversation_id,
-                            message_id=new_message.id if new_message else None,
-                            skill_id=skill.id if skill else None,
-                            sandbox_index=sandbox.sandbox_index,
-                            file_name=f["name"],
-                            blob_path=blob_key,
-                            content_type=mimetypes.guess_type(f["name"])[0] or "application/octet-stream",
-                            size=f["size"],
-                            created_at=get_utc_now(),
-                        )
-                        db_session.add(artifact)
-                        request_logger.info("Persisted artifact to DB: {} for message_id={}", f["name"], new_message.id if new_message else None)
-                    except Exception as artifact_exc:
-                        request_logger.warning("Failed to persist artifact to DB: {}", artifact_exc)
+            for attachment in file_attachments:
+                if not attachment.get("blob_url"):
+                    continue
+                try:
+                    artifact = SkillExecutionArtifact(
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        message_id=new_message.id if new_message else None,
+                        skill_id=skill.id if skill else None,
+                        sandbox_index=sandbox.sandbox_index,
+                        file_name=attachment["name"],
+                        blob_path=attachment["_blob_path"],
+                        content_type=(
+                            mimetypes.guess_type(attachment["name"])[0]
+                            or "application/octet-stream"
+                        ),
+                        size=attachment["size"],
+                        created_at=get_utc_now(),
+                    )
+                    db_session.add(artifact)
+                except Exception as artifact_exc:
+                    request_logger.warning(
+                        "Failed to persist artifact to DB: {}",
+                        artifact_exc,
+                    )
             db_session.commit()
 
-            yield self._format_sse_event("done", {"output": result, "files": file_attachments})
-
-        except Exception as e:
-            request_logger.error("Error executing skill: {}", e)
+            yield self._format_sse_event(
+                "done",
+                {
+                    "output": result,
+                    "files": [
+                        {k: v for k, v in attachment.items() if not k.startswith("_")}
+                        for attachment in file_attachments
+                    ],
+                },
+            )
+        except Exception as exc:
+            destroy_container = True
+            request_logger.error("Error executing skill: {}", exc)
             try:
                 conversation_service.add_message(
                     request,
                     db_session,
                     user_id,
                     conversation_id,
-                    ConversationMessageCreateRequest(role="assistant", content=f"Execution failed: {str(e)}"),
+                    ConversationMessageCreateRequest(
+                        role="assistant",
+                        content=f"Execution failed: {str(exc)}",
+                    ),
                 )
             except Exception:
-                request_logger.warning("Failed to persist skill execution error to conversation")
-            yield self._format_sse_event("error", {"message": str(e)})
+                request_logger.warning(
+                    "Failed to persist skill execution error to conversation"
+                )
+            yield self._format_sse_event("error", {"message": str(exc)})
         finally:
-            # Clean up entire workspace inside the container (output + input files)
             try:
-                container_name = self.docker_manager._get_container_name(user_id, sandbox.sandbox_index)
-                container = self.docker_manager.client.containers.get(container_name)
-                container.exec_run(
-                    cmd=["sh", "-c", "rm -rf /workspace/output/* /workspace/input/* /workspace/user_task.txt"],
-                    user="sandbox",
-                )
-                request_logger.info("Cleaned up sandbox workspace for user={} sandbox={}", user_id, sandbox.sandbox_index)
+                self.docker_manager.reset_workspace(sandbox.sandbox_index)
             except Exception as cleanup_exc:
-                request_logger.warning("Failed to clean up sandbox workspace: {}", cleanup_exc)
-            # Clean up host-side sandbox directory
-            try:
-                sandbox_host_dir = (
-                    Path(_settings.skills.sandbox_base_dir).resolve()
-                    / str(user_id)
-                    / f"sandbox_{sandbox.sandbox_index}"
+                request_logger.warning(
+                    "Failed to clean up sandbox workspace: {}",
+                    cleanup_exc,
                 )
-                for sub in ("output", "input"):
-                    sub_dir = sandbox_host_dir / sub
-                    if sub_dir.exists():
-                        shutil.rmtree(sub_dir, ignore_errors=True)
-                        sub_dir.mkdir(parents=True, exist_ok=True)
-                user_task_file = sandbox_host_dir / "user_task.txt"
-                user_task_file.unlink(missing_ok=True)
-            except Exception as host_cleanup_exc:
-                request_logger.warning("Failed to clean up host sandbox dir: {}", host_cleanup_exc)
-            self.release_sandbox(db_session, sandbox.id, user_id, "ready", 100)
+                destroy_container = True
+
+            self.release_sandbox(
+                db_session,
+                sandbox.id,
+                destroy_container=destroy_container,
+                progress=100,
+            )
 
     async def _async_stream_execute(
         self,

@@ -188,10 +188,18 @@ describe('useChatStore', () => {
 
         await useChatStore.getState().streamChat(
             { role: 'user', content: 'Explain this file' },
-            'file'
+            'file',
+            { file_ids: [99] }
         )
 
         expect(apiFetchStreamMock).toHaveBeenCalledTimes(1)
+        const [, options] = apiFetchStreamMock.mock.calls[0]
+        expect(JSON.parse(options.body as string)).toMatchObject({
+            conversation_id: 7,
+            chat_type: 'file',
+            user_question: 'Explain this file',
+            file_ids: [99],
+        })
         expect(useChatStore.getState().messagesByChat[7].map((message) => message.id)).toEqual([100, 101])
         expect(useChatStore.getState().fileChatCitations[7]).toEqual([
             {

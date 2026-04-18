@@ -241,7 +241,8 @@ async def chat(
                 chat_request.user_question,
                 chat_request.is_web_search_enabled,
                 chat_request.is_deep_research_enabled,
-                chat_request.is_generate_image_enabled
+                chat_request.is_generate_image_enabled,
+                chat_request.route_preference,
             ),
             media_type="text/event-stream",
             headers=SSE_HEADERS,
@@ -255,6 +256,7 @@ async def chat(
                 request.state.user_id, 
                 chat_request.conversation_id,
                 chat_request.user_question,
+                chat_request.file_ids,
             ),
             media_type="text/event-stream",
             headers=SSE_HEADERS,

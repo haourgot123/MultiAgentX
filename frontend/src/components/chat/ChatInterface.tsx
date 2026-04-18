@@ -15,9 +15,10 @@ import { PlanApprovalModal } from "./PlanApprovalModal"
 
 interface ChatInterfaceProps {
     onFileCitationClick?: (citation: FileCitation, messageId: number) => void
+    selectedFileIds?: number[]
 }
 
-export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
+export function ChatInterface({ onFileCitationClick, selectedFileIds }: ChatInterfaceProps) {
     const location = useLocation()
     const {
         getCurrentMessages,
@@ -44,6 +45,12 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
     const messages = getCurrentMessages()
     const isCurrentChatLoading = currentChatId !== null && loadingChatId === currentChatId
     const currentStatusSteps = isCurrentChatLoading ? statusSteps : []
+    const visibleStatusSteps = currentStatusSteps.slice(-3)
+    const currentLastMessage = messages[messages.length - 1]
+    const hasStreamingAssistantMessage =
+        isCurrentChatLoading &&
+        currentLastMessage?.role === 'assistant' &&
+        currentLastMessage.content.trim().length > 0
     const scrollAreaRef = useRef<HTMLDivElement>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
     const shouldAutoScrollRef = useRef(true)
@@ -62,7 +69,19 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
     const attachedFiles = currentFileSession
         ? files.filter((file) => currentFileSession.fileIds.includes(file.id))
         : []
+    const selectedAttachedFiles = isFileChat
+        ? (
+            selectedFileIds && selectedFileIds.length > 0
+                ? attachedFiles.filter((file) => selectedFileIds.includes(file.id))
+                : selectedFileIds
+                    ? []
+                    : attachedFiles
+        )
+        : []
     const completedFiles = attachedFiles.filter(
+        (file) => file.ingestionStatus === 'completed'
+    )
+    const selectedCompletedFiles = selectedAttachedFiles.filter(
         (file) => file.ingestionStatus === 'completed'
     )
     const hasActiveIngestion = attachedFiles.some((file) =>
@@ -75,9 +94,23 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
         attachedFiles.every((file) => file.ingestionStatus === 'failed')
     const fileChatBlocked =
         isFileChat &&
-        (!currentFileSession || attachedFiles.length === 0 || completedFiles.length === 0)
+        (
+            !currentFileSession ||
+            attachedFiles.length === 0 ||
+            completedFiles.length === 0 ||
+            (selectedFileIds !== undefined && selectedAttachedFiles.length === 0) ||
+            (
+                selectedFileIds !== undefined &&
+                selectedAttachedFiles.length > 0 &&
+                selectedCompletedFiles.length === 0
+            )
+        )
     const fileChatBlockReason = !currentFileSession || attachedFiles.length === 0
         ? 'Attach at least one file to this conversation before chatting.'
+        : selectedFileIds !== undefined && selectedAttachedFiles.length === 0
+            ? 'Select at least one file to chat with.'
+            : selectedFileIds !== undefined && selectedAttachedFiles.length > 0 && selectedCompletedFiles.length === 0
+                ? 'Selected files are not ready yet. Choose at least one Completed file.'
         : hasActiveIngestion
             ? 'Ingestion is still running. Wait until at least one file is Completed.'
             : allAttachedFilesFailed
@@ -87,25 +120,140 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
         ? fileChatBlockReason
         : "Ask anything..."
 
+    const ResearchChaseIndicator = ({ className }: { className?: string }) => (
+        <div className={cn("research-chase", className)} aria-hidden="true">
+            <span className="research-chase-dot" />
+            <span className="research-chase-dot" />
+            <span className="research-chase-dot" />
+        </div>
+    )
+
+    const renderResearchStatusCard = (label: string) => (
+        <div
+            className="research-step-active flex items-center gap-3 overflow-hidden rounded-2xl border border-primary/15 bg-white/80 px-3 py-2.5 shadow-[0_14px_30px_rgba(18,130,79,0.08)]"
+            aria-live="polite"
+        >
+            <ResearchChaseIndicator className="shrink-0" />
+            <span className="text-sm font-medium text-text-primary">{label}</span>
+        </div>
+    )
+
+    const renderResearchTrail = (steps: string[]) => (
+        <div className="space-y-2 animate-in fade-in duration-300" aria-live="polite">
+            {steps.map((step, idx) => {
+                const isActiveStep = idx === steps.length - 1
+
+                return (
+                    <div
+                        key={`${step}-${idx}`}
+                        className={cn(
+                            "flex items-start gap-3 rounded-2xl border px-3 py-2.5 transition-all duration-300",
+                            isActiveStep
+                                ? "research-step-active overflow-hidden border-primary/15 bg-white/85 shadow-[0_14px_30px_rgba(18,130,79,0.08)]"
+                                : "border-transparent bg-white/45 opacity-70"
+                        )}
+                    >
+                        <div className="mt-0.5 flex h-5 w-6 shrink-0 items-center">
+                            {isActiveStep ? (
+                                <ResearchChaseIndicator />
+                            ) : (
+                                <div className="h-2.5 w-2.5 rounded-full bg-primary/35" />
+                            )}
+                        </div>
+                        <span
+                            className={cn(
+                                "text-sm font-medium leading-5",
+                                isActiveStep ? "text-text-primary" : "text-text-muted"
+                            )}
+                        >
+                            {step}
+                        </span>
+                    </div>
+                )
+            })}
+        </div>
+    )
+
+    const renderStatusTrail = (steps: string[]) => (
+        <div className="flex flex-col gap-2" aria-live="polite">
+            {steps.map((step, idx) => {
+                const distanceFromActive = steps.length - idx - 1
+                const isActiveStep = distanceFromActive === 0
+
+                return (
+                    <div
+                        key={`${step}-${idx}`}
+                        className={cn(
+                            "flex items-center gap-3 rounded-xl px-3 py-2 transition-all duration-300",
+                            isActiveStep
+                                ? "bg-primary/8 opacity-100 shadow-sm ring-1 ring-primary/10"
+                                : distanceFromActive === 1
+                                    ? "opacity-60"
+                                    : "opacity-35"
+                        )}
+                    >
+                        <div className="flex h-5 w-5 items-center justify-center">
+                            {isActiveStep ? (
+                                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                            ) : (
+                                <div className="h-2.5 w-2.5 rounded-full bg-primary/45" />
+                            )}
+                        </div>
+                        <span
+                            className={cn(
+                                "text-sm font-medium",
+                                isActiveStep ? "text-text-primary" : "text-text-muted"
+                            )}
+                        >
+                            {step}
+                        </span>
+                    </div>
+                )
+            })}
+        </div>
+    )
+
     const [activeFeatures, setActiveFeatures] = useState({
         deepResearch: false,
         webSearch: false,
         genImage: false,
     })
+    const routePreference: 'auto' | 'websearch_agent' | 'deep_research_agent' | 'image_generation_agent' =
+        activeFeatures.webSearch
+            ? 'websearch_agent'
+            : activeFeatures.genImage
+                ? 'image_generation_agent'
+                : activeFeatures.deepResearch
+                    ? 'deep_research_agent'
+                    : 'auto'
     const chatOptions = isFileChat
         ? {
             is_web_search_enabled: false,
             is_deep_research_enabled: false,
             is_generate_image_enabled: false,
+            route_preference: 'auto' as const,
         }
         : {
-            is_web_search_enabled: activeFeatures.webSearch,
-            is_deep_research_enabled: activeFeatures.deepResearch,
-            is_generate_image_enabled: activeFeatures.genImage,
+            is_web_search_enabled: true,
+            is_deep_research_enabled: false,
+            is_generate_image_enabled: true,
+            route_preference: routePreference,
         }
 
     const toggleFeature = (feature: keyof typeof activeFeatures) => {
-        setActiveFeatures(prev => ({ ...prev, [feature]: !prev[feature] }))
+        setActiveFeatures((prev) => {
+            const nextValue = !prev[feature]
+            if (!nextValue) {
+                return { ...prev, [feature]: false }
+            }
+
+            return {
+                deepResearch: false,
+                webSearch: false,
+                genImage: false,
+                [feature]: true,
+            }
+        })
     }
 
     useEffect(() => {
@@ -273,7 +421,12 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
             await useChatStore.getState().streamChat(
                 userMessage,
                 isFileChat ? 'file' : 'normal',
-                chatOptions
+                isFileChat
+                    ? {
+                        ...chatOptions,
+                        file_ids: selectedFileIds,
+                    }
+                    : chatOptions
             )
         } catch {
             setInput(prompt)
@@ -332,34 +485,22 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
                                 />
                             ))}
                             {/* Deep Research - show current status */}
-                            {activeFeatures.deepResearch && isCurrentChatLoading && (
-                                <div className="flex items-center gap-3 p-4 animate-in fade-in duration-300">
-                                    <div className="flex h-5 w-5 items-center justify-center">
-                                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                    </div>
-                                    <span className="text-sm font-medium text-text-muted">
-                                        {researchPhase === 'researching'
+                            {activeFeatures.deepResearch && isCurrentChatLoading && !hasStreamingAssistantMessage && (
+                                <div className="p-4 animate-in fade-in duration-300">
+                                    {renderResearchStatusCard(
+                                        researchPhase === 'researching'
                                             ? (currentStatusSteps.length > 0 ? currentStatusSteps[currentStatusSteps.length - 1] : 'Researching...')
                                             : researchPhase === 'planning'
                                                 ? 'Creating research plan...'
-                                                : (pendingPlan ? 'Review plan before starting...' : 'Processing...')}
-                                    </span>
+                                                : (pendingPlan ? 'Review plan before starting...' : 'Processing...')
+                                    )}
                                 </div>
                             )}
                             {/* Show status steps in Chat only when NOT using Deep Research */}
-                            {(isCurrentChatLoading || currentStatusSteps.length > 0) && !activeFeatures.deepResearch && (
-                                <div className="flex flex-col gap-2 p-4 animate-in fade-in duration-300">
-                                    {currentStatusSteps.length > 0 ? (
-                                        currentStatusSteps.map((step, idx) => (
-                                            <div key={idx} className="flex items-center gap-3">
-                                                <div className="flex h-5 w-5 items-center justify-center">
-                                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                                </div>
-                                                <span className="text-sm font-medium text-text-muted">
-                                                    {step}
-                                                </span>
-                                            </div>
-                                        ))
+                            {(currentStatusSteps.length > 0 || (isCurrentChatLoading && !hasStreamingAssistantMessage)) && !activeFeatures.deepResearch && (
+                                <div className="p-4 animate-in fade-in duration-300">
+                                    {visibleStatusSteps.length > 0 ? (
+                                        renderStatusTrail(visibleStatusSteps)
                                     ) : (
                                         <div className="text-sm text-text-muted">
                                             {isCurrentChatLoading && pendingPlan === null ? 'Processing...' : 
@@ -513,22 +654,11 @@ export function ChatInterface({ onFileCitationClick }: ChatInterfaceProps) {
                         <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
                             <div className="text-xs font-medium text-primary mb-2 uppercase tracking-wider">Current Task</div>
                             {currentStatusSteps.length > 0 ? (
-                                <div className="space-y-2">
-                                    {currentStatusSteps.map((step, idx) => (
-                                        <div key={idx} className="text-sm text-text-primary animate-in fade-in duration-300 flex items-start gap-2">
-                                            <Loader2 className="h-4 w-4 animate-spin text-primary mt-0.5 flex-shrink-0" />
-                                            <span>{step}</span>
-                                        </div>
-                                    ))}
-                                </div>
+                                renderResearchTrail(currentStatusSteps)
                             ) : isCurrentChatLoading && researchPhase === 'planning' ? (
-                                <div className="text-sm text-text-muted animate-pulse">
-                                    Creating research plan...
-                                </div>
+                                renderResearchStatusCard('Creating research plan...')
                             ) : isCurrentChatLoading && researchPhase === 'researching' ? (
-                                <div className="text-sm text-text-muted animate-pulse">
-                                    Researching...
-                                </div>
+                                renderResearchStatusCard('Researching...')
                             ) : (
                                 <div className="text-sm text-text-muted">
                                     {pendingPlan ? 'Review plan before starting...' : 'Waiting for input...'}

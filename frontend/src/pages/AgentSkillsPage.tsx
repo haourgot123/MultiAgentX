@@ -117,6 +117,7 @@ export default function AgentSkillsPage() {
         executionOutput,
         currentConversationId,
         executionRunsByConversation,
+        artifactsByConversation,
         lastExecutionError,
         fetchConversations,
         loadConversation,
@@ -232,6 +233,25 @@ export default function AgentSkillsPage() {
             return []
         }
 
+        const artifacts = artifactsByConversation[currentConversationId] || []
+        const artifactsByMessageId = artifacts.reduce<Map<number, OutputFile[]>>((map, artifact) => {
+            if (!artifact.message_id) {
+                return map
+            }
+
+            const artifactOutputFile: OutputFile = {
+                name: artifact.file_name,
+                size: artifact.size,
+                sandbox_index: -1,
+                download_url: artifact.download_url || `/skills/artifacts/${artifact.id}/download`,
+                blob_url: artifact.download_url,
+            }
+
+            const existingFiles = map.get(artifact.message_id) || []
+            map.set(artifact.message_id, [...existingFiles, artifactOutputFile])
+            return map
+        }, new Map<number, OutputFile[]>())
+
         return (executionRunsByConversation[currentConversationId] || []).map((run) => ({
             id: run.id,
             prompt: run.prompt,
@@ -246,23 +266,51 @@ export default function AgentSkillsPage() {
             usedSkills: run.skillIds
                 .map((skillId) => skillMap.get(skillId))
                 .filter((skill): skill is Skill => Boolean(skill)),
-            outputFiles: run.outputFiles,
+            outputFiles:
+                run.outputFiles && run.outputFiles.length > 0
+                    ? run.outputFiles
+                    : (
+                        run.assistantMessageId
+                            ? artifactsByMessageId.get(run.assistantMessageId)
+                            : undefined
+                    ),
             createdAt: run.createdAt,
         }))
-    }, [currentConversationId, executionRunsByConversation, files, skillMap])
+    }, [artifactsByConversation, currentConversationId, executionRunsByConversation, files, skillMap])
+
+    useEffect(() => {
+        if (!currentConversationId) {
+            return
+        }
+
+        if (Object.prototype.hasOwnProperty.call(executionRunsByConversation, currentConversationId)) {
+            return
+        }
+
+        void loadConversation(currentConversationId).catch((error) => {
+            if (!useAuthStore.getState().isAuthenticated) return
+            toast.error(error instanceof Error ? error.message : 'Failed to load Agent Skills conversation')
+        })
+    }, [currentConversationId, executionRunsByConversation, loadConversation])
 
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [, , , loadedConversations] = await Promise.all([
+                await Promise.all([
                     fetchSkills(),
                     fetchSandboxes(),
                     fetchFiles(),
-                    fetchConversations(),
                 ])
+                const loadedConversations = await fetchConversations()
+                const activeConversationId = useAgentSkillsStore.getState().currentConversationId
+                const conversationToLoad =
+                    activeConversationId &&
+                    loadedConversations.some((conversation) => conversation.id === activeConversationId)
+                        ? activeConversationId
+                        : loadedConversations[0]?.id
 
-                if (loadedConversations.length > 0) {
-                    await loadConversation(loadedConversations[0].id)
+                if (conversationToLoad) {
+                    await loadConversation(conversationToLoad)
                 }
             } catch (error) {
                 if (!useAuthStore.getState().isAuthenticated) return
@@ -271,12 +319,6 @@ export default function AgentSkillsPage() {
         }
 
         void loadData()
-
-        const interval = setInterval(() => {
-            void fetchSandboxes().catch(() => {})
-        }, 5000)
-
-        return () => clearInterval(interval)
     }, [fetchConversations, fetchFiles, fetchSandboxes, fetchSkills, loadConversation])
 
 
@@ -763,7 +805,12 @@ export default function AgentSkillsPage() {
                                                 {run.outputFiles && run.outputFiles.length > 0 && (
                                                     <div className="mt-3 space-y-2">
                                                         {run.outputFiles.map((file, index) => {
-                                                            const fileUrl = file.blob_url || `${API_BASE_URL}${file.download_url}`
+                                                            const fileUrl = file.blob_url
+                                                                || (
+                                                                    file.download_url?.startsWith('http')
+                                                                        ? file.download_url
+                                                                        : `${API_BASE_URL}${file.download_url}`
+                                                                )
                                                             return (
                                                                 <div
                                                                     key={`${file.name}-${index}`}

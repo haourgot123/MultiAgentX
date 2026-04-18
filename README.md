@@ -1,207 +1,220 @@
 # MultiAgentX
 
-MultiAgentX is a full-stack multi-agent chat platform with file-centric workflows and a RAG ingestion pipeline.
+MultiAgentX is a full-stack multi-agent chat platform with normal chat, file chat, RAG ingestion, long-term memory, and skill execution in Docker sandboxes.
 
-This repository includes:
-- A FastAPI backend
-- A React + Vite frontend
-- PostgreSQL for transactional data
-- Milvus for vector search
-- Docling-based document extraction (text + bounding boxes)
+The codebase currently consists of:
 
-## Key Features
+- A `FastAPI` backend with LangGraph-based agents
+- A `React 19 + Vite + Zustand` frontend
+- `PostgreSQL` for transactional data
+- `Milvus` for vector search
+- `Redis` for middleware/runtime support
+- `Azure Blob Storage` for uploaded files, skills, and generated artifacts
+- `Socket.IO` for ingestion/sandbox status updates
+- `SSE` for chat and skill execution streaming
 
-- User authentication (login/register/token)
-- Conversation management
-  - Normal chat
-  - File chat (attach files to conversations)
-- **Long-term Memory with Mem0** 🧠
-  - Persistent memory across sessions
-  - Automatic fact extraction from conversations
-  - Semantic search for relevant memories
-  - User-scoped memory isolation
-  - Integration with Milvus vector database
-- File management
-  - Upload, list, rename, download, delete
-  - Office files (`.docx`, `.xlsx`, `.pptx`, etc.) are converted to PDF via LibreOffice (`soffice`)
-- RAG data ingestion pipeline
-  - Parse document with Docling
-  - Extract text + page + bbox metadata
-  - Chunking
-  - Embedding with OpenAI `text-embedding-3-large`
-  - Store vectors in Milvus
-- Ingestion status tracking per file (`pending`, `processing`, `completed`, `failed`)
-- Multi-agent support
-  - General agent with intelligent routing
-  - Web search agent
-  - RAG agent
-  - Deep research agent
-  - Image generation agent
+## What The App Does
 
-## System Architecture
+- Auth flow with register, login, refresh token, logout, and self-service profile endpoints
+- Normal chat with agent routing
+- File chat backed by ingestion + retrieval
+- Web search, deep research, and image generation routes through dedicated agents
+- Long-term memory via `mem0` stored in Milvus
+- File upload, rename, download, delete, and per-file ingestion tracking
+- Office document upload with automatic PDF conversion via `soffice`
+- Skill upload (`.md` or `.zip`), selection, execution, sandbox inspection, and artifact download
+- Retrieval record storage for citation metadata and PDF highlighting
+
+## Agent Overview
+
+The backend currently includes these agent graphs:
+
+- `general_agent`
+- `rag_agent`
+- `websearch_agent`
+- `deep_research_agent`
+- `image_generation_agent`
+
+The general agent acts as the main router for regular chat requests.
+
+## Architecture
 
 ```text
 Frontend (React/Vite/Zustand)
-        |
-        v
-Backend API (FastAPI)
-  |        |                 \           \
-  |        |                  \           \
-  v        v                   v           v
-PostgreSQL Local file storage  Milvus   Azure OpenAI
-(transactional) (tmp/uploads)  (vector DB)  (LLM)
-
-Agent Memory Flow:
-User Message -> Memory Node -> Mem0 Search (Milvus) -> Route -> Answer -> Mem0 Store (async)
-
-Memory Collections in Milvus:
-- document_chunks: RAG retrieval
-- user_memories: Long-term agent memory
+  |-- REST -> FastAPI (/api/*)
+  |-- SSE  -> conversation chat + skill execution streams
+  |-- Socket.IO -> ingestion status + sandbox activity
+  |
+  v
+Backend
+  |-- LangGraph agents
+  |-- SQLAlchemy models/services
+  |-- Mem0 client
+  |-- Blob storage client
+  |
+  +--> PostgreSQL
+  +--> Redis
+  +--> Milvus
+  +--> Azure OpenAI / Azure OpenAI Image
+  +--> Azure Blob Storage
+  +--> Docker sandbox containers for skill execution
 ```
 
-## Repository Structure
+## Repository Layout
 
 ```text
 MultiAgentX/
-  alembic/                  # DB migrations
-  backend/
-    api/
-      token/                # auth endpoints
-      user/                 # user endpoints
-      files/                # file management
-      conversation/         # conversations + messages
-      data_ingestion/       # Docling + embedding + Milvus
-      meta/                 # metadata endpoints
-      revision/             # migration endpoints (admin)
-    config/
-    databases/
-    main.py                 # FastAPI app entry
-  frontend/
-    src/
-      components/
-      pages/
-      store/                # Zustand stores
-      lib/api.ts            # API client
-  docker-compose.yaml       # Redis, Postgres, Milvus stack
-  requirements.txt          # Python dependencies
+├── backend/
+│   ├── agents/               # LangGraph agents and prompts
+│   ├── api/                  # REST endpoints by domain
+│   ├── config/               # Environment-backed settings
+│   ├── databases/            # SQLAlchemy engine/session
+│   ├── memory/               # Mem0 integration
+│   ├── middleware/           # Request logging, rate limit, security headers
+│   ├── realtime/             # Socket.IO integration
+│   ├── utils/                # Auth, blob storage, logging, helpers
+│   ├── main.py               # FastAPI entrypoint
+│   └── cli.py                # Database/server CLI helpers
+├── frontend/
+│   ├── src/
+│   │   ├── components/       # Chat, PDF, user, UI components
+│   │   ├── layout/           # Application shell
+│   │   ├── lib/              # API client and helpers
+│   │   ├── pages/            # Files, file chat, agent skills
+│   │   └── store/            # Zustand stores
+│   └── e2e/                  # Playwright tests
+├── alembic/                  # DB migrations
+├── tests/                    # Root-level integration and utility tests
+├── docker-compose.yaml       # Redis, Postgres, etcd, MinIO, Milvus
+└── requirements.txt          # Backend dependencies
 ```
 
 ## Prerequisites
 
-- Python 3.11+ (3.11/3.12 recommended)
-- Node.js 18+
-- npm 9+
-- Docker + Docker Compose
-- LibreOffice (`soffice`) installed on host machine
-- (Recommended for OCR-heavy PDFs) Tesseract available for Docling OCR pipeline
+- Python `3.11+`
+- Node.js `18+`
+- npm
+- Docker and Docker Compose
+- LibreOffice (`soffice`) if you want Office files auto-converted to PDF
+- Access to:
+  - Azure OpenAI chat deployment
+  - Azure OpenAI embedding deployment
+  - Azure Blob Storage
+- Optional access to:
+  - Azure OpenAI image deployment
+  - Tavily or Google Search API for web search
+  - Anthropic or Azure Anthropic credentials for skill execution
 
-## Quick Start
+## Environment Setup
 
-### 1) Clone and prepare environment
+The backend reads environment variables from the repository root `.env`.
 
-```bash
-git clone <your-repo-url>
-cd MultiAgentX
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\\Scripts\\activate
-pip install -r requirements.txt
-```
-
-### 2) Configure environment variables
-
-Create/update `.env` in repository root:
+The example below covers the variables needed for the main local flow:
 
 ```env
 ENV=DEV
-LOG_LEVEL=DEBUG
+LOG_LEVEL=INFO
 LOG_FILE=logs/backend.log
-# LOG_LEVEL supported values: TRACE, DEBUG, INFO, SUCCESS, WARNING, ERROR, CRITICAL
 
-# HTTP middleware
-MIDDLEWARE_REQUEST_LOGGING_ENABLED=true
-MIDDLEWARE_RATE_LIMIT_ENABLED=true
-MIDDLEWARE_RATE_LIMIT_REQUESTS=120
-MIDDLEWARE_RATE_LIMIT_WINDOW_SECONDS=60
-MIDDLEWARE_RATE_LIMIT_EXCLUDED_PATHS=/docs,/redoc,/openapi.json,/socket.io,/healthz
-MIDDLEWARE_RATE_LIMIT_TRUST_X_FORWARDED_FOR=true
-MIDDLEWARE_SECURITY_HEADERS_ENABLED=true
-
-# PostgreSQL
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5435
 POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
+POSTGRES_PASSWORD=haonn
 POSTGRES_DB=multiagentx
 
-# Redis
 REDIS_URL=redis://localhost:6379/0
-
-# JWT
 JWT_SECRET_KEY=replace_me
 
-# Azure OpenAI GPT-5.1
 AZURE-OPENAI-GPT51-ENDPOINT=
 AZURE-OPENAI-GPT51-API-KEY=
 AZURE-OPENAI-GPT51-API-VERSION=2025-04-01-preview
 AZURE-OPENAI-GPT51-DEPLOYMENT-NAME=gpt-5.1
 
-# Azure OpenAI embeddings
 AZURE-OPENAI-EMBEDDING-ENDPOINT=
 AZURE-OPENAI-EMBEDDING-KEY=
-AZURE-OPENAI-EMBEDDING-DEPLOYMENT-NAME=text-embedding-3-large
 AZURE-OPENAI-EMBEDDING-API-VERSION=2023-05-15
+AZURE-OPENAI-EMBEDDING-DEPLOYMENT-NAME=text-embedding-3-large
 OPENAI_EMBEDDING_DIMENSION=3072
-OPENAI_EMBEDDING_BATCH_SIZE=32
-OPENAI_EMBEDDING_TIMEOUT_SECONDS=120
 
-# Milvus
 MILVUS_HOST=localhost
 MILVUS_PORT=19530
 MILVUS_COLLECTION_NAME=document_chunks
-MILVUS_METRIC_TYPE=COSINE
-MILVUS_INDEX_TYPE=IVF_FLAT
-MILVUS_INDEX_NLIST=1024
-MILVUS_CONSISTENCY_LEVEL=Strong
 
-# Mem0 Long-term Memory
 MEM0_ENABLE_LONG_TERM_MEMORY=true
-MEM0_VECTOR_STORE_PROVIDER=milvus
 MEM0_MILVUS_COLLECTION=user_memories
-MEM0_MEMORY_TOP_K=10
-MEM0_MEMORY_SCORE_THRESHOLD=0.5
-MEM0_HISTORY_DB_PATH=~/.mem0/history.db
+
+BLOB-CONNECTION-STRING=
+BLOB-CONTAINER=
+AZURE-ACCOUNT-NAME=
+AZURE-ACCOUNT-KEY=
+
+AZURE-OPENAI-IMAGE-ENDPOINT=
+AZURE-OPENAI-IMAGE-API-KEY=
+
+TAVILY_SEARCH_API_KEY=
+
+SKILLS_ENABLE_SANDBOX=true
+SKILLS_MAX_SANDBOXES=10
+SANDBOX_IMAGE=multiagentx-sandbox:latest
 ```
 
-### 3) Start infrastructure services
+Notes:
+
+- The checked-in `docker-compose.yaml` exposes PostgreSQL on port `5435` and uses password `haonn`.
+- The backend accepts several Azure variable aliases with either hyphenated or underscored names. The definitions live in `backend/config/config.py`.
+- File upload/download and persisted skill artifacts rely on Azure Blob Storage configuration.
+- Skill execution requires a running Docker daemon and valid model credentials for the skill runtime.
+
+For the frontend, create `frontend/.env` if you need non-default endpoints:
+
+```env
+VITE_API_BASE_URL=http://localhost:8000/api
+VITE_SOCKET_BASE_URL=http://localhost:8000
+```
+
+## Local Development
+
+### 1. Install backend dependencies
 
 ```bash
-docker compose up -d redis pgvector etcd minio milvus
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-Default ports:
+### 2. Start infrastructure
+
+```bash
+docker compose up -d redis postgres etcd minio milvus
+```
+
+Default local ports from `docker-compose.yaml`:
+
 - PostgreSQL: `5435`
 - Redis: `6379`
 - Milvus: `19530`
 - Milvus health/API: `9091`
-- MinIO: `9000` (API), `9001` (console)
+- MinIO API: `9000`
+- MinIO console: `9001`
 
-### 4) Run database migrations
+### 3. Run database migrations
 
 ```bash
 alembic upgrade head
 ```
 
-### 5) Start backend
+### 4. Start the backend
 
 ```bash
 uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-API docs:
-- Swagger: `http://localhost:8000/docs`
+Docs:
+
+- Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
-### 6) Start frontend
+### 5. Start the frontend
 
 ```bash
 cd frontend
@@ -210,31 +223,72 @@ npm run dev
 ```
 
 Frontend default URL:
+
 - `http://localhost:5173`
 
-Set backend base URL for frontend if needed:
+## Useful Commands
 
-```env
-VITE_API_BASE_URL=http://localhost:8000/api
+### Backend
+
+```bash
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+pytest backend/api/tests -q
+pytest backend/agents/tests -q
+pytest tests -q
+alembic upgrade head
+python -m backend.cli database upgrade
 ```
 
-## API Overview
+### Frontend
 
-Base prefix: `/api`
+```bash
+cd frontend && npm run dev
+cd frontend && npm run build
+cd frontend && npm run lint
+cd frontend && npm run test
+cd frontend && npm run test:e2e
+```
 
-### Authentication
-- `POST /authentication/login`
+## Frontend Routes
+
+The app currently exposes these main pages:
+
+- `/` - main chat
+- `/files` - file management
+- `/chat-file` - file chat with citations/PDF context
+- `/agent-skills` - skill management and sandbox execution
+- `/login`
+- `/register`
+
+## API Surface
+
+All backend routes are mounted under `/api`.
+
+Authentication:
+
 - `POST /authentication/register`
+- `POST /authentication/login`
 - `POST /authentication/access`
 
-### Files
+User:
+
+- `GET /user/me?user_id={user_id}`
+- `PUT /user/me/information?user_id={user_id}`
+- `PUT /user/me/password?user_id={user_id}`
+- `POST /user/logout?user_id={user_id}`
+
+Files:
+
 - `GET /files`
 - `POST /files/upload`
 - `PATCH /files/{file_id}`
+- `GET /files/{file_id}/sas`
+- `POST /files/sas`
 - `GET /files/{file_id}/download`
 - `DELETE /files/{file_id}`
 
-### Conversations
+Conversations:
+
 - `GET /conversations`
 - `POST /conversations`
 - `GET /conversations/{conversation_id}`
@@ -242,164 +296,91 @@ Base prefix: `/api`
 - `DELETE /conversations/{conversation_id}`
 - `PUT /conversations/{conversation_id}/files`
 - `POST /conversations/{conversation_id}/messages`
+- `POST /conversations/chat`
+- `POST /conversations/deep-research/plan`
+- `POST /conversations/deep-research/approve`
+- `GET /conversations/{conversation_id}/messages/{message_id}/retrievals`
 
-### Data Ingestion
+Data ingestion:
+
 - `GET /ingestion/files/{file_id}/status`
 - `POST /ingestion/files/{file_id}/run`
 - `POST /ingestion/files/run`
-- `GET /ingestion/collections` (list Milvus collections)
-- `GET /ingestion/chunks` (query: `user_id?`, `file_id?`, `limit`, `offset`)
-- `GET /ingestion/files/{file_id}/chunks` (query: `limit`, `offset`)
+- `GET /ingestion/collections`
+- `GET /ingestion/chunks`
+- `GET /ingestion/files/{file_id}/chunks`
 
-### Meta
+Memory:
+
+- `GET /memories`
+- `POST /memories`
+- `POST /memories/search`
+- `PATCH /memories/{memory_id}`
+- `DELETE /memories/{memory_id}`
+- `DELETE /memories/clear/all`
+
+Skills:
+
+- `GET /skills`
+- `POST /skills/upload`
+- `PATCH /skills/{skill_id}`
+- `DELETE /skills/{skill_id}`
+- `POST /skills/select`
+- `POST /skills/execute`
+- `GET /skills/sandboxes/list`
+- `GET /skills/sandboxes/{sandbox_index}/files`
+- `GET /skills/sandboxes/{sandbox_index}/files/{filename}/preview`
+- `GET /skills/sandboxes/{sandbox_index}/files/{filename}`
+- `GET /skills/artifacts/{conversation_id}`
+- `GET /skills/artifacts/{artifact_id}/download`
+
+Other:
+
 - `GET /meta/phone-countries`
+- `POST /revision/upgrade` - admin only
+- `POST /revision/downgrade` - admin only
 
-### User / Revision
-- `/user/*` endpoints (token required)
-- `/revision/*` endpoints (admin only)
+## Streaming And Realtime Notes
 
-### Memory Management (Mem0 Integration)
-- `GET /memories` - Get all user memories
-- `POST /memories/search` - Search memories
-- `DELETE /memories/clear` - Clear all user memories
+- Chat responses use `text/event-stream`
+- Skill execution also streams progress over `text/event-stream`
+- File ingestion and sandbox updates use Socket.IO
+- The frontend sends auth using the `Token` header, not `Authorization: Bearer`
 
-See [docs/mem0-integration.md](docs/mem0-integration.md) for detailed documentation.
+## File And Ingestion Flow
 
-## Upload and Ingestion Flow
+1. Upload file through `/api/files/upload`
+2. Backend stores file metadata in PostgreSQL and content in Azure Blob Storage
+3. Office files are converted to PDF locally with LibreOffice before upload
+4. Ingestion reads the blob back into a temp file
+5. Docling extracts document structure and chunk metadata
+6. Embeddings are generated and inserted into Milvus
+7. File chat uses retrieval results and stores retrieval records for later highlighting
 
-1. User uploads one or more files via `POST /api/files/upload`
-2. Backend saves files to local storage (`tmp/uploads/{user_id}/...`)
-3. If uploaded file is office format, backend converts it to PDF using LibreOffice
-4. Backend creates `FileAsset` records with ingestion status `pending`
-5. Ingestion runs when client explicitly calls ingestion run API
-6. Ingestion service:
-   - Extracts document blocks using Docling
-   - Reads text, page number, and bounding boxes
-   - Builds chunks with overlap
-   - Calls OpenAI embeddings (`text-embedding-3-large`)
-   - Upserts vectors into Milvus
-7. File status is updated to `completed` or `failed`
+## Skill Flow
 
-## Milvus Collection Schema (Current)
+1. Upload a skill as `.md` or `.zip`
+2. The backend extracts `SKILL.md`, stores metadata in PostgreSQL, and keeps a local working copy
+3. The raw upload is also persisted to Blob Storage when configured
+4. Selected skills can be executed in a Docker sandbox
+5. Output files are exposed for preview/download and persisted as conversation artifacts
 
-Collection name: from `MILVUS_COLLECTION_NAME` (default `document_chunks`)
+## Testing
 
-Stored fields include:
-- `id` (`{user_id}:{file_id}:{chunk_index}`)
-- `user_id`
-- `file_id`
-- `chunk_index`
-- `page_no`
-- `file_name`
-- `mime_type`
-- `text`
-- `bbox` (JSON string payload of source bounding boxes)
-- `metadata_json` (JSON metadata for filter/rerank contexts, including `user_id`, `file_id`, `file_name`, `mime_type`, `chunk_index`, `page_no`)
-- `created_unix`
-- `vector` (float vector, dim=3072 by default)
+Backend tests are split across:
 
-## Mem0 Long-term Memory
+- `backend/api/tests`
+- `backend/agents/tests`
+- `tests`
 
-MultiAgentX integrates with **Mem0** for persistent, cross-session long-term memory, enabling agents to remember user preferences, facts, and context across conversations.
+Frontend tests include:
 
-### Memory Collections in Milvus
+- Vitest unit tests alongside components/stores
+- Playwright E2E tests under `frontend/e2e`
 
-| Collection | Purpose | Dimensions | Usage |
-|------------|---------|------------|-------|
-| `document_chunks` | RAG document retrieval | 3072 | File-based Q&A |
-| `user_memories` | Long-term agent memory | 3072 | Cross-session context |
+## Current Implementation Notes
 
-### How It Works
-
-1. **Memory Storage**: When a conversation ends, Mem0 uses Azure OpenAI GPT-5.1 to extract facts
-2. **Vector Embedding**: Facts are embedded using `text-embedding-3-large` (3072 dims)
-3. **Storage**: Embeddings stored in Milvus `user_memories` collection with user scope
-4. **Retrieval**: On new messages, semantic search retrieves relevant past memories
-5. **Context**: Memories injected into agent context for personalized responses
-
-### Example Flow
-
-```
-Conversation 1:
-User: "My name is Alex and I like pizza"
-Assistant: "Nice to meet you, Alex!"
-[Mem0 stores: "User's name is Alex", "User likes pizza"]
-
-Conversation 2 (new session):
-User: "What do you know about me?"
-[Mem0 retrieves relevant facts]
-Assistant: "Your name is Alex and you enjoy pizza!"
-```
-
-### Features
-
-- ✅ **Persistent Memory**: Survives across sessions
-- ✅ **Semantic Search**: Find relevant memories
-- ✅ **User Isolation**: Per-user memory scope
-- ✅ **Auto Extraction**: LLM extracts facts automatically
-- ✅ **Graceful Degradation**: Works without memory if needed
-
-See [docs/mem0-integration.md](docs/mem0-integration.md) for full documentation.
-
-## Development Commands
-
-Backend checks:
-
-```bash
-python -m compileall backend alembic
-pytest backend/api/tests -q
-```
-
-Frontend checks:
-
-```bash
-cd frontend
-npm run lint
-npm run build
-```
-
-## Troubleshooting
-
-### `LibreOffice is not installed`
-Install LibreOffice and ensure `soffice` is in PATH.
-
-### `Docling is not installed`
-Reinstall dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-### `Milvus client is not installed`
-Ensure `pymilvus` is installed (included in `requirements.txt`).
-
-### Ingestion stays `failed`
-- Check backend logs
-- Check OpenAI API key and quota
-- Check Milvus connectivity (`MILVUS_HOST`, `MILVUS_PORT`)
-- Check file exists in local storage path
-
-### Frontend cannot call backend
-- Verify `VITE_API_BASE_URL`
-- Verify backend is running on `:8000`
-- Verify token is present in request headers
-
-## Security Notes
-
-- Do not commit real API keys to source control.
-- Rotate any key that has ever been exposed in plain text.
-- Use separate credentials for local/dev/prod.
-
-## Current Scope and Limitations
-
-- Conversation message endpoint currently stores messages; full LLM response orchestration is not yet implemented server-side.
-- RAG indexing is implemented; retrieval + grounded answer generation pipeline should be added in chat runtime for end-to-end QA.
-
----
-
-If you need, this README can be split into:
-- `docs/backend.md`
-- `docs/frontend.md`
-- `docs/ingestion-rag.md`
-- `docs/deployment.md`
-for easier long-term maintenance.
+- `backend.main:app` is the correct ASGI target for local development
+- Socket.IO is used for ingestion/sandbox state, not for assistant token streaming
+- The skills page is a first-class feature in the current codebase and should be considered part of the main product surface
+- Some legacy config classes still exist in `backend/config/config.py`, but the active stack is PostgreSQL + Milvus + Redis + Blob Storage

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional, List
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, UnicodeText, JSON
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, UnicodeText, JSON, UniqueConstraint
 
 from backend.databases.db import Base
 
@@ -30,16 +30,21 @@ class AgentSkill(Base):
 
 
 class SandboxSession(Base):
-    """Tracks 10 sandbox instances for skill execution."""
+    """Tracks global sandbox slots for skill execution."""
     __tablename__ = "SandboxSession"
+    __table_args__ = (
+        UniqueConstraint("sandbox_index", name="uq_sandbox_session_index"),
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(
-        Integer, ForeignKey("User.id", ondelete="CASCADE"), index=True, nullable=False
+        Integer, ForeignKey("User.id", ondelete="SET NULL"), index=True, nullable=True
     )
-    sandbox_index = Column(Integer, nullable=False)
-    status = Column(UnicodeText, nullable=False, default="ready")
-    current_skill_id = Column(Integer, ForeignKey("AgentSkill.id", ondelete="SET NULL"), nullable=True)
+    sandbox_index = Column(Integer, index=True, nullable=False)
+    status = Column(UnicodeText, index=True, nullable=False, default="ready")
+    current_skill_id = Column(
+        Integer, ForeignKey("AgentSkill.id", ondelete="SET NULL"), nullable=True
+    )
     task_description = Column(UnicodeText, nullable=True)
     progress = Column(Integer, nullable=False, default=0)
     cwd = Column(UnicodeText, nullable=True)
@@ -139,6 +144,19 @@ class SandboxStatusUpdate(BaseModel):
     status: str = Field(..., description="New status")
     progress: Optional[int] = Field(None, description="Progress percentage")
     message: Optional[str] = Field(None, description="Status message")
+
+
+class SandboxSocketEvent(BaseModel):
+    id: int = Field(..., description="Sandbox session ID")
+    user_id: Optional[int] = Field(None, description="Current owner user id")
+    sandbox_index: int = Field(..., description="Sandbox index (0-9)")
+    status: str = Field(..., description="Sandbox status")
+    current_skill_id: Optional[int] = Field(None, description="Current skill id")
+    task_description: Optional[str] = Field(None, description="Current task description")
+    progress: int = Field(..., ge=0, le=100, description="Progress percentage")
+    started_at: Optional[datetime] = Field(None, description="Task start timestamp")
+    completed_at: Optional[datetime] = Field(None, description="Task completion timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
 
 
 class SkillExecutionArtifactResponse(BaseModel):

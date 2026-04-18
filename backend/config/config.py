@@ -487,6 +487,18 @@ class SkillsConfig:
     # Sandbox configuration
     sandbox_base_dir: str = _env("SKILLS_SANDBOX_BASE_DIR", default="tmp/skills")
     max_sandboxes: int = _env_int("SKILLS_MAX_SANDBOXES", default=10)
+    global_pool_size: int = _env_int(
+        "GLOBAL_SANDBOX_POOL_SIZE",
+        default=_env_int("SKILLS_MAX_SANDBOXES", default=10),
+    )
+    global_queue_timeout_seconds: int = _env_int(
+        "GLOBAL_SANDBOX_QUEUE_TIMEOUT_SECONDS",
+        default=15,
+    )
+    global_idle_ttl_seconds: int = _env_int(
+        "GLOBAL_SANDBOX_IDLE_TTL_SECONDS",
+        default=900,
+    )
 
     # Claude Code model settings
     default_model: str = _env("SKILLS_DEFAULT_MODEL", default="claude-sonnet-4-5")
