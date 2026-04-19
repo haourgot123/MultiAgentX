@@ -925,6 +925,14 @@ class SandboxService:
         )
 
     @staticmethod
+    def _coerce_utc_datetime(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @staticmethod
     def _is_public_owner(viewer_user_id: int, sandbox: SandboxSession) -> bool:
         return sandbox.user_id == viewer_user_id and sandbox.status == "busy"
 
@@ -1025,9 +1033,10 @@ class SandboxService:
         )
 
         for sandbox in sandboxes:
-            if sandbox.updated_at is None:
+            updated_at = self._coerce_utc_datetime(sandbox.updated_at)
+            if updated_at is None:
                 continue
-            age = (now - sandbox.updated_at).total_seconds()
+            age = (now - updated_at).total_seconds()
             if age < self.idle_ttl_seconds:
                 continue
             if self.docker_manager.get_container_status(sandbox.sandbox_index):
