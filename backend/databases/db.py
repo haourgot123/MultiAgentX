@@ -21,7 +21,18 @@ from backend.exceptions.model import InvalidJoinFieldException
 from backend.utils.constants import Message
 
 Base = declarative_base()
-engine: Engine = create_engine(_settings.postgres.url)
+_engine_kwargs = {"pool_pre_ping": True}
+if not str(_settings.postgres.url).startswith("sqlite"):
+    _engine_kwargs.update(
+        {
+            "pool_size": _settings.postgres.pool_size,
+            "max_overflow": _settings.postgres.max_overflow,
+            "pool_timeout": _settings.postgres.pool_timeout,
+            "pool_recycle": _settings.postgres.pool_recycle,
+        }
+    )
+
+engine: Engine = create_engine(_settings.postgres.url, **_engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

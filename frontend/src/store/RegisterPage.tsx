@@ -20,6 +20,7 @@ import { useNavigate } from "react-router-dom"
 import { useState, useMemo, useEffect } from "react"
 import { toast } from "sonner"
 import { useAuthStore } from "@/store/auth-store"
+import { API_BASE_URL } from "@/lib/api"
 import axios from "axios"
 
 type RegisterForm = {
@@ -93,7 +94,7 @@ export default function RegisterPage() {
     const fetchCountries = async () => {
       try {
         const response = await axios.get<PhoneNumberSupport>(
-          "http://localhost:8000/api/meta/phone-countries"
+          `${API_BASE_URL}/meta/phone-countries`
         )
         setCountries(response.data)
         setLoadingCountries(false)
@@ -165,7 +166,7 @@ export default function RegisterPage() {
         toast.error("Register failed")
         setError("Register failed. Please try again.")
       }
-    } catch (err) {
+    } catch {
       toast.error("Register failed")
       setError("Register failed. Please try again.")
     }

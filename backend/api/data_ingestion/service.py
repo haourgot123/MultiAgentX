@@ -64,7 +64,11 @@ class DataIngestionService:
     ) -> StoredFile:
         stored_file = (
             db_session.query(StoredFile)
-            .filter(StoredFile.id == file_id, StoredFile.user_id == user_id)
+            .filter(
+                StoredFile.id == file_id,
+                StoredFile.user_id == user_id,
+                StoredFile.deleted_at.is_(None),
+            )
             .first()
         )
         if not stored_file:

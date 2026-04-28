@@ -40,6 +40,8 @@ class Conversation(Base):
     title = Column(UnicodeText, nullable=False, default="New Chat")
     chat_type = Column(UnicodeText, nullable=False, default="normal")
     deleted_at = Column(DateTime(timezone=True), nullable=True)
+    purge_after = Column(DateTime(timezone=True), nullable=True)
+    purged_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -115,6 +117,7 @@ class RetrievalRecord(Base):
     relevance_score = Column(UnicodeText, nullable=True)
 
     created_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class ConversationCreateRequest(BaseModel):

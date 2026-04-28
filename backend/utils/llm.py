@@ -13,3 +13,14 @@ azure_chat_openai_gpt_5_1 = AzureChatOpenAI(
     presence_penalty=0.0,
     frequency_penalty=0.0
 )
+
+try:
+    azure_openai_embeddings = AzureOpenAIEmbeddings(
+        api_key=_settings.openai_embedding.api_key,
+        api_version=_settings.openai_embedding.api_version,
+        azure_endpoint=_settings.openai_embedding.endpoint,
+        azure_deployment=_settings.openai_embedding.embedding_model,
+        dimensions=_settings.openai_embedding.embedding_dimension,
+    )
+except Exception:
+    azure_openai_embeddings = None

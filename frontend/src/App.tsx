@@ -8,6 +8,7 @@ const ChatInterface = lazy(() => import('./components/chat/ChatInterface').then(
 const FilesPage = lazy(() => import('./pages/FilesPage'))
 const ChatWithFilePage = lazy(() => import('./pages/ChatWithFilePage'))
 const AgentSkillsPage = lazy(() => import('./pages/AgentSkillsPage'))
+const VideoStudioPage = lazy(() => import('./pages/VideoStudioPage'))
 const LoginPage = lazy(() => import('./store/LoginPage'))
 const RegisterPage = lazy(() => import('./store/RegisterPage'))
 
@@ -60,6 +61,10 @@ const router = createBrowserRouter([
       {
         path: 'agent-skills',
         element: withSuspense(<AgentSkillsPage />)
+      },
+      {
+        path: 'video',
+        element: withSuspense(<VideoStudioPage />)
       }
     ]
   }

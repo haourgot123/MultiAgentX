@@ -2,7 +2,7 @@ from langchain.tools import tool
 from abc import ABC, abstractmethod
 from backend.config.settings import _settings
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from langchain.tools import tool, ToolRuntime
 from langgraph.types import Command
 
@@ -11,10 +11,13 @@ class SearchResults(BaseModel):
     title: str
     url: str
     snippet: str
+    images: list[str] = Field(default_factory=list)
 
 class SearchRequest(BaseModel):
     query: str
     total_results: int = 4
+    include_images: bool = False
+    include_image_descriptions: bool = False
 
 class SearchServiceBase(ABC):
     @abstractmethod
@@ -62,13 +65,33 @@ class TavilySearchService(SearchServiceBase):
         self.tavily_search_search_depth = _settings.tavily_search.search_depth
         self.tavily_search_exclude_domains = _settings.tavily_search.exclude_domains
 
+    @staticmethod
+    def _extract_image_urls(raw_images) -> list[str]:
+        urls: list[str] = []
+        if not isinstance(raw_images, list):
+            return urls
+
+        for image in raw_images:
+            if isinstance(image, str):
+                url = image
+            elif isinstance(image, dict):
+                url = image.get("url") or image.get("src") or ""
+            else:
+                url = ""
+
+            if isinstance(url, str) and url.startswith(("http://", "https://")):
+                urls.append(url)
+        return urls
+
     async def search(self, search_request: SearchRequest) -> list[SearchResults]:
         params = {
             "query": search_request.query,
             "max_results": search_request.total_results,
             "include_answer": self.tavily_search_include_answer,
             "search_depth": self.tavily_search_search_depth,
-            "exclude_domains": self.tavily_search_exclude_domains
+            "exclude_domains": self.tavily_search_exclude_domains,
+            "include_images": search_request.include_images,
+            "include_image_descriptions": search_request.include_image_descriptions,
         }
 
         async with httpx.AsyncClient(verify=False) as client:
@@ -85,14 +108,32 @@ class TavilySearchService(SearchServiceBase):
         if response.status_code == 200:
             response_json = response.json()
             items = response_json.get("results", [])
-            return [
+            top_level_images = self._extract_image_urls(response_json.get("images", []))
+            results = [
                 SearchResults(
                     title=item.get("title"), 
                     url=item.get("url"), 
-                    snippet=item.get("content")
+                    snippet=item.get("content"),
+                    images=self._extract_image_urls(item.get("images", [])),
                 ) 
                 for item in items
             ]
+
+            if top_level_images:
+                if results:
+                    merged = list(dict.fromkeys([*results[0].images, *top_level_images]))
+                    results[0].images = merged
+                else:
+                    results.append(
+                        SearchResults(
+                            title=f"Images for {search_request.query}",
+                            url="",
+                            snippet="Image search results",
+                            images=top_level_images,
+                        )
+                    )
+
+            return results
             
         else:
             raise httpx.HTTPStatusError(

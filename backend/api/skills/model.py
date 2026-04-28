@@ -25,6 +25,9 @@ class AgentSkill(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     is_selected = Column(Boolean, nullable=False, default=True)
     size = Column(BigInteger, nullable=False, default=0)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    purge_after = Column(DateTime(timezone=True), nullable=True)
+    purged_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -77,7 +80,11 @@ class SkillExecutionArtifact(Base):
     blob_path = Column(UnicodeText, nullable=False)
     content_type = Column(UnicodeText, nullable=True)
     size = Column(BigInteger, nullable=False, default=0)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    purge_after = Column(DateTime(timezone=True), nullable=True)
+    purged_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
 
 
 # Pydantic Models for API

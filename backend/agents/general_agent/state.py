@@ -16,6 +16,7 @@ class GeneralAgentState(BaseModel):
     is_deep_research_enabled: bool
     is_generate_image_enabled: bool
     route_preference: str = "auto"
+    file_ids: List[int] = []
     websearch_results: List[SearchResults] = []
     route: str = ""
     output: str = ""
@@ -25,6 +26,7 @@ class Node(Enum):
     general_agent_route_node = auto()
     general_agent_answer_node = auto()
     general_agent_memory_node = auto()
+    general_agent_stream_node = auto()
     websearch_agent_transform_query_node = auto()
     websearch_agent_search_node = auto()
     websearch_agent_stream_node = auto()

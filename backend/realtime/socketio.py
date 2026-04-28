@@ -7,6 +7,7 @@ from urllib.parse import parse_qs
 import socketio
 from loguru import logger
 
+from backend.config.settings import _settings
 from backend.utils.authentic import verify_access_token
 
 
@@ -14,7 +15,7 @@ class SocketIOManager:
     def __init__(self) -> None:
         self.sio = socketio.AsyncServer(
             async_mode="asgi",
-            cors_allowed_origins="*",
+            cors_allowed_origins=_settings.api.cors_origins,
             logger=False,
             engineio_logger=False,
         )

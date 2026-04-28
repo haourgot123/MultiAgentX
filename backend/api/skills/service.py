@@ -37,6 +37,7 @@ from backend.exceptions.model import InvalidRequestException, ObjectNotFoundExce
 from backend.realtime.socketio import socketio_manager
 from backend.utils.blob_storage import blob_storage_client
 from backend.utils.constants import Message
+from backend.utils.retention import mark_for_retention_delete
 
 service_logger = logger.bind(service="skill-service")
 
@@ -96,7 +97,11 @@ class SkillService:
     ) -> AgentSkill:
         skill = (
             db_session.query(AgentSkill)
-            .filter(AgentSkill.id == skill_id, AgentSkill.user_id == user_id)
+            .filter(
+                AgentSkill.id == skill_id,
+                AgentSkill.user_id == user_id,
+                AgentSkill.deleted_at.is_(None),
+            )
             .first()
         )
         if not skill:
@@ -110,7 +115,10 @@ class SkillService:
         request_logger = self._get_request_logger(request, user_id)
         skills = (
             db_session.query(AgentSkill)
-            .filter(AgentSkill.user_id == user_id)
+            .filter(
+                AgentSkill.user_id == user_id,
+                AgentSkill.deleted_at.is_(None),
+            )
             .order_by(AgentSkill.created_at.desc())
             .all()
         )
@@ -274,28 +282,16 @@ class SkillService:
         request_logger = self._get_request_logger(request, user_id)
         skill = self._get_user_skill(db_session, user_id, skill_id, request_logger)
 
-        storage_path = Path(str(skill.storage_path))
-        blob_path = skill.blob_path
-        db_session.delete(skill)
+        mark_for_retention_delete(skill)
+        skill.is_active = False
+        skill.is_selected = False
         db_session.commit()
 
-        # Delete from Azure Blob Storage
-        if blob_path:
-            try:
-                blob_storage_client.delete_blob(blob_path)
-            except Exception as exc:
-                request_logger.warning("Failed to delete skill blob path={}: {}", blob_path, exc)
-
-        if storage_path.exists():
-            try:
-                if storage_path.is_dir():
-                    shutil.rmtree(storage_path)
-                else:
-                    storage_path.unlink(missing_ok=True)
-            except OSError as e:
-                request_logger.warning("Unable to remove skill: {}", e)
-
-        request_logger.info("Deleted skill id={}", skill_id)
+        request_logger.info(
+            "Soft deleted skill id={} purge_after={}",
+            skill_id,
+            skill.purge_after,
+        )
         return {"message": "Skill deleted successfully"}
 
     def toggle_skill_selection(
@@ -348,7 +344,11 @@ class SkillService:
 
             existing = (
                 db_session.query(AgentSkill)
-                .filter(AgentSkill.user_id == user_id, AgentSkill.name == skill_name)
+                .filter(
+                    AgentSkill.user_id == user_id,
+                    AgentSkill.name == skill_name,
+                    AgentSkill.deleted_at.is_(None),
+                )
                 .first()
             )
             if existing:
@@ -1277,6 +1277,7 @@ class SandboxService:
                 AgentSkill.user_id == user_id,
                 AgentSkill.id.in_(skill_ids) if skill_ids else AgentSkill.is_selected == True,
                 AgentSkill.is_active == True,
+                AgentSkill.deleted_at.is_(None),
             )
             .all()
         )
@@ -1518,6 +1519,7 @@ class SandboxService:
                         ),
                         size=attachment["size"],
                         created_at=get_utc_now(),
+                        updated_at=get_utc_now(),
                     )
                     db_session.add(artifact)
                 except Exception as artifact_exc:

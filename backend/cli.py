@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -6,8 +7,9 @@ import uvicorn
 
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
+from backend.api.data_retention.service import data_retention_service
 from backend.config.settings import _settings
-from backend.databases.db import Base, engine
+from backend.databases.db import Base, SessionLocal, engine
 from backend.utils.logging import configure_logging
 
 BASE_DIR = Path(__file__).resolve().parent.parent  # MultiAgentX/
@@ -37,11 +39,17 @@ def chatfile_server():
     pass
 
 
+@chatfile_cli.group("retention")
+def chatfile_retention():
+    """Retention, purge, and blob backfill commands."""
+    pass
+
+
 @chatfile_server.command("start")
 def server_start():
     configure_logging()
     uvicorn.run(
-        "app.main:app",
+        "backend.main:app",
         port=8300,
         host="0.0.0.0",
         log_level=_settings.logging.log_level.lower(),
@@ -52,7 +60,7 @@ def server_start():
 def server_develop():
     configure_logging()
     uvicorn.run(
-        "app.main:socket_app",
+        "backend.main:socket_app",
         reload=True,
         port=8000,
         host="0.0.0.0",
@@ -68,6 +76,50 @@ def init_database():
     alembic_cfg = AlembicConfig(alembic_path)
     alembic_command.stamp(alembic_cfg, "head")
     click.secho("Success.", fg="green")
+
+
+@chatfile_retention.command("purge")
+@click.option("--dry-run", is_flag=True, help="Report eligible resources without purging.")
+@click.option(
+    "--batch-size",
+    default=None,
+    type=int,
+    help="Maximum records to process per resource type.",
+)
+def purge_retention(dry_run, batch_size):
+    """Purge expired soft-deleted blobs/vectors after the retention window."""
+    session = SessionLocal()
+    try:
+        result = data_retention_service.purge_due_records(
+            session,
+            batch_size=batch_size,
+            dry_run=dry_run,
+        )
+        click.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    finally:
+        session.close()
+
+
+@chatfile_retention.command("backfill-skill-blobs")
+@click.option("--dry-run", is_flag=True, help="Report skills without uploading blobs.")
+@click.option(
+    "--batch-size",
+    default=None,
+    type=int,
+    help="Maximum skills to backfill.",
+)
+def backfill_skill_blobs(dry_run, batch_size):
+    """Upload local-only AgentSkill records to blob storage."""
+    session = SessionLocal()
+    try:
+        result = data_retention_service.backfill_skill_blob_paths(
+            session,
+            batch_size=batch_size,
+            dry_run=dry_run,
+        )
+        click.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    finally:
+        session.close()
 
 
 @chatfile_database.command("revision")

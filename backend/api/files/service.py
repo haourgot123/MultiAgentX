@@ -18,6 +18,7 @@ from backend.databases.db import get_utc_now
 from backend.exceptions.model import InvalidRequestException, ObjectNotFoundException
 from backend.utils.blob_storage import blob_storage_client
 from backend.utils.constants import Message
+from backend.utils.retention import mark_for_retention_delete
 
 service_logger = logger.bind(service="file-service")
 
@@ -316,41 +317,16 @@ class FileService:
                 message="This file is attached to an active conversation and cannot be deleted."
             )
 
-        blob_path = stored_file.storage_path
-        deleting_file_id = stored_file.id
         now = get_utc_now()
-        request_logger.info("Soft deleting file and vectors")
+        request_logger.info("Soft deleting file; blob/vector purge deferred")
 
-        stored_file.deleted_at = now
-        stored_file.updated_at = now
+        mark_for_retention_delete(stored_file, now)
         db_session.commit()
 
-        try:
-            from backend.api.data_ingestion.service import data_ingestion_service
-
-            data_ingestion_service.delete_file_vectors(
-                user_id=user_id,
-                file_id=deleting_file_id,
-                request=request,
-            )
-        except Exception as e:
-            request_logger.warning(
-                "Failed to remove vectors in Milvus for file_id={}: {}",
-                deleting_file_id,
-                e,
-            )
-
-        # Delete from Azure Blob Storage
-        try:
-            blob_storage_client.delete_blob(blob_path)
-        except Exception as e:
-            request_logger.warning(
-                "Unable to remove blob from Azure Storage: {}. {}",
-                blob_path,
-                e,
-            )
-
-        request_logger.info("Soft deleted file successfully")
+        request_logger.info(
+            "Soft deleted file successfully; purge_after={}",
+            stored_file.purge_after,
+        )
 
         return {"message": Message.MESSAGE_FILE_DELETED_SUCCESSFULLY}
 

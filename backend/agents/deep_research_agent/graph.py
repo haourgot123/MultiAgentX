@@ -48,6 +48,17 @@ class DeepResearchAgentGraph:
         self.graph.add_node(Node.deep_research_agent_analyze_node.name, AnalyzeNode().ainvoke)
         self.graph.add_node(Node.deep_research_agent_should_continue_node.name, ShouldContinueNode().ainvoke)
         self.graph.add_node(Node.deep_research_agent_synthesize_node.name, SynthesizeNode().ainvoke)
+        self.graph.add_node(Node.deep_research_agent_stream_node.name, self._stream_passthrough)
+
+    async def _stream_passthrough(
+        self,
+        state: DeepResearchAgentState,
+        config: RunnableConfig,
+    ) -> Dict[str, Any]:
+        return {
+            "final_report": state.final_report,
+            "output": state.output or state.final_report,
+        }
 
     def _should_continue(self, state: DeepResearchAgentState) -> str:
         if state.need_more_research and state.current_iteration < state.max_iterations:
@@ -75,8 +86,11 @@ class DeepResearchAgentGraph:
                 },
             )
             
-            # SynthesizeNode now streams LLM tokens natively via tags — connect directly to END
-            self.graph.add_edge(Node.deep_research_agent_synthesize_node.name, END)
+            self.graph.add_edge(
+                Node.deep_research_agent_synthesize_node.name,
+                Node.deep_research_agent_stream_node.name,
+            )
+            self.graph.add_edge(Node.deep_research_agent_stream_node.name, END)
 
     def _compile_graph(self) -> CompiledStateGraph:
         self._add_graph_nodes()

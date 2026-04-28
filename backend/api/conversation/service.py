@@ -33,6 +33,7 @@ from backend.agents.rag_agent.state import Tag as RAGTag
 from backend.agents.rag_agent.graph import RAGAgentGraph
 from backend.memory.mem0_client import mem0_client
 from backend.utils.research_session import research_session_manager
+from backend.utils.retention import get_purge_after, mark_for_retention_delete
 
 service_logger = logger.bind(service="conversation-service")
 
@@ -284,8 +285,27 @@ class ConversationService:
             db_session, user_id, conversation_id, request_logger
         )
         now = get_utc_now()
-        conversation.deleted_at = now
-        conversation.updated_at = now
+        mark_for_retention_delete(conversation, now)
+        try:
+            from backend.api.skills.model import SkillExecutionArtifact
+
+            db_session.query(SkillExecutionArtifact).filter(
+                SkillExecutionArtifact.user_id == user_id,
+                SkillExecutionArtifact.conversation_id == conversation_id,
+                SkillExecutionArtifact.deleted_at.is_(None),
+            ).update(
+                {
+                    "deleted_at": now,
+                    "purge_after": get_purge_after(now),
+                    "updated_at": now,
+                },
+                synchronize_session=False,
+            )
+        except Exception as exc:
+            request_logger.warning(
+                "Unable to mark conversation artifacts for retention: {}",
+                exc,
+            )
         db_session.commit()
         request_logger.info("Soft deleted conversation")
         return {"message": Message.MESSAGE_CONVERSATION_DELETED_SUCCESSFULLY}
@@ -714,6 +734,7 @@ class ConversationService:
                 chunk_text=data.get("chunk_text"),
                 relevance_score=data.get("relevance_score"),
                 created_at=now,
+                updated_at=now,
             )
             records.append(record)
 

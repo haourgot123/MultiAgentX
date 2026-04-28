@@ -24,6 +24,8 @@ class StoredFile(Base):
     ingested_chunks = Column(Integer, nullable=False, default=0)
     ingested_at = Column(DateTime(timezone=True), nullable=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
+    purge_after = Column(DateTime(timezone=True), nullable=True)
+    purged_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=True)
 

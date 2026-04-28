@@ -303,6 +303,7 @@ def list_conversation_artifacts(
         .filter(
             SkillExecutionArtifact.conversation_id == conversation_id,
             SkillExecutionArtifact.user_id == user_id,
+            SkillExecutionArtifact.deleted_at.is_(None),
         )
         .order_by(SkillExecutionArtifact.created_at.desc())
         .all()
@@ -322,6 +323,7 @@ def download_artifact(
         .filter(
             SkillExecutionArtifact.id == artifact_id,
             SkillExecutionArtifact.user_id == user_id,
+            SkillExecutionArtifact.deleted_at.is_(None),
         )
         .first()
     )

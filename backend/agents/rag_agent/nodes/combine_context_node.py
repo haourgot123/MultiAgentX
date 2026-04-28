@@ -1,4 +1,5 @@
 from collections import defaultdict
+import json
 
 from langchain_core.runnables import Runnable
 from langchain_core.callbacks import dispatch_custom_event
@@ -8,6 +9,29 @@ from backend.agents.rag_agent.state import RAGAgentState, RetrievedChunk
 
 
 service_logger = logger.bind(service="rag-combine-context")
+
+
+def _filter_bbox_json_to_page(bbox_json: str | None, page_no: int | None) -> str:
+    if not bbox_json or page_no is None:
+        return bbox_json or ""
+
+    try:
+        payload = json.loads(bbox_json)
+    except (TypeError, ValueError):
+        return bbox_json
+
+    if not isinstance(payload, list):
+        return bbox_json
+
+    filtered = [
+        item
+        for item in payload
+        if isinstance(item, dict) and item.get("page_no") == page_no
+    ]
+    if not filtered:
+        return bbox_json
+
+    return json.dumps(filtered, ensure_ascii=False)
 
 
 class CombineContextNode(Runnable):
@@ -49,17 +73,32 @@ class CombineContextNode(Runnable):
             else:
                 normalized_chunks.append(chunk)
 
-        # Group chunks by file_id, preserving order
+        # Group chunks by file_id, preserving retrieval order inside each file.
         file_groups = defaultdict(list)
-        file_order = []
+        retrieved_file_order = []
         for chunk in normalized_chunks:
             fid = chunk.file_id
-            if fid not in file_order:
-                file_order.append(fid)
+            if fid not in retrieved_file_order:
+                retrieved_file_order.append(fid)
             file_groups[fid].append(chunk)
 
-        # Assign file_index (1-based)
-        file_index_map = {fid: idx + 1 for idx, fid in enumerate(file_order)}
+        configured_file_ids = list(dict.fromkeys(getattr(state, "file_ids", []) or []))
+        file_index_map = {
+            fid: idx + 1
+            for idx, fid in enumerate(configured_file_ids)
+        }
+        for fid in retrieved_file_order:
+            if fid not in file_index_map:
+                file_index_map[fid] = len(file_index_map) + 1
+
+        if configured_file_ids:
+            file_order = [
+                fid for fid in configured_file_ids if fid in file_groups
+            ] + [
+                fid for fid in retrieved_file_order if fid not in configured_file_ids
+            ]
+        else:
+            file_order = retrieved_file_order
 
         # Build context and citation map
         context_parts = []
@@ -95,7 +134,10 @@ class CombineContextNode(Runnable):
                     "file_name": chunk.file_name or "",
                     "chunk_index": chunk.chunk_index,
                     "page_no": chunk.page_no,
-                    "bbox_json": chunk.bbox_json or "",
+                    "bbox_json": _filter_bbox_json_to_page(
+                        chunk.bbox_json,
+                        chunk.page_no,
+                    ),
                     "chunk_text": chunk.text[:2000],  # Truncate for storage
                     "relevance_score": str(round(chunk.score, 4)),
                 }

@@ -1,3 +1,5 @@
+import inspect
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 from langchain_core.callbacks import dispatch_custom_event
@@ -18,6 +20,28 @@ class AnswerNode(Runnable):
 
     def invoke(self, state: GeneralAgentState, **kwargs):
         pass
+
+    @staticmethod
+    async def _iter_stream_chunks(stream):
+        if hasattr(stream, "__aiter__"):
+            iterator = stream.__aiter__()
+            if inspect.isawaitable(iterator):
+                iterator = await iterator
+
+            if hasattr(iterator, "__anext__"):
+                while True:
+                    try:
+                        yield await iterator.__anext__()
+                    except StopAsyncIteration:
+                        break
+                return
+
+            for chunk in iterator:
+                yield chunk
+            return
+
+        for chunk in stream:
+            yield chunk
 
     async def ainvoke(self, state: GeneralAgentState, **kwargs):
         # Build the system prompt with time and long-term memory context
@@ -53,7 +77,10 @@ class AnswerNode(Runnable):
         # Stream tokens from the LLM while accumulating the final output
         full_output = ""
         llm_with_config = azure_chat_openai_gpt_5_1.with_config(config)
-        async for chunk in llm_with_config.astream(messages):
+        stream = llm_with_config.astream(messages)
+        if inspect.isawaitable(stream):
+            stream = await stream
+        async for chunk in self._iter_stream_chunks(stream):
             content = getattr(chunk, "content", None)
             if not content:
                 continue

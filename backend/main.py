@@ -13,6 +13,7 @@ from backend.api.meta.view import router as meta_router
 from backend.api.revision.view import database_router
 from backend.api.token.view import router as token_router
 from backend.api.user.view import router as user_router
+from backend.api.video_generation.view import router as video_generation_router
 from backend.api.memory.view import router as memory_router
 from backend.api.skills.view import router as skills_router
 from backend.config.settings import _settings
@@ -52,6 +53,7 @@ main_router.include_router(conversation_router)
 main_router.include_router(data_ingestion_router)
 main_router.include_router(memory_router)
 main_router.include_router(skills_router)
+main_router.include_router(video_generation_router)
 api_app = FastAPI(
     title="MultiAgentX API",
     description="API for the MultiAgentX application",
@@ -76,7 +78,7 @@ if _settings.middleware.request_logging_enabled:
 
 api_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_settings.api.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

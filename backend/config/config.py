@@ -67,10 +67,10 @@ class PostgresConfig:
     password: str = os.getenv("POSTGRES_PASSWORD")
     database: str = os.getenv("POSTGRES_DB")
     url: str = f"{driver}://{user}:{password}@{host}:{port}/{database}"
-    pool_size = 50
-    max_overflow = 50
-    pool_timeout = 30
-    pool_recycle = 1800
+    pool_size: int = _env_int("POSTGRES_POOL_SIZE", default=50)
+    max_overflow: int = _env_int("POSTGRES_MAX_OVERFLOW", default=50)
+    pool_timeout: int = _env_int("POSTGRES_POOL_TIMEOUT", default=30)
+    pool_recycle: int = _env_int("POSTGRES_POOL_RECYCLE", default=1800)
 
 
 @dataclass
@@ -315,7 +315,12 @@ class APIConfig:
     """API configuration settings."""
 
     # CORS origins
-    cors_origins: List[str] = field(default_factory=lambda: ["http://localhost:8000"])
+    cors_origins: List[str] = field(
+        default_factory=lambda: _env_csv(
+            "API_CORS_ORIGINS",
+            default="http://localhost:5173,http://localhost:8000",
+        )
+    )
 
     # API settings
     title: str = "Ugate Agent"
@@ -360,6 +365,18 @@ class MiddlewareConfig:
 
 
 @dataclass
+class DataRetentionConfig:
+    """Soft-delete retention and purge job configuration."""
+
+    retention_days: int = _env_int("DATA_RETENTION_DAYS", default=30)
+    purge_batch_size: int = _env_int("DATA_RETENTION_PURGE_BATCH_SIZE", default=100)
+    skill_blob_backfill_batch_size: int = _env_int(
+        "SKILL_BLOB_BACKFILL_BATCH_SIZE",
+        default=100,
+    )
+
+
+@dataclass
 class ChunkConfig:
     """Chunk configuration settings."""
 
@@ -383,6 +400,10 @@ class ProcessFileConfig:
     download_timeout: int = 3600
     max_retries: int = 3
     retry_delay: int = 60
+    max_concurrent_ingestions: int = _env_int(
+        "FILE_MAX_CONCURRENT_INGESTIONS",
+        default=3,
+    )
 
 
 @dataclass
@@ -390,6 +411,10 @@ class ConversationChatConfig:
     """Conversation chat configuration settings."""
 
     nums_history_messages: int = 30
+    max_concurrent_streams: int = _env_int(
+        "CHAT_MAX_CONCURRENT_STREAMS",
+        default=100,
+    )
 
 @dataclass
 class VLMConfig:
@@ -518,6 +543,28 @@ class SkillsConfig:
     sandbox_cpu: str = _env("SANDBOX_CPU", default="1")
     sandbox_memory: str = _env("SANDBOX_MEMORY", default="2g")
     sandbox_timeout: int = _env_int("SANDBOX_TIMEOUT", default=300)
+
+
+@dataclass
+class VideoGenerationConfig:
+    """Video generation and Remotion rendering configuration."""
+
+    max_duration_seconds: int = _env_int("VIDEO_MAX_DURATION_SECONDS", default=30)
+    default_duration_seconds: int = _env_int(
+        "VIDEO_DEFAULT_DURATION_SECONDS", default=15
+    )
+    default_fps: int = _env_int("VIDEO_DEFAULT_FPS", default=30)
+    render_timeout_seconds: int = _env_int(
+        "VIDEO_RENDER_TIMEOUT_SECONDS", default=180
+    )
+    render_workdir: str = _env("VIDEO_RENDER_WORKDIR", default="tmp/video-renderer")
+    renderer_project_dir: str = _env(
+        "VIDEO_RENDERER_PROJECT_DIR", default="video_renderer"
+    )
+    max_concurrent_renders: int = _env_int(
+        "VIDEO_MAX_CONCURRENT_RENDERS",
+        default=2,
+    )
 
 
 @dataclass

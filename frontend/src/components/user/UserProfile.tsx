@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select"
 
 import { useAuthStore } from "@/store/auth-store"
+import { API_BASE_URL } from "@/lib/api"
 import { toast } from "sonner"
 
 interface UserProfileProps {
@@ -111,7 +112,7 @@ export function UserProfile({ open, onOpenChange }: UserProfileProps) {
       try {
         setLoadingCountries(true)
         const response = await axios.get<CountryData[]>(
-          "http://localhost:8000/api/meta/phone-countries"
+          `${API_BASE_URL}/meta/phone-countries`
         )
         setCountries(response.data)
       } catch (err) {

@@ -9,6 +9,7 @@ from .config import (
     CeleryConfig,
     ChunkConfig,
     ConversationChatConfig,
+    DataRetentionConfig,
     EmbeddingModelConfig,
     IngestionSummaryConfig,
     JWTConfig,
@@ -25,6 +26,7 @@ from .config import (
     S3Config,
     SkillsConfig,
     TavilySearchConfig,
+    VideoGenerationConfig,
     VLMConfig,
     ProcessingConfig,
     GGSearch,
@@ -50,6 +52,7 @@ class Settings(BaseSettings):
     rag: RAGConfig = RAGConfig()
     logging: LoggingConfig = LoggingConfig()
     middleware: MiddlewareConfig = MiddlewareConfig()
+    data_retention: DataRetentionConfig = DataRetentionConfig()
     api: APIConfig = APIConfig()
     chunk: ChunkConfig = ChunkConfig()
     process_file: ProcessFileConfig = ProcessFileConfig()
@@ -60,6 +63,7 @@ class Settings(BaseSettings):
     ingestion_summary: IngestionSummaryConfig = IngestionSummaryConfig()
     mem0: Mem0Config = Mem0Config()
     skills: SkillsConfig = SkillsConfig()
+    video_generation: VideoGenerationConfig = VideoGenerationConfig()
     azure_blob: AzureBlobStorageConfig = AzureBlobStorageConfig()
 
     def __str__(self) -> str:

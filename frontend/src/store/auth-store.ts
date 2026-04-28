@@ -1,6 +1,11 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api"
+
+const apiUrl = (path: string) => `${API_BASE_URL}${path}`
+
 /* ================= TYPES ================= */
 
 interface User {
@@ -70,19 +75,44 @@ export const useAuthStore = create<AuthState>()(
       /* ===== UPDATE PROFILE ===== */
       updateProfile: async (fullName: string, dateOfBirth: string, gender: string, country: string, phoneNumber: string) => {
         try {
+          const token = get().accessToken
+          const userId = get().user?.id
+          if (!(token && userId)) {
+            return { success: false, message: "Not authenticated. Please login again." }
+          }
+
           const res = await fetch(
-            "http://localhost:8000/api/user/me/information",
+            apiUrl(`/user/me/information?user_id=${userId}`),
             {
               method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ fullName, dateOfBirth, gender, country, phoneNumber }),
+              headers: {
+                "Content-Type": "application/json",
+                Token: token,
+              },
+              body: JSON.stringify({
+                full_name: fullName,
+                date_of_birth: dateOfBirth || null,
+                gender,
+                country,
+                phone_number: phoneNumber,
+              }),
             }
           )
 
           if (!res.ok) return { success: false, message: "Failed to update profile" }
 
-          const data = await res.json()
-          set({ user: data.user })
+          set((state) => ({
+            user: state.user
+              ? {
+                  ...state.user,
+                  fullName,
+                  dateOfBirth,
+                  gender,
+                  country,
+                  phoneNumber,
+                }
+              : state.user,
+          }))
           return { success: true, message: "Profile updated successfully" }
         } catch {
           return { success: false, message: "Failed to update profile" }
@@ -98,16 +128,24 @@ export const useAuthStore = create<AuthState>()(
         gender: string,
         country: string,
         phoneNumber: string,
-        password: string,
-        confirmPassword: string
+        password: string
       ) => {
         try {
           const res = await fetch(
-            "http://localhost:8000/api/authentication/register",
+            apiUrl("/authentication/register"),
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ username, email, fullName, dateOfBirth, gender, country, phoneNumber, password, confirmPassword }),
+              body: JSON.stringify({
+                username,
+                email,
+                full_name: fullName,
+                date_of_birth: dateOfBirth || null,
+                gender,
+                country,
+                phone_number: phoneNumber,
+                password,
+              }),
             }
           )
 
@@ -124,7 +162,7 @@ export const useAuthStore = create<AuthState>()(
       login: async (username: string, password: string) => {
         try {
           const res = await fetch(
-            "http://localhost:8000/api/authentication/login",
+            apiUrl("/authentication/login"),
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -180,7 +218,7 @@ export const useAuthStore = create<AuthState>()(
                 return { success: false, message: "Not authenticated. Please login again." }
             }
             const res = await fetch(
-            `http://localhost:8000/api/user/me/password?user_id=${userId}`,
+            apiUrl(`/user/me/password?user_id=${userId}`),
             {
                 method: "PUT",
                 headers: {
@@ -226,7 +264,7 @@ export const useAuthStore = create<AuthState>()(
 
         try {
           const res = await fetch(
-            "http://localhost:8000/api/authentication/access",
+            apiUrl("/authentication/access"),
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -269,7 +307,7 @@ export const useAuthStore = create<AuthState>()(
             console.error("Not authenticated. Please login again.")
             throw new Error("Not authenticated. Please login again.")
           }
-          const res = await fetch(`http://localhost:8000/api/user/logout?user_id=${userId}`, {
+          const res = await fetch(apiUrl(`/user/logout?user_id=${userId}`), {
             method: "POST",
             headers: {
               Token: token,

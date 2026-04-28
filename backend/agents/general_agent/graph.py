@@ -19,6 +19,8 @@ from backend.agents.image_generation_agent.graph import ImageGenerationAgentGrap
 from backend.agents.image_generation_agent.state import ImageGenerationAgentState
 from backend.agents.deep_research_agent.graph import DeepResearchAgentGraph
 from backend.agents.deep_research_agent.state import DeepResearchAgentState
+from backend.agents.rag_agent.graph import RAGAgentGraph
+from backend.agents.rag_agent.state import RAGAgentState
 
 from langchain_core.callbacks import dispatch_custom_event
 
@@ -114,12 +116,47 @@ class GeneralAgentGraph:
             "output": result_state.get("final_report", result_state.get("output", "")),
         }
 
+    async def call_rag_agent(
+        self, state: GeneralAgentState, config: RunnableConfig
+    ) -> Dict[str, Any]:
+        """Wrapper to call the RAG subgraph when file ids are present."""
+        logger.info("Delegating to RAG Agent...")
+        dispatch_custom_event(
+            "status",
+            {
+                "step": "rag_delegate",
+                "message": "Switching to the RAG Agent...",
+            },
+        )
+        rag_state = RAGAgentState(
+            user_question=state.user_question,
+            memories=state.memories,
+            user_id=state.user_id,
+            conversation_id=state.conversation_id,
+            file_ids=state.file_ids,
+        )
+        rag_graph = RAGAgentGraph().compiled_graph
+        result_state = await rag_graph.ainvoke(rag_state, config=config)
+        return {
+            "output": result_state.get("final_answer", result_state.get("output", "")),
+        }
+
+    async def passthrough_stream_node(
+        self, state: GeneralAgentState, config: RunnableConfig
+    ) -> Dict[str, Any]:
+        return {"output": state.output}
+
     def _add_graph_nodes(self):
         self.graph.add_node(Node.general_agent_memory_node.name, MemoryNode().ainvoke)
         self.graph.add_node(Node.general_agent_route_node.name, RouteNode().ainvoke)
         self.graph.add_node(Node.general_agent_answer_node.name, AnswerNode().ainvoke)
+        self.graph.add_node(
+            Node.general_agent_stream_node.name,
+            self.passthrough_stream_node,
+        )
 
         self.graph.add_node("websearch_agent", self.call_websearch_agent)
+        self.graph.add_node("rag_agent", self.call_rag_agent)
         self.graph.add_node("image_generation_agent", self.call_image_generation_agent)
         self.graph.add_node("deep_research_agent", self.call_deep_research_agent)
 
@@ -129,6 +166,7 @@ class GeneralAgentGraph:
 
         route_mapping = {
             "websearch_agent": "websearch_agent",
+            "rag_agent": "rag_agent",
             "image_generation_agent": "image_generation_agent",
             "deep_research_agent": "deep_research_agent",
         }
@@ -146,17 +184,22 @@ class GeneralAgentGraph:
             self._route_after_decision,
             {
                 "websearch_agent": "websearch_agent",
+                "rag_agent": "rag_agent",
                 "image_generation_agent": "image_generation_agent",
                 "deep_research_agent": "deep_research_agent",
                 Node.general_agent_answer_node.name: Node.general_agent_answer_node.name,
             },
         )
 
-        # All paths connect directly to END — no StreamNode intermediary
-        self.graph.add_edge("websearch_agent", END)
-        self.graph.add_edge("image_generation_agent", END)
-        self.graph.add_edge("deep_research_agent", END)
-        self.graph.add_edge(Node.general_agent_answer_node.name, END)
+        self.graph.add_edge("websearch_agent", Node.general_agent_stream_node.name)
+        self.graph.add_edge("rag_agent", Node.general_agent_stream_node.name)
+        self.graph.add_edge("image_generation_agent", Node.general_agent_stream_node.name)
+        self.graph.add_edge("deep_research_agent", Node.general_agent_stream_node.name)
+        self.graph.add_edge(
+            Node.general_agent_answer_node.name,
+            Node.general_agent_stream_node.name,
+        )
+        self.graph.add_edge(Node.general_agent_stream_node.name, END)
 
     def _compile_graph(self) -> CompiledStateGraph:
         self._add_graph_nodes()

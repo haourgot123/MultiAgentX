@@ -324,6 +324,7 @@ def get_message_retrievals(
 ):
     """Get retrieval records for a specific message (bbox data for PDF highlighting)."""
     user_id = request.state.user_id
+    conversation_service.get_conversation(request, db_session, user_id, conversation_id)
     records = (
         db_session.query(RetrievalRecord)
         .filter(
