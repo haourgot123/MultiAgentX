@@ -29,7 +29,7 @@ from backend.utils.logging import configure_logging
 from backend.memory.mem0_client import mem0_client
 
 configure_logging()
-logger.bind(service="app-startup").info("Backend logger configured")
+logger.info("[AppStartup] Backend logger configured")
 
 
 @asynccontextmanager
@@ -37,9 +37,9 @@ async def lifespan(app: FastAPI):
     socketio_manager.set_event_loop(asyncio.get_running_loop())
     try:
         await mem0_client.initialize()
-        logger.info("Mem0 client initialized successfully")
+        logger.info("[AppStartup] Mem0 client initialized successfully")
     except Exception as e:
-        logger.warning(f"Failed to initialize Mem0 client: {e}")
+        logger.warning(f"[AppStartup] Failed to initialize Mem0 client: {e}")
     yield
 
 

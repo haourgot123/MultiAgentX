@@ -40,13 +40,14 @@ class VideoGenerationService:
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     @staticmethod
-    def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return logger.bind(
-            request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-            user_id=user_id
+    def _get_log_prefix(request: Request | None = None, user_id: int | None = None) -> str:
+        request_id = getattr(getattr(request, "state", None), "request_id", "-")
+        resolved_user_id = (
+            user_id
             if user_id is not None
-            else getattr(getattr(request, "state", None), "user_id", "-"),
+            else getattr(getattr(request, "state", None), "user_id", "-")
         )
+        return f"[VideoGenerationService][request_id={request_id}][user_id={resolved_user_id}]"
 
     @staticmethod
     def _normalize_path(value: Any) -> Path | None:
@@ -96,7 +97,7 @@ class VideoGenerationService:
         db_session: Session,
         user_id: int,
         job_id: int,
-        request_logger,
+        log_prefix: str,
     ) -> VideoGenerationJob:
         job = (
             db_session.query(VideoGenerationJob)
@@ -108,7 +109,7 @@ class VideoGenerationService:
             .first()
         )
         if not job:
-            request_logger.warning("Video generation job not found id={}", job_id)
+            logger.warning(f"{log_prefix} Video generation job not found id={job_id}")
             raise ObjectNotFoundException(message="Video generation job not found")
         return job
 
@@ -179,7 +180,7 @@ class VideoGenerationService:
                     job.thumbnail_blob_path, expiry_hours=24
                 )
         except Exception as exc:
-            logger.warning("[VideoGenerationService] Failed to generate video SAS URL: {}", exc)
+            logger.warning(f"[VideoGenerationService] Failed to generate video SAS URL: {exc}")
 
         return VideoGenerationJobResponse(
             id=job.id,
@@ -208,7 +209,7 @@ class VideoGenerationService:
         db_session: Session,
         user_id: int,
     ) -> list[VideoGenerationJobResponse]:
-        _ = self._get_request_logger(request, user_id)
+        _ = self._get_log_prefix(request, user_id)
         jobs = (
             db_session.query(VideoGenerationJob)
             .filter(
@@ -227,8 +228,8 @@ class VideoGenerationService:
         user_id: int,
         job_id: int,
     ) -> VideoGenerationJobResponse:
-        request_logger = self._get_request_logger(request, user_id)
-        job = self._get_user_job(db_session, user_id, job_id, request_logger)
+        log_prefix = self._get_log_prefix(request, user_id)
+        job = self._get_user_job(db_session, user_id, job_id, log_prefix)
         return self._response_for_job(job)
 
     def update_job(
@@ -239,8 +240,8 @@ class VideoGenerationService:
         job_id: int,
         update_request: VideoGenerationUpdateRequest,
     ) -> VideoGenerationJobResponse:
-        request_logger = self._get_request_logger(request, user_id)
-        job = self._get_user_job(db_session, user_id, job_id, request_logger)
+        log_prefix = self._get_log_prefix(request, user_id)
+        job = self._get_user_job(db_session, user_id, job_id, log_prefix)
         job.title = update_request.title
         job.updated_at = get_utc_now()
         db_session.add(job)
@@ -255,13 +256,12 @@ class VideoGenerationService:
         user_id: int,
         job_id: int,
     ) -> dict:
-        request_logger = self._get_request_logger(request, user_id)
-        job = self._get_user_job(db_session, user_id, job_id, request_logger)
+        log_prefix = self._get_log_prefix(request, user_id)
+        job = self._get_user_job(db_session, user_id, job_id, log_prefix)
         mark_for_retention_delete(job)
-        request_logger.info(
-            "Soft deleted video generation job id={} purge_after={}",
-            job.id,
-            job.purge_after,
+        logger.info(
+            f"{log_prefix} Soft deleted video generation job "
+            f"id={job.id} purge_after={job.purge_after}"
         )
         db_session.commit()
 
@@ -274,7 +274,7 @@ class VideoGenerationService:
         user_id: int,
         render_request: VideoGenerationRequest,
     ) -> AsyncGenerator[str, None]:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         self._validate_request(render_request)
         job = self._create_job(db_session, user_id, render_request)
 
@@ -390,7 +390,7 @@ class VideoGenerationService:
             yield self._format_sse_event("done", {"job_id": job.id})
 
         except Exception as exc:
-            request_logger.error("Video generation failed job_id={}: {}", job.id, exc)
+            logger.error(f"{log_prefix} Video generation failed job_id={job.id}: {exc}")
             message = str(exc) or "Video generation failed"
             self._update_job(
                 db_session,

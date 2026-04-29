@@ -49,13 +49,14 @@ class ConversationService:
     )
 
     @staticmethod
-    def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return logger.bind(
-            request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-            user_id=user_id
+    def _get_log_prefix(request: Request | None = None, user_id: int | None = None) -> str:
+        request_id = getattr(getattr(request, "state", None), "request_id", "-")
+        resolved_user_id = (
+            user_id
             if user_id is not None
-            else getattr(getattr(request, "state", None), "user_id", "-"),
+            else getattr(getattr(request, "state", None), "user_id", "-")
         )
+        return f"[ConversationService][request_id={request_id}][user_id={resolved_user_id}]"
 
     @staticmethod
     def _build_default_title(created_at) -> str:
@@ -117,7 +118,7 @@ class ConversationService:
         db_session: Session,
         user_id: int,
         conversation_id: int,
-        request_logger,
+        log_prefix: str,
     ) -> Conversation:
         conversation = (
             db_session.query(Conversation)
@@ -133,7 +134,7 @@ class ConversationService:
             .first()
         )
         if not conversation:
-            request_logger.warning("Conversation not found")
+            logger.warning(f"{log_prefix} Conversation not found")
             raise ObjectNotFoundException(message=Message.MESSAGE_CONVERSATION_NOT_FOUND)
         return conversation
 
@@ -144,7 +145,7 @@ class ConversationService:
         user_id: int,
         chat_type: Optional[str] = None,
     ) -> list[Conversation]:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         query = (
             db_session.query(Conversation)
             .options(
@@ -160,10 +161,8 @@ class ConversationService:
             query = query.filter(Conversation.chat_type == chat_type)
 
         conversations = query.order_by(Conversation.updated_at.desc()).all()
-        request_logger.debug(
-            "Listed conversations chat_type={} count={}",
-            chat_type,
-            len(conversations),
+        logger.debug(
+            f"{log_prefix} Listed conversations chat_type={chat_type} count={len(conversations)}"
         )
         return conversations
 
@@ -205,7 +204,7 @@ class ConversationService:
         user_id: int,
         create_request: ConversationCreateRequest,
     ) -> Conversation:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         now = get_utc_now()
         if create_request.chat_type == "file":
             conversation_title = self._build_default_title(now)
@@ -227,19 +226,17 @@ class ConversationService:
                 create_request.file_ids,
             )
             conversation.files = files
-            request_logger.debug("Creating file conversation with file_count={}", len(files))
+            logger.debug(f"{log_prefix} Creating file conversation with file_count={len(files)}")
 
         db_session.add(conversation)
         db_session.commit()
         db_session.refresh(conversation)
-        request_logger.info(
-            "Created conversation id={} type={}",
-            conversation.id,
-            conversation.chat_type,
+        logger.info(
+            f"{log_prefix} Created conversation id={conversation.id} type={conversation.chat_type}"
         )
 
         return self._get_user_conversation(
-            db_session, user_id, conversation.id, request_logger
+            db_session, user_id, conversation.id, log_prefix
         )
 
     def get_conversation(
@@ -249,10 +246,10 @@ class ConversationService:
         user_id: int,
         conversation_id: int,
     ) -> Conversation:
-        request_logger = self._get_request_logger(request, user_id)
-        request_logger.debug("Retrieving conversation")
+        log_prefix = self._get_log_prefix(request, user_id)
+        logger.debug(f"{log_prefix} Retrieving conversation")
         return self._get_user_conversation(
-            db_session, user_id, conversation_id, request_logger
+            db_session, user_id, conversation_id, log_prefix
         )
 
     def rename_conversation(
@@ -263,30 +260,30 @@ class ConversationService:
         conversation_id: int,
         rename_request: ConversationRenameRequest,
     ) -> Conversation:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         conversation = self._get_user_conversation(
-            db_session, user_id, conversation_id, request_logger
+            db_session, user_id, conversation_id, log_prefix
         )
         conversation.title = self._normalize_title(rename_request.title)
         conversation.updated_at = get_utc_now()
         db_session.commit()
         db_session.refresh(conversation)
-        request_logger.info("Renamed conversation to '{}'", conversation.title)
+        logger.info(f"{log_prefix} Renamed conversation to '{conversation.title}'")
         return self._get_user_conversation(
-            db_session, user_id, conversation_id, request_logger
+            db_session, user_id, conversation_id, log_prefix
         )
 
     def delete_conversation(
         self, request: Request, db_session: Session, user_id: int, conversation_id: int
     ) -> dict:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         conversation = self._get_user_conversation(
-            db_session, user_id, conversation_id, request_logger
+            db_session, user_id, conversation_id, log_prefix
         )
         now = get_utc_now()
         mark_for_retention_delete(conversation, now)
         db_session.commit()
-        request_logger.info("Soft deleted conversation")
+        logger.info(f"{log_prefix} Soft deleted conversation")
         return {"message": Message.MESSAGE_CONVERSATION_DELETED_SUCCESSFULLY}
 
     def update_conversation_files(
@@ -297,9 +294,9 @@ class ConversationService:
         conversation_id: int,
         files_request: ConversationFilesUpdateRequest,
     ) -> Conversation:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         conversation = self._get_user_conversation(
-            db_session, user_id, conversation_id, request_logger
+            db_session, user_id, conversation_id, log_prefix
         )
         if conversation.chat_type != "file":
             raise InvalidRequestException(message=Message.MESSAGE_INVALID_REQUEST)
@@ -323,9 +320,9 @@ class ConversationService:
         conversation.updated_at = get_utc_now()
         db_session.commit()
         db_session.refresh(conversation)
-        request_logger.info("Updated conversation files, file_count={}", len(files))
+        logger.info(f"{log_prefix} Updated conversation files, file_count={len(files)}")
         return self._get_user_conversation(
-            db_session, user_id, conversation_id, request_logger
+            db_session, user_id, conversation_id, log_prefix
         )
 
     def add_message(
@@ -336,9 +333,9 @@ class ConversationService:
         conversation_id: int,
         message_request: ConversationMessageCreateRequest,
     ) -> tuple[ConversationMessage, Conversation]:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         conversation = self._get_user_conversation(
-            db_session, user_id, conversation_id, request_logger
+            db_session, user_id, conversation_id, log_prefix
         )
         now = get_utc_now()
 
@@ -360,9 +357,9 @@ class ConversationService:
         db_session.commit()
         db_session.refresh(message)
         updated_conversation = self._get_user_conversation(
-            db_session, user_id, conversation_id, request_logger
+            db_session, user_id, conversation_id, log_prefix
         )
-        request_logger.info("Added message id={} role={}", message.id, message.role)
+        logger.info(f"{log_prefix} Added message id={message.id} role={message.role}")
         return message, updated_conversation
     
     @staticmethod
@@ -384,7 +381,7 @@ class ConversationService:
         is_generate_image_enabled: Optional[bool] = False,
         route_preference: Optional[str] = "auto",
     ):
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         conversation = self._get_user_conversation(
             db_session, user_id, conversation_id, request_logger
         )
@@ -461,7 +458,7 @@ class ConversationService:
                 
                 # NEW: Store conversation in Mem0 for long-term memory
                 try:
-                    request_logger.info("Storing conversation in Mem0 long-term memory")
+                    logger.info(f"{log_prefix} Storing conversation in Mem0 long-term memory")
                     
                     messages_for_mem0 = [
                         {"role": "user", "content": user_question},
@@ -479,18 +476,18 @@ class ConversationService:
                         }
                     )
                     
-                    request_logger.debug("Successfully stored memory in Mem0 (Milvus)")
+                    logger.debug(f"{log_prefix} Successfully stored memory in Mem0 (Milvus)")
                     
                 except Exception as e:
                     # Graceful degradation - don't fail the request
-                    request_logger.error(f"Failed to store memory in Mem0: {e}")
+                    logger.error(f"{log_prefix} Failed to store memory in Mem0: {e}")
                     # Continue execution
                 
                 # Notify client that streaming is done
                 yield self._format_sse_event("done", {"output": full_response})
 
         except Exception as e:
-            request_logger.error("Error streaming general agent: {}", e)
+            logger.error(f"{log_prefix} Error streaming general agent: {e}")
             error_assistant_message = Message.MESSAGE_GENERAL_AGENT_ERROR
             _, _ = self.add_message(
                 request,
@@ -519,9 +516,9 @@ class ConversationService:
         file_ids: Optional[List[int]] = None,
     ):
         """Chat with uploaded files using RAG agent with evaluation loop."""
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         conversation = self._get_user_conversation(
-            db_session, user_id, conversation_id, request_logger
+            db_session, user_id, conversation_id, log_prefix
         )
 
         if conversation.chat_type != "file":
@@ -628,7 +625,7 @@ class ConversationService:
                     ),
                 )
                 assistant_message = msg_obj
-                request_logger.info("Saved RAG assistant message")
+                logger.info(f"{log_prefix} Saved RAG assistant message")
 
             # Persist retrieval records for PDF bbox highlighting
             citation_map = final_state.get("citation_map", {})
@@ -641,13 +638,9 @@ class ConversationService:
                         message_id=assistant_message.id,
                         citation_map=citation_map,
                     )
-                    request_logger.info(
-                        f"Saved {len(citation_map)} retrieval records"
-                    )
+                    logger.info(f"{log_prefix} Saved {len(citation_map)} retrieval records")
                 except Exception as e:
-                    request_logger.error(
-                        f"Failed to save retrieval records: {e}"
-                    )
+                    logger.error(f"{log_prefix} Failed to save retrieval records: {e}")
 
             # Send citations data to FE in the done event
             citations_payload = []
@@ -670,7 +663,7 @@ class ConversationService:
             )
 
         except Exception as e:
-            request_logger.error("Error in file_chat RAG agent: {}", e)
+            logger.error(f"{log_prefix} Error in file_chat RAG agent: {e}")
             error_message = Message.MESSAGE_GENERAL_AGENT_ERROR
             _, _ = self.add_message(
                 request,
@@ -734,9 +727,9 @@ class ConversationService:
         user_question: str,
     ) -> DeepResearchPlanResponse:
         """Create a research plan for deep research"""
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         conversation = self._get_user_conversation(
-            db_session, user_id, conversation_id, request_logger
+            db_session, user_id, conversation_id, log_prefix
         )
         
         if conversation.chat_type != "normal":
@@ -791,7 +784,7 @@ class ConversationService:
             )
             
         except Exception as e:
-            request_logger.error(f"Error creating research plan: {e}")
+            logger.error(f"{log_prefix} Error creating research plan: {e}")
             raise InvalidRequestException(message=f"Failed to create research plan: {str(e)}")
         finally:
             if 'graph' in locals():
@@ -807,7 +800,7 @@ class ConversationService:
     ):
         """Execute deep research with approved plan — uses astream_events directly
         for real-time token streaming from the SynthesizeNode's LLM."""
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         
         # Emit starting research event
         yield self._format_sse_event("status", {
@@ -839,9 +832,9 @@ class ConversationService:
                         content=user_plan_message,
                     ),
                 )
-                request_logger.info("Saved approved plan as user message")
+                logger.info(f"{log_prefix} Saved approved plan as user message")
             except Exception as e:
-                request_logger.error(f"Failed to save user message: {e}")
+                logger.error(f"{log_prefix} Failed to save user message: {e}")
         
         # Update session with approved plan
         research_session_manager.update_approved_plan(session_id, approved_plan)
@@ -905,9 +898,9 @@ class ConversationService:
                             content=full_response,
                         ),
                     )
-                    request_logger.info("Saved deep research result to conversation")
+                    logger.info(f"{log_prefix} Saved deep research result to conversation")
                 except Exception as e:
-                    request_logger.error(f"Failed to save result to conversation: {e}")
+                    logger.error(f"{log_prefix} Failed to save result to conversation: {e}")
             
             yield self._format_sse_event("done", {"output": full_response})
             
@@ -915,7 +908,7 @@ class ConversationService:
             research_session_manager.delete_session(session_id)
             
         except Exception as e:
-            request_logger.error(f"Error executing deep research: {e}")
+            logger.error(f"{log_prefix} Error executing deep research: {e}")
             yield self._format_sse_event("error", {"message": str(e)})
         finally:
             if 'graph' in locals():

@@ -11,8 +11,6 @@ from loguru import logger
 
 from backend.config.settings import _settings
 
-_logger = logger.bind(service="blob-storage")
-
 
 class BlobStorageClient:
     """Wraps Azure Blob Storage operations used across the application."""
@@ -58,7 +56,7 @@ class BlobStorageClient:
             from azure.core.exceptions import ResourceExistsError
 
             self._client.create_container(self._container_name)
-            _logger.info("Created Azure Blob container: {}", self._container_name)
+            logger.info(f"[BlobStorage] Created Azure Blob container: {self._container_name}")
         except ResourceExistsError:
             pass  # container already exists — nothing to do
 
@@ -96,9 +94,7 @@ class BlobStorageClient:
             overwrite=True,
             content_settings=self._make_content_settings(content_type),
         )
-        _logger.debug(
-            "Uploaded blob path={} content_type={}", blob_path, content_type
-        )
+        logger.debug(f"[BlobStorage] Uploaded blob path={blob_path} content_type={content_type}")
         return blob_path
 
     def generate_sas_url(
@@ -142,9 +138,7 @@ class BlobStorageClient:
             f"https://{self._account_name}.blob.core.windows.net"
             f"/{self._container_name}/{blob_path}?{sas_token}"
         )
-        _logger.debug(
-            "Generated SAS URL blob_path={} expires_at={}", blob_path, expiry.isoformat()
-        )
+        logger.debug(f"[BlobStorage] Generated SAS URL blob_path={blob_path} expires_at={expiry.isoformat()}")
         return sas_url
 
     def generate_sas_expiry(self, expiry_hours: int | None = None) -> datetime:
@@ -160,10 +154,10 @@ class BlobStorageClient:
         )
         try:
             blob_client.delete_blob()
-            _logger.debug("Deleted blob path={}", blob_path)
+            logger.debug(f"[BlobStorage] Deleted blob path={blob_path}")
         except Exception as exc:
             # ResourceNotFound or transient errors — log and continue
-            _logger.warning("Failed to delete blob path={}: {}", blob_path, exc)
+            logger.warning(f"[BlobStorage] Failed to delete blob path={blob_path}: {exc}")
 
     def download_to_temp_file(self, blob_path: str, suffix: str = "") -> Path:
         """Download a blob to a temporary local file.
@@ -185,9 +179,7 @@ class BlobStorageClient:
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise
-        _logger.debug(
-            "Downloaded blob path={} to temp file={}", blob_path, tmp_path
-        )
+        logger.debug(f"[BlobStorage] Downloaded blob path={blob_path} to temp file={tmp_path}")
         return tmp_path
 
     def upload_bytes(
@@ -210,9 +202,7 @@ class BlobStorageClient:
             overwrite=True,
             content_settings=self._make_content_settings(content_type),
         )
-        _logger.debug(
-            "Uploaded blob path={} content_type={}", blob_path, content_type
-        )
+        logger.debug(f"[BlobStorage] Uploaded blob path={blob_path} content_type={content_type}")
         return blob_path
 
     # ------------------------------------------------------------------

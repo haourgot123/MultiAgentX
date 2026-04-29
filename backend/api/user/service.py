@@ -24,13 +24,14 @@ from backend.utils.constants import Message
 class UserService:
     """Service class for managing user-related operations."""
     @staticmethod
-    def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return logger.bind(
-            request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-            user_id=user_id
+    def _get_log_prefix(request: Request | None = None, user_id: int | None = None) -> str:
+        request_id = getattr(getattr(request, "state", None), "request_id", "-")
+        resolved_user_id = (
+            user_id
             if user_id is not None
-            else getattr(getattr(request, "state", None), "user_id", "-"),
+            else getattr(getattr(request, "state", None), "user_id", "-")
         )
+        return f"[UserService][request_id={request_id}][user_id={resolved_user_id}]"
 
     def get_user_by_email(self, db_session: Session, email: str):
         """Retrieve a user by their email address.
@@ -74,7 +75,7 @@ class UserService:
         """
         user = get_by_id(db_session, User, user_id)
         if not user:
-            self._get_request_logger(request, user_id).warning("User not found by id")
+            logger.warning(f"{self._get_log_prefix(request, user_id)} User not found by id")
             raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         return user
 
@@ -110,9 +111,8 @@ class UserService:
             db_session.query(User).filter(User.email == user_in.email.lower()).first()
         )
         if existing_user_email:
-            self._get_request_logger(request).warning(
-                "Create user rejected: duplicated email={}",
-                user_in.email,
+            logger.warning(
+                f"{self._get_log_prefix(request)} Create user rejected: duplicated email={user_in.email}"
             )
             raise InvalidRequestException(
                 message=Message.MESSAGE_USER_EMAIL_ALREADY_EXISTS
@@ -124,9 +124,8 @@ class UserService:
             .first()
         )
         if existing_user_username:
-            self._get_request_logger(request).warning(
-                "Create user rejected: duplicated username={}",
-                user_in.username,
+            logger.warning(
+                f"{self._get_log_prefix(request)} Create user rejected: duplicated username={user_in.username}"
             )
             raise InvalidRequestException(
                 message=Message.MESSAGE_USERNAME_ALREADY_EXISTS
@@ -149,7 +148,7 @@ class UserService:
         new_user.updated_at = get_utc_now()
         try:
             new_user = insert_row(db_session, new_user)
-            self._get_request_logger(request, new_user.id).info("Created user successfully")
+            logger.info(f"{self._get_log_prefix(request, new_user.id)} Created user successfully")
             return new_user
         except PermissionError as e:
             db_session.rollback()
@@ -176,8 +175,8 @@ class UserService:
             User: Updated user object.
         """
 
-        request_logger = self._get_request_logger(request, user_id)
-        request_logger.info("Updating user profile")
+        log_prefix = self._get_log_prefix(request, user_id)
+        logger.info(f"{log_prefix} Updating user profile")
 
         user = self.get_user_by_id(request, db_session, user_id)
 
@@ -215,7 +214,7 @@ class UserService:
         try:
             db_session.commit()
             db_session.refresh(user)
-            request_logger.info("Updated user successfully")
+            logger.info(f"{log_prefix} Updated user successfully")
             return user
         except PermissionError as e:
             db_session.rollback()
@@ -236,13 +235,13 @@ class UserService:
         Returns:
             User: Updated user object with deleted flag set to True.
         """
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         user = self.get_user_by_id(request, db_session, user_id)
         user.deleted = True
         try:
             db_session.commit()
             db_session.refresh(user)
-            request_logger.info("Soft deleted user")
+            logger.info(f"{log_prefix} Soft deleted user")
             return user
         except PermissionError as e:
             db_session.rollback()
@@ -272,9 +271,9 @@ class UserService:
             except ObjectNotFoundException:
                 raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
         if not user.check_password(login_request.password):
-            self._get_request_logger(request).warning(
-                "Login failed due to invalid password for {}",
-                login_request.username,
+            logger.warning(
+                f"{self._get_log_prefix(request)} Login failed due to invalid password "
+                f"for {login_request.username}"
             )
             raise InvalidRequestException(message=Message.MESSAGE_INVALID_PASSWORD)
         if not user.first_login:
@@ -284,7 +283,7 @@ class UserService:
         try:
             db_session.commit()
             db_session.refresh(user)
-            self._get_request_logger(request, user.id).info("User login successful")
+            logger.info(f"{self._get_log_prefix(request, user.id)} User login successful")
             return LoginResponse(
                 user=user, refresh_token=refresh_token, access_token=access_token
             )
@@ -305,7 +304,7 @@ class UserService:
         Returns:
             User: Updated user object.
         """
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         user = self.get_user_by_id(request, db_session, user_id)
         user.last_login = get_utc_now()
         try:
@@ -313,7 +312,7 @@ class UserService:
             db_session.commit()
             # Refresh user
             db_session.refresh(user)
-            request_logger.info("User logout successful")
+            logger.info(f"{log_prefix} User logout successful")
             return user
         except PermissionError as e:
             # Rollback transaction
@@ -340,14 +339,14 @@ class UserService:
         Returns:
             ChangePasswordResponse: Response object containing success message.
         """
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         user = self.get_user_by_id(request, db_session, user_id)
         if user.check_password(change_password_request.old_password):
             user.change_password(change_password_request.new_password)
             try:
                 db_session.commit()
                 db_session.refresh(user)
-                request_logger.info("Password changed successfully")
+                logger.info(f"{log_prefix} Password changed successfully")
                 return ChangePasswordResponse(
                     message=Message.MESSAGE_PASSWORD_CHANGED_SUCCESSFULLY
                 )
@@ -358,7 +357,7 @@ class UserService:
                 db_session.rollback()
                 raise e
         else:
-            request_logger.warning("Password change rejected: old password invalid")
+            logger.warning(f"{log_prefix} Password change rejected: old password invalid")
             raise InvalidRequestException(message=Message.MESSAGE_INVALID_PASSWORD)
 
     def update_self_user_information(
@@ -378,7 +377,7 @@ class UserService:
         Returns:
             SelfUserInformationUpdateResponse: Response object containing success message.
         """
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         user = self.get_user_by_id(request, db_session, user_id)
 
         if user.deleted:
@@ -398,7 +397,7 @@ class UserService:
         try:
             db_session.commit()
             db_session.refresh(user)
-            request_logger.info("Updated self user information")
+            logger.info(f"{log_prefix} Updated self user information")
             return SelfUserInformationUpdateResponse(
                 message=Message.MESSAGE_USER_INFORMATION_UPDATED_SUCCESSFULLY
             )

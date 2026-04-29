@@ -208,13 +208,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await self._redis_limiter.allow(key)
         except Exception as exc:
             if not self._redis_warning_logged:
-                logger.bind(
-                    service="rate-limit",
-                    request_id="-",
-                    user_id="-",
-                ).warning(
-                    "Redis rate limiter unavailable, falling back to in-memory limiter: {}",
-                    exc,
+                logger.warning(
+                    f"[RateLimit][request_id=-][user_id=-] "
+                    f"Redis rate limiter unavailable, falling back to in-memory limiter: {exc}"
                 )
                 self._redis_warning_logged = True
             return await self._fallback_limiter.allow(key)
@@ -236,15 +232,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             }
             if request_id != "-":
                 response_headers["X-Request-ID"] = request_id
-            logger.bind(
-                service="rate-limit",
-                request_id=request_id,
-                user_id="-"
-            ).warning(
-                "Rate limit exceeded method={} path={} retry_after={}s",
-                request.method,
-                path,
-                decision.retry_after_seconds,
+            logger.warning(
+                f"[RateLimit][request_id={request_id}][user_id=-] "
+                f"Rate limit exceeded method={request.method} path={path} "
+                f"retry_after={decision.retry_after_seconds}s"
             )
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

@@ -37,13 +37,14 @@ class DataIngestionService:
         self.collection_name = _settings.milvus.collection_name
 
     @staticmethod
-    def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return logger.bind(
-            request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-            user_id=user_id
+    def _get_log_prefix(request: Request | None = None, user_id: int | None = None) -> str:
+        request_id = getattr(getattr(request, "state", None), "request_id", "-")
+        resolved_user_id = (
+            user_id
             if user_id is not None
-            else getattr(getattr(request, "state", None), "user_id", "-"),
+            else getattr(getattr(request, "state", None), "user_id", "-")
         )
+        return f"[DataIngestionService][request_id={request_id}][user_id={resolved_user_id}]"
 
     @staticmethod
     def _truncate(value: str | None, max_len: int = 1000) -> str | None:
@@ -59,7 +60,7 @@ class DataIngestionService:
         db_session: Session,
         user_id: int,
         file_id: int,
-        request_logger,
+        log_prefix: str,
     ) -> StoredFile:
         stored_file = (
             db_session.query(StoredFile)
@@ -71,7 +72,7 @@ class DataIngestionService:
             .first()
         )
         if not stored_file:
-            request_logger.warning("File not found for ingestion")
+            logger.warning(f"{log_prefix} File not found for ingestion")
             raise ObjectNotFoundException(message=Message.MESSAGE_FILE_NOT_FOUND)
         return stored_file
 
@@ -95,10 +96,8 @@ class DataIngestionService:
         db_session.commit()
         db_session.refresh(stored_file)
         logger.info(
-            "Updated ingestion status to {} (chunks={}, has_error={})",
-            status.value,
-            stored_file.ingested_chunks,
-            bool(stored_file.ingestion_error),
+            f"[DataIngestionService] Updated ingestion status to {status.value} "
+            f"(chunks={stored_file.ingested_chunks}, has_error={bool(stored_file.ingestion_error)})"
         )
 
     def _emit_ingestion_status(
@@ -112,7 +111,7 @@ class DataIngestionService:
         chunks: int = 0,
         error: str | None = None,
         ingested_at=None,
-        request_logger=None,
+        log_prefix: str | None = None,
     ) -> None:
         status_value = status.value if isinstance(status, IngestionPipelineStatus) else status
         socketio_manager.emit_ingestion_status_sync(
@@ -128,12 +127,10 @@ class DataIngestionService:
                 "ingested_at": ingested_at.isoformat() if ingested_at else None,
             },
         )
-        active_logger = request_logger or logger.bind(user_id=user_id)
-        active_logger.debug(
-            "Emitted ingestion status event stage={} status={} progress={}",
-            stage,
-            status_value,
-            progress,
+        active_log_prefix = log_prefix or self._get_log_prefix(user_id=user_id)
+        logger.debug(
+            f"{active_log_prefix} Emitted ingestion status event "
+            f"stage={stage} status={status_value} progress={progress}"
         )
 
     @staticmethod
@@ -525,18 +522,16 @@ class DataIngestionService:
         stored_file: StoredFile,
         chunks: list[IngestionChunk],
         vectors: list[list[float]],
-        request_logger,
+        log_prefix: str,
     ) -> None:
         collection = self._get_milvus_collection()
         delete_expr = f"user_id == {user_id} and file_id == {stored_file.id}"
         try:
             collection.delete(expr=delete_expr)
         except Exception as exc:
-            request_logger.warning(
-                "Milvus delete before upsert failed for file_id={} user_id={}: {}",
-                stored_file.id,
-                user_id,
-                exc,
+            logger.warning(
+                f"{log_prefix} Milvus delete before upsert failed "
+                f"for file_id={stored_file.id} user_id={user_id}: {exc}"
             )
 
         now_unix = int(get_utc_now().timestamp())
@@ -590,40 +585,44 @@ class DataIngestionService:
 
         collection.insert(rows)
         collection.flush()
-        request_logger.info(
-            "Upserted document vectors into Milvus, chunk_count={}, metadata_fields={}",
-            len(chunks),
-            [field.name for field in schema_fields if field.name in {"user_id", "file_id", "file_name", "mime_type", "metadata_json"}],
+        metadata_fields = [
+            field.name
+            for field in schema_fields
+            if field.name in {"user_id", "file_id", "file_name", "mime_type", "metadata_json"}
+        ]
+        logger.info(
+            f"{log_prefix} Upserted document vectors into Milvus, "
+            f"chunk_count={len(chunks)}, metadata_fields={metadata_fields}"
         )
 
     def _run_ingestion_pipeline(
         self,
         stored_file: StoredFile,
-        request_logger,
+        log_prefix: str,
         on_progress: Callable[[str, int, int], None] | None = None,
     ) -> tuple[int, str | None]:
         from backend.utils.blob_storage import blob_storage_client
 
         blob_path = stored_file.storage_path
-        request_logger.info("Starting ingestion pipeline for blob_path={}", blob_path)
+    logger.info(f"{log_prefix} Starting ingestion pipeline for blob_path={blob_path}")
 
         # Download blob to a local temp file for processing
         suffix = Path(blob_path).suffix or ".bin"
         tmp_path = blob_storage_client.download_to_temp_file(blob_path, suffix=suffix)
-        request_logger.debug("Downloaded blob to temp file={}", tmp_path)
+        logger.debug(f"{log_prefix} Downloaded blob to temp file={tmp_path}")
 
         try:
             if on_progress:
                 on_progress("parsing", 20, 0)
             blocks = extract_service.extract_text_blocks(tmp_path)
-            request_logger.debug("Extracted text blocks, count={}", len(blocks))
+            logger.debug(f"{log_prefix} Extracted text blocks, count={len(blocks)}")
 
             if on_progress:
                 on_progress("chunking", 45, 0)
             chunks = self._build_chunks(blocks)
             if not chunks:
                 raise InvalidRequestException(message="No text extracted for ingestion")
-            request_logger.debug("Built chunks from extracted blocks, chunk_count={}", len(chunks))
+            logger.debug(f"{log_prefix} Built chunks from extracted blocks, chunk_count={len(chunks)}")
 
             # --- Debug: write extraction + chunking results to JSON for verification ---
             try:
@@ -667,9 +666,9 @@ class DataIngestionService:
                     json.dumps(debug_payload, ensure_ascii=False, indent=2),
                     encoding="utf-8",
                 )
-                request_logger.info("Wrote ingestion debug JSON to {}", debug_file)
+                logger.info(f"{log_prefix} Wrote ingestion debug JSON to {debug_file}")
             except Exception as e:
-                request_logger.warning("Failed to write debug JSON: {}", e)
+                logger.warning(f"{log_prefix} Failed to write debug JSON: {e}")
             # --- End debug ---
 
             if on_progress:
@@ -683,9 +682,9 @@ class DataIngestionService:
                 stored_file=stored_file,
                 chunks=chunks,
                 vectors=vectors,
-                request_logger=request_logger,
+                log_prefix=log_prefix,
             )
-            request_logger.info("Ingestion pipeline completed")
+            logger.info(f"{log_prefix} Ingestion pipeline completed")
             return len(chunks), None
         finally:
             # Always clean up the local temp file
@@ -698,9 +697,9 @@ class DataIngestionService:
         user_id: int,
         file_id: int,
     ) -> IngestionRunResponse:
-        request_logger = self._get_request_logger(request, user_id)
-        stored_file = self._get_user_file(db_session, user_id, file_id, request_logger)
-        request_logger.info("Ingestion requested")
+        log_prefix = self._get_log_prefix(request, user_id)
+        stored_file = self._get_user_file(db_session, user_id, file_id, log_prefix)
+        logger.info(f"{log_prefix} Ingestion requested")
         self._set_file_status(
             db_session,
             stored_file,
@@ -717,13 +716,13 @@ class DataIngestionService:
             progress=20,
             chunks=0,
             error=None,
-            request_logger=request_logger,
+            log_prefix=log_prefix,
         )
 
         try:
             chunk_count, _ = self._run_ingestion_pipeline(
                 stored_file,
-                request_logger,
+                log_prefix,
                 on_progress=lambda stage, progress, chunks: self._emit_ingestion_status(
                     user_id=user_id,
                     file_id=stored_file.id,
@@ -738,7 +737,7 @@ class DataIngestionService:
                     progress=progress,
                     chunks=chunks,
                     error=None,
-                    request_logger=request_logger,
+                    log_prefix=log_prefix,
                 ),
             )
             self._set_file_status(
@@ -758,10 +757,10 @@ class DataIngestionService:
                 chunks=chunk_count,
                 error=None,
                 ingested_at=stored_file.ingested_at,
-                request_logger=request_logger,
+                log_prefix=log_prefix,
             )
         except Exception as exc:
-            request_logger.exception("Ingestion failed unexpectedly")
+            logger.exception(f"{log_prefix} Ingestion failed unexpectedly: {exc}")
             self._set_file_status(
                 db_session,
                 stored_file,
@@ -778,10 +777,10 @@ class DataIngestionService:
                 progress=100,
                 chunks=0,
                 error=stored_file.ingestion_error,
-                request_logger=request_logger,
+                log_prefix=log_prefix,
             )
         else:
-            request_logger.info("Ingestion finished successfully with chunks={}", chunk_count)
+            logger.info(f"{log_prefix} Ingestion finished successfully with chunks={chunk_count}")
 
         return IngestionRunResponse(
             file_id=stored_file.id,
@@ -797,11 +796,8 @@ class DataIngestionService:
         user_id: int,
         file_ids: list[int],
     ) -> list[IngestionRunResponse]:
-        request_logger = self._get_request_logger(request, user_id)
-        request_logger.info(
-            "Batch ingestion requested for file_count={}",
-            len(file_ids),
-        )
+        log_prefix = self._get_log_prefix(request, user_id)
+        logger.info(f"{log_prefix} Batch ingestion requested for file_count={len(file_ids)}")
         results: list[IngestionRunResponse] = []
         for file_id in file_ids:
             results.append(self.ingest_file(request, db_session, user_id, file_id))
@@ -814,8 +810,8 @@ class DataIngestionService:
         file_id: int,
         request: Request | None = None,
     ) -> None:
-        request_logger = self._get_request_logger(request, user_id)
-        request_logger.debug("Queued ingestion status emitted")
+        log_prefix = self._get_log_prefix(request, user_id)
+        logger.debug(f"{log_prefix} Queued ingestion status emitted")
         self._emit_ingestion_status(
             user_id=user_id,
             file_id=file_id,
@@ -824,20 +820,20 @@ class DataIngestionService:
             progress=0,
             chunks=0,
             error=None,
-            request_logger=request_logger,
+            log_prefix=log_prefix,
         )
 
     def ingest_file_by_id(self, user_id: int, file_id: int) -> None:
         db_session = SessionLocal()
-        request_logger = self._get_request_logger(user_id=user_id)
-        request_logger.info("Background ingestion task started")
+        log_prefix = self._get_log_prefix(user_id=user_id)
+        logger.info(f"{log_prefix} Background ingestion task started")
         try:
             self.ingest_file(None, db_session, user_id, file_id)
-        except Exception:
-            request_logger.exception("Background ingestion encountered unexpected failure")
+        except Exception as exc:
+            logger.exception(f"{log_prefix} Background ingestion encountered unexpected failure: {exc}")
         finally:
             db_session.close()
-            request_logger.debug("Background ingestion task finished")
+            logger.debug(f"{log_prefix} Background ingestion task finished")
 
     @staticmethod
     def _decode_json_field(value: Any) -> dict[str, Any] | list[dict[str, Any]] | None:
@@ -856,7 +852,7 @@ class DataIngestionService:
         return None
 
     def list_milvus_collections(self, request: Request | None = None) -> list[dict[str, Any]]:
-        request_logger = self._get_request_logger(request)
+        log_prefix = self._get_log_prefix(request)
         try:
             from pymilvus import Collection, connections, utility
         except ModuleNotFoundError as exc:
@@ -887,10 +883,8 @@ class DataIngestionService:
                     }
                 )
             except Exception as exc:
-                request_logger.warning(
-                    "Unable to inspect Milvus collection {}: {}",
-                    collection_name,
-                    exc,
+                logger.warning(
+                    f"{log_prefix} Unable to inspect Milvus collection {collection_name}: {exc}"
                 )
                 results.append(
                     {
@@ -1008,24 +1002,22 @@ class DataIngestionService:
         user_id: int,
         file_id: int,
     ) -> StoredFile:
-        request_logger = self._get_request_logger(request, user_id)
-        return self._get_user_file(db_session, user_id, file_id, request_logger)
+        log_prefix = self._get_log_prefix(request, user_id)
+        return self._get_user_file(db_session, user_id, file_id, log_prefix)
 
     def delete_file_vectors(
         self, user_id: int, file_id: int, request: Request | None = None
     ) -> None:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         try:
             collection = self._get_milvus_collection()
             collection.delete(expr=f"user_id == {user_id} and file_id == {file_id}")
             collection.flush()
-            request_logger.info("Deleted vectors from Milvus")
+            logger.info(f"{log_prefix} Deleted vectors from Milvus")
         except Exception as exc:
-            request_logger.warning(
-                "Skip vector cleanup for file_id={} user_id={} because Milvus is unavailable: {}",
-                file_id,
-                user_id,
-                exc,
+            logger.warning(
+                f"{log_prefix} Skip vector cleanup for file_id={file_id} "
+                f"user_id={user_id} because Milvus is unavailable: {exc}"
             )
 
 

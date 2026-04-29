@@ -132,7 +132,7 @@ class StoryboardNode(Runnable):
             draft = await llm.ainvoke(messages)
             scenes = self._normalize_scenes(state, draft.scenes)
         except Exception as exc:
-            logger.warning("[VideoGenerationAgent (StoryboardNode)] LLM storyboard failed, using fallback: {}", exc)
+            logger.warning(f"[VideoGenerationAgent (StoryboardNode)] LLM storyboard failed, using fallback: {exc}")
             scenes = self._fallback_storyboard(state)
 
         storyboard_payload = [scene.model_dump() for scene in scenes]

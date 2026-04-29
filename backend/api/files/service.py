@@ -44,13 +44,14 @@ class FileService:
         }
 
     @staticmethod
-    def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return logger.bind(
-            request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-            user_id=user_id
+    def _get_log_prefix(request: Request | None = None, user_id: int | None = None) -> str:
+        request_id = getattr(getattr(request, "state", None), "request_id", "-")
+        resolved_user_id = (
+            user_id
             if user_id is not None
-            else getattr(getattr(request, "state", None), "user_id", "-"),
+            else getattr(getattr(request, "state", None), "user_id", "-")
         )
+        return f"[FileService][request_id={request_id}][user_id={resolved_user_id}]"
 
     @staticmethod
     def _normalize_filename(filename: str | None) -> str:
@@ -64,7 +65,7 @@ class FileService:
         db_session: Session,
         user_id: int,
         file_id: int,
-        request_logger,
+        log_prefix: str,
     ) -> StoredFile:
         stored_file = (
             db_session.query(StoredFile)
@@ -76,12 +77,12 @@ class FileService:
             .first()
         )
         if not stored_file:
-            request_logger.warning("File not found")
+            logger.warning(f"{log_prefix} File not found")
             raise ObjectNotFoundException(message=Message.MESSAGE_FILE_NOT_FOUND)
         return stored_file
 
     def list_files(self, request: Request, db_session: Session, user_id: int) -> list[StoredFile]:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         files = (
             db_session.query(StoredFile)
             .filter(
@@ -91,17 +92,14 @@ class FileService:
             .order_by(StoredFile.created_at.desc())
             .all()
         )
-        request_logger.debug(
-            "Listed files successfully, count={}",
-            len(files),
-        )
+        logger.debug(f"{log_prefix} Listed files successfully, count={len(files)}")
         return files
 
     def get_file(
         self, request: Request, db_session: Session, user_id: int, file_id: int
     ) -> StoredFile:
-        request_logger = self._get_request_logger(request, user_id)
-        stored_file = self._get_user_file(db_session, user_id, file_id, request_logger)
+        log_prefix = self._get_log_prefix(request, user_id)
+        stored_file = self._get_user_file(db_session, user_id, file_id, log_prefix)
         return stored_file
 
     def get_sas_url(self, stored_file: StoredFile) -> str:
@@ -115,7 +113,7 @@ class FileService:
     def _should_convert_to_pdf(self, path: Path) -> bool:
         return path.suffix.lower() in self._office_suffixes
 
-    def _convert_to_pdf(self, input_path: Path, request_logger) -> tuple[Path, str, str]:
+    def _convert_to_pdf(self, input_path: Path, log_prefix: str) -> tuple[Path, str, str]:
         soffice_path = shutil.which("soffice") or shutil.which("libreoffice")
         if not soffice_path:
             raise InvalidRequestException(
@@ -140,10 +138,9 @@ class FileService:
             check=False,
         )
         if result.returncode != 0:
-            request_logger.error(
-                "LibreOffice conversion failed. command={} stderr={}",
-                " ".join(convert_command),
-                result.stderr.strip(),
+            logger.error(
+                f"{log_prefix} LibreOffice conversion failed. "
+                f"command={' '.join(convert_command)} stderr={result.stderr.strip()}"
             )
             raise InvalidRequestException(
                 message=f"Failed to convert `{input_path.name}` to PDF"
@@ -156,7 +153,7 @@ class FileService:
             )
 
         converted_name = f"{input_path.stem}.pdf"
-        request_logger.debug("Converted office file to PDF: {}", converted_name)
+    logger.debug(f"{log_prefix} Converted office file to PDF: {converted_name}")
         return converted_path, converted_name, "application/pdf"
 
     async def upload_files(
@@ -166,10 +163,10 @@ class FileService:
         user_id: int,
         uploaded_files: Sequence[UploadFile],
     ) -> list[StoredFile]:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         if not uploaded_files:
             raise InvalidRequestException(message=Message.MESSAGE_INVALID_REQUEST)
-        request_logger.info("Uploading files, count={}", len(uploaded_files))
+        logger.info(f"{log_prefix} Uploading files, count={len(uploaded_files)}")
 
         # Temp directory for office→PDF conversion (cleaned up per file)
         tmp_dir = self._tmp_root / str(user_id)
@@ -187,9 +184,7 @@ class FileService:
                 # Write to local temp file (needed for office→PDF conversion)
                 with tmp_path.open("wb") as output:
                     shutil.copyfileobj(uploaded_file.file, output)
-                request_logger.debug(
-                    "Saved uploaded file to local temp: {}", tmp_path
-                )
+                logger.debug(f"{log_prefix} Saved uploaded file to local temp: {tmp_path}")
 
                 mime_type = uploaded_file.content_type or mimetypes.guess_type(
                     original_name
@@ -200,9 +195,9 @@ class FileService:
                 final_stored_name = stored_name
 
                 if self._should_convert_to_pdf(tmp_path):
-                    request_logger.debug("Detected office file, converting to PDF")
+                    logger.debug(f"{log_prefix} Detected office file, converting to PDF")
                     converted_path, converted_name, converted_mime_type = (
-                        self._convert_to_pdf(tmp_path, request_logger)
+                        self._convert_to_pdf(tmp_path, log_prefix)
                     )
                     final_tmp_path = converted_path
                     final_name = converted_name
@@ -222,9 +217,7 @@ class FileService:
                         data=f,
                         content_type=final_mime_type,
                     )
-                request_logger.debug(
-                    "Uploaded file to blob storage path={}", blob_path
-                )
+                logger.debug(f"{log_prefix} Uploaded file to blob storage path={blob_path}")
 
                 # Clean up local temp file
                 final_tmp_path.unlink(missing_ok=True)
@@ -245,23 +238,21 @@ class FileService:
                 )
                 db_session.add(db_file)
                 created_files.append(db_file)
-                request_logger.debug(
-                    "Prepared DB row for uploaded file name={} mime_type={} size={}",
-                    final_name,
-                    final_mime_type,
-                    file_size,
+                logger.debug(
+                    f"{log_prefix} Prepared DB row for uploaded file "
+                    f"name={final_name} mime_type={final_mime_type} size={file_size}"
                 )
 
             db_session.commit()
             for db_file in created_files:
                 db_session.refresh(db_file)
-            request_logger.info(
-                "Upload completed successfully, created_file_ids={}",
-                [created_file.id for created_file in created_files],
+            created_file_ids = [created_file.id for created_file in created_files]
+            logger.info(
+                f"{log_prefix} Upload completed successfully, created_file_ids={created_file_ids}"
             )
             return created_files
         except SQLAlchemyError as e:
-            request_logger.exception("Database error while uploading files")
+            logger.exception(f"{log_prefix} Database error while uploading files: {e}")
             db_session.rollback()
             raise e
         finally:
@@ -276,25 +267,23 @@ class FileService:
         file_id: int,
         new_name: str,
     ) -> StoredFile:
-        request_logger = self._get_request_logger(request, user_id)
-        stored_file = self._get_user_file(db_session, user_id, file_id, request_logger)
+        log_prefix = self._get_log_prefix(request, user_id)
+        stored_file = self._get_user_file(db_session, user_id, file_id, log_prefix)
         original_name = stored_file.name
         stored_file.name = self._normalize_filename(new_name)
         stored_file.updated_at = get_utc_now()
         db_session.commit()
         db_session.refresh(stored_file)
-        request_logger.info(
-            "Renamed file from '{}' to '{}'",
-            original_name,
-            stored_file.name,
+        logger.info(
+            f"{log_prefix} Renamed file from '{original_name}' to '{stored_file.name}'"
         )
         return stored_file
 
     def delete_file(
         self, request: Request, db_session: Session, user_id: int, file_id: int
     ) -> dict:
-        request_logger = self._get_request_logger(request, user_id)
-        stored_file = self._get_user_file(db_session, user_id, file_id, request_logger)
+        log_prefix = self._get_log_prefix(request, user_id)
+        stored_file = self._get_user_file(db_session, user_id, file_id, log_prefix)
         from backend.api.conversation.model import Conversation, conversation_files
 
         attached_conversation_count = (
@@ -317,14 +306,13 @@ class FileService:
             )
 
         now = get_utc_now()
-        request_logger.info("Soft deleting file; blob/vector purge deferred")
+        logger.info(f"{log_prefix} Soft deleting file; blob/vector purge deferred")
 
         mark_for_retention_delete(stored_file, now)
         db_session.commit()
 
-        request_logger.info(
-            "Soft deleted file successfully; purge_after={}",
-            stored_file.purge_after,
+        logger.info(
+            f"{log_prefix} Soft deleted file successfully; purge_after={stored_file.purge_after}"
         )
 
         return {"message": Message.MESSAGE_FILE_DELETED_SUCCESSFULLY}

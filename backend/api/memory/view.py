@@ -15,7 +15,11 @@ from backend.api.memory.model import (
 from backend.utils.dependency import get_current_user
 
 router = APIRouter(prefix="/memories", tags=["memories"])
-memory_logger = logger.bind(service="memory-api")
+
+
+def _get_log_prefix(request: Request, user_id: str) -> str:
+    request_id = getattr(getattr(request, "state", None), "request_id", "-")
+    return f"[MemoryAPI][request_id={request_id}][user_id={user_id}]"
 
 
 @router.get("", response_model=MemoryListResponse)
@@ -31,12 +35,9 @@ async def get_user_memories(
     Returns a list of all stored memories for the authenticated user.
     """
     user_id = str(request.state.user_id)
-    request_logger = memory_logger.bind(
-        request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-        user_id=user_id
-    )
+    log_prefix = _get_log_prefix(request, user_id)
     
-    request_logger.info(f"Getting all memories for user {user_id}")
+    logger.info(f"{log_prefix} Getting all memories for user {user_id}")
     
     try:
         memories = await mem0_client.get_all_memories(
@@ -57,7 +58,7 @@ async def get_user_memories(
             for mem in memories
         ]
         
-        request_logger.info(f"Retrieved {len(memory_responses)} memories for user {user_id}")
+        logger.info(f"{log_prefix} Retrieved {len(memory_responses)} memories for user {user_id}")
         
         return MemoryListResponse(
             memories=memory_responses,
@@ -65,7 +66,7 @@ async def get_user_memories(
         )
         
     except Exception as e:
-        request_logger.error(f"Error getting memories: {e}")
+        logger.error(f"{log_prefix} Error getting memories: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get memories: {str(e)}")
 
 
@@ -87,12 +88,9 @@ async def search_memories(
         raise HTTPException(status_code=403, detail="Cannot search memories for other users")
     
     user_id = current_user_id
-    request_logger = memory_logger.bind(
-        request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-        user_id=user_id
-    )
+    log_prefix = _get_log_prefix(request, user_id)
     
-    request_logger.info(f"Searching memories with query: '{search_request.query}'")
+    logger.info(f"{log_prefix} Searching memories with query: '{search_request.query}'")
     
     try:
         memories = await mem0_client.search_memories(
@@ -114,7 +112,7 @@ async def search_memories(
             for mem in memories
         ]
         
-        request_logger.info(f"Found {len(memory_responses)} memories matching query")
+        logger.info(f"{log_prefix} Found {len(memory_responses)} memories matching query")
         
         return MemoryListResponse(
             memories=memory_responses,
@@ -122,7 +120,7 @@ async def search_memories(
         )
         
     except Exception as e:
-        request_logger.error(f"Error searching memories: {e}")
+        logger.error(f"{log_prefix} Error searching memories: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to search memories: {str(e)}")
 
 
@@ -144,12 +142,9 @@ async def add_memory(
         raise HTTPException(status_code=403, detail="Cannot add memories for other users")
     
     user_id = current_user_id
-    request_logger = memory_logger.bind(
-        request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-        user_id=user_id
-    )
+    log_prefix = _get_log_prefix(request, user_id)
     
-    request_logger.info(f"Adding memory for user {user_id}")
+    logger.info(f"{log_prefix} Adding memory for user {user_id}")
     
     try:
         result = await mem0_client.add_memory(
@@ -174,7 +169,7 @@ async def add_memory(
             for mem in memories
         ]
         
-        request_logger.info(f"Added {len(memory_responses)} memories for user {user_id}")
+        logger.info(f"{log_prefix} Added {len(memory_responses)} memories for user {user_id}")
         
         return MemoryListResponse(
             memories=memory_responses,
@@ -182,7 +177,7 @@ async def add_memory(
         )
         
     except Exception as e:
-        request_logger.error(f"Error adding memory: {e}")
+        logger.error(f"{log_prefix} Error adding memory: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to add memory: {str(e)}")
 
 
@@ -200,12 +195,9 @@ async def update_memory(
     Updates the content of an existing memory.
     """
     user_id = str(request.state.user_id)
-    request_logger = memory_logger.bind(
-        request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-        user_id=user_id
-    )
+    log_prefix = _get_log_prefix(request, user_id)
     
-    request_logger.info(f"Updating memory {memory_id}")
+    logger.info(f"{log_prefix} Updating memory {memory_id}")
     
     try:
         success = await mem0_client.delete_memory(memory_id=memory_id)
@@ -228,7 +220,7 @@ async def update_memory(
     except HTTPException:
         raise
     except Exception as e:
-        request_logger.error(f"Error updating memory: {e}")
+        logger.error(f"{log_prefix} Error updating memory: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update memory: {str(e)}")
 
 
@@ -245,18 +237,15 @@ async def delete_memory(
     Permanently removes a memory from the user's memory store.
     """
     user_id = str(request.state.user_id)
-    request_logger = memory_logger.bind(
-        request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-        user_id=user_id
-    )
+    log_prefix = _get_log_prefix(request, user_id)
     
-    request_logger.info(f"Deleting memory {memory_id}")
+    logger.info(f"{log_prefix} Deleting memory {memory_id}")
     
     try:
         success = await mem0_client.delete_memory(memory_id=memory_id)
         
         if success:
-            request_logger.info(f"Deleted memory {memory_id}")
+            logger.info(f"{log_prefix} Deleted memory {memory_id}")
             return {"message": f"Memory {memory_id} deleted successfully"}
         else:
             raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
@@ -264,7 +253,7 @@ async def delete_memory(
     except HTTPException:
         raise
     except Exception as e:
-        request_logger.error(f"Error deleting memory: {e}")
+        logger.error(f"{log_prefix} Error deleting memory: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete memory: {str(e)}")
 
 
@@ -280,22 +269,19 @@ async def clear_user_memories(
     Permanently removes all memories. This action cannot be undone.
     """
     user_id = str(request.state.user_id)
-    request_logger = memory_logger.bind(
-        request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-        user_id=user_id
-    )
+    log_prefix = _get_log_prefix(request, user_id)
     
-    request_logger.info(f"Clearing all memories for user {user_id}")
+    logger.info(f"{log_prefix} Clearing all memories for user {user_id}")
     
     try:
         success = await mem0_client.clear_user_memories(user_id=user_id)
         
         if success:
-            request_logger.info(f"Cleared all memories for user {user_id}")
+            logger.info(f"{log_prefix} Cleared all memories for user {user_id}")
             return {"message": "All memories cleared successfully"}
         else:
             raise HTTPException(status_code=500, detail="Failed to clear memories")
             
     except Exception as e:
-        request_logger.error(f"Error clearing memories: {e}")
+        logger.error(f"{log_prefix} Error clearing memories: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear memories: {str(e)}")

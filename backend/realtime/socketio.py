@@ -82,37 +82,33 @@ class SocketIOManager:
             self._loop = asyncio.get_running_loop()
             token = self._extract_token(auth, environ)
             if not token:
-                logger.warning("Socket connection rejected sid={} due to missing token", sid)
+                logger.warning(f"[SocketIO] Socket connection rejected sid={sid} due to missing token")
                 return False
 
             try:
                 is_valid, payload = verify_access_token(token)
             except Exception as exc:
-                logger.warning(
-                    "Socket connection rejected sid={} due to auth error: {}",
-                    sid,
-                    exc,
-                )
+                logger.warning(f"[SocketIO] Socket connection rejected sid={sid} due to auth error: {exc}")
                 return False
 
             if not is_valid or not payload:
-                logger.warning("Socket connection rejected sid={} due to invalid token", sid)
+                logger.warning(f"[SocketIO] Socket connection rejected sid={sid} due to invalid token")
                 return False
 
             user_id = payload.get("user_id")
             if user_id is None:
-                logger.warning("Socket connection rejected sid={} due to missing user_id", sid)
+                logger.warning(f"[SocketIO] Socket connection rejected sid={sid} due to missing user_id")
                 return False
 
             user_id = int(user_id)
             await self.sio.save_session(sid, {"user_id": user_id})
             await self.sio.enter_room(sid, self._room_for_user(user_id))
-            logger.debug("Socket client connected sid={} user_id={}", sid, user_id)
+            logger.debug(f"[SocketIO] Socket client connected sid={sid} user_id={user_id}")
             return True
 
         @self.sio.event
         async def disconnect(sid: str) -> None:
-            logger.debug("Socket client disconnected sid={}", sid)
+            logger.debug(f"[SocketIO] Socket client disconnected sid={sid}")
 
         @self.sio.event
         async def ingestion_ping(sid: str) -> dict[str, bool]:

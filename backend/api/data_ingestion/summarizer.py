@@ -9,8 +9,6 @@ from openai import AzureOpenAI, OpenAI
 
 from backend.config.settings import _settings
 
-summarizer_logger = logger.bind(component="ingestion-summarizer")
-
 
 class IngestionSummarizer:
     def __init__(self):
@@ -76,10 +74,10 @@ class IngestionSummarizer:
             )
             content = response.choices[0].message.content
             if content:
-                summarizer_logger.debug("Image summary generated: {} chars", len(content))
+                logger.debug(f"[IngestionSummarizer] Image summary generated: {len(content)} chars")
             return content
         except Exception as exc:
-            summarizer_logger.warning("Failed to summarize image: {}", exc)
+            logger.warning(f"[IngestionSummarizer] Failed to summarize image: {exc}")
             return None
 
     def summarize_table(self, table_markdown: str) -> str | None:
@@ -106,10 +104,10 @@ class IngestionSummarizer:
             )
             content = response.choices[0].message.content
             if content:
-                summarizer_logger.debug("Table summary generated: {} chars", len(content))
+                logger.debug(f"[IngestionSummarizer] Table summary generated: {len(content)} chars")
             return content
         except Exception as exc:
-            summarizer_logger.warning("Failed to summarize table: {}", exc)
+            logger.warning(f"[IngestionSummarizer] Failed to summarize table: {exc}")
             return None
 
     async def summarize_image_async(self, image_base64: str) -> str | None:

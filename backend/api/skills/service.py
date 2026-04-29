@@ -47,13 +47,14 @@ class SkillService:
         )
 
     @staticmethod
-    def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return logger.bind(
-            request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-            user_id=user_id
+    def _get_log_prefix(request: Request | None = None, user_id: int | None = None) -> str:
+        request_id = getattr(getattr(request, "state", None), "request_id", "-")
+        resolved_user_id = (
+            user_id
             if user_id is not None
-            else getattr(getattr(request, "state", None), "user_id", "-"),
+            else getattr(getattr(request, "state", None), "user_id", "-")
         )
+        return f"[SkillService][request_id={request_id}][user_id={resolved_user_id}]"
 
     @staticmethod
     def _normalize_filename(filename: str | None) -> str:
@@ -91,7 +92,7 @@ class SkillService:
         db_session: Session,
         user_id: int,
         skill_id: int,
-        request_logger,
+        log_prefix: str,
     ) -> AgentSkill:
         skill = (
             db_session.query(AgentSkill)
@@ -103,14 +104,14 @@ class SkillService:
             .first()
         )
         if not skill:
-            request_logger.warning("Skill not found")
+            logger.warning(f"{log_prefix} Skill not found")
             raise ObjectNotFoundException(message=Message.MESSAGE_FILE_NOT_FOUND)
         return skill
 
     def list_skills(
         self, request: Request, db_session: Session, user_id: int
     ) -> List[AgentSkill]:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         skills = (
             db_session.query(AgentSkill)
             .filter(
@@ -120,14 +121,14 @@ class SkillService:
             .order_by(AgentSkill.created_at.desc())
             .all()
         )
-        request_logger.debug("Listed skills successfully, count={}", len(skills))
+        logger.debug(f"{log_prefix} Listed skills successfully, count={len(skills)}")
         return skills
 
     def get_skill(
         self, request: Request, db_session: Session, user_id: int, skill_id: int
     ) -> AgentSkill:
-        request_logger = self._get_request_logger(request, user_id)
-        return self._get_user_skill(db_session, user_id, skill_id, request_logger)
+        log_prefix = self._get_log_prefix(request, user_id)
+        return self._get_user_skill(db_session, user_id, skill_id, log_prefix)
 
     async def upload_skill(
         self,
@@ -136,7 +137,7 @@ class SkillService:
         user_id: int,
         uploaded_file: UploadFile,
     ) -> AgentSkill:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         if not uploaded_file:
             raise InvalidRequestException(message="No file provided")
 
@@ -146,7 +147,7 @@ class SkillService:
         if extension not in [".md", ".zip"]:
             raise InvalidRequestException(message="Only .md and .zip files are supported")
 
-        request_logger.info("Uploading skill, name={}", original_name)
+        logger.info(f"{log_prefix} Uploading skill, name={original_name}")
 
         skills_dir = self.skills_root / str(user_id)
         skills_dir.mkdir(parents=True, exist_ok=True)
@@ -208,11 +209,11 @@ class SkillService:
                     data=io.BytesIO(content_bytes),
                     content_type=content_type,
                 )
-                request_logger.info("Uploaded skill to blob: {}", blob_path)
+                logger.info(f"{log_prefix} Uploaded skill to blob: {blob_path}")
             except Exception as blob_exc:
-                request_logger.warning(
-                    "Failed to upload skill to blob (skill will be stored locally only): {}",
-                    blob_exc,
+                logger.warning(
+                    f"{log_prefix} Failed to upload skill to blob "
+                    f"(skill will be stored locally only): {blob_exc}"
                 )
 
             now = get_utc_now()
@@ -237,11 +238,9 @@ class SkillService:
             db_session.commit()
             db_session.refresh(skill)
 
-            request_logger.info(
-                "Skill uploaded successfully, id={} name={} folder={}",
-                skill.id,
-                skill.name,
-                skill_folder_name,
+            logger.info(
+                f"{log_prefix} Skill uploaded successfully, id={skill.id} "
+                f"name={skill.name} folder={skill_folder_name}"
             )
             return skill
 
@@ -260,8 +259,8 @@ class SkillService:
         skill_id: int,
         update_request: SkillUpdateRequest,
     ) -> AgentSkill:
-        request_logger = self._get_request_logger(request, user_id)
-        skill = self._get_user_skill(db_session, user_id, skill_id, request_logger)
+        log_prefix = self._get_log_prefix(request, user_id)
+        skill = self._get_user_skill(db_session, user_id, skill_id, log_prefix)
 
         update_data = update_request.model_dump(exclude_unset=True)
         if update_data:
@@ -271,25 +270,21 @@ class SkillService:
             db_session.commit()
             db_session.refresh(skill)
 
-        request_logger.info("Updated skill id={}", skill_id)
+        logger.info(f"{log_prefix} Updated skill id={skill_id}")
         return skill
 
     def delete_skill(
         self, request: Request, db_session: Session, user_id: int, skill_id: int
     ) -> Dict:
-        request_logger = self._get_request_logger(request, user_id)
-        skill = self._get_user_skill(db_session, user_id, skill_id, request_logger)
+        log_prefix = self._get_log_prefix(request, user_id)
+        skill = self._get_user_skill(db_session, user_id, skill_id, log_prefix)
 
         mark_for_retention_delete(skill)
         skill.is_active = False
         skill.is_selected = False
         db_session.commit()
 
-        request_logger.info(
-            "Soft deleted skill id={} purge_after={}",
-            skill_id,
-            skill.purge_after,
-        )
+        logger.info(f"{log_prefix} Soft deleted skill id={skill_id} purge_after={skill.purge_after}")
         return {"message": "Skill deleted successfully"}
 
     def toggle_skill_selection(
@@ -300,24 +295,22 @@ class SkillService:
         skill_id: int,
         is_selected: bool,
     ) -> AgentSkill:
-        request_logger = self._get_request_logger(request, user_id)
-        skill = self._get_user_skill(db_session, user_id, skill_id, request_logger)
+        log_prefix = self._get_log_prefix(request, user_id)
+        skill = self._get_user_skill(db_session, user_id, skill_id, log_prefix)
 
         skill.is_selected = is_selected
         skill.updated_at = get_utc_now()
         db_session.commit()
         db_session.refresh(skill)
 
-        request_logger.info(
-            "Toggled skill selection id={} is_selected={}", skill_id, is_selected
-        )
+        logger.info(f"{log_prefix} Toggled skill selection id={skill_id} is_selected={is_selected}")
         return skill
 
     def load_example_skills(
         self, request: Request, db_session: Session, user_id: int
     ) -> List[AgentSkill]:
         """Import pre-built example skills from test_data/full_skills/."""
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         example_dir = Path(__file__).resolve().parent.parent.parent.parent / "test_data" / "full_skills"
 
         if not example_dir.exists():
@@ -350,7 +343,7 @@ class SkillService:
                 .first()
             )
             if existing:
-                request_logger.debug("Example skill '{}' already exists, skipping", skill_name)
+                logger.debug(f"{log_prefix} Example skill '{skill_name}' already exists, skipping")
                 imported.append(existing)
                 continue
 
@@ -379,13 +372,13 @@ class SkillService:
             )
             db_session.add(skill)
             imported.append(skill)
-            request_logger.info("Imported example skill: {}", skill_name)
+            logger.info(f"{log_prefix} Imported example skill: {skill_name}")
 
         db_session.commit()
         for skill in imported:
             db_session.refresh(skill)
 
-        request_logger.info("Loaded {} example skill(s)", len(imported))
+        logger.info(f"{log_prefix} Loaded {len(imported)} example skill(s)")
         return imported
 
 
@@ -399,7 +392,7 @@ class DockerSandboxManager:
             self.client = docker.from_env()
             logger.info("[DockerSandboxManager] Docker client initialized successfully")
         except DockerException as e:
-            logger.error("[DockerSandboxManager] Failed to initialize Docker client: {}", e)
+            logger.error(f"[DockerSandboxManager] Failed to initialize Docker client: {e}")
             self.client = None
 
     @staticmethod
@@ -462,17 +455,16 @@ class DockerSandboxManager:
             )
 
             logger.info(
-                "[DockerSandboxManager] Created sandbox container: {} for {} skill(s)",
-                container_name,
-                len(skills),
+                f"[DockerSandboxManager] Created sandbox container: {container_name} "
+                f"for {len(skills)} skill(s)"
             )
             return container
 
         except APIError as e:
-            logger.error("[DockerSandboxManager] Failed to create sandbox container: {}", e)
+            logger.error(f"[DockerSandboxManager] Failed to create sandbox container: {e}")
             return None
         except Exception as e:
-            logger.error("[DockerSandboxManager] Unexpected error creating container: {}", e)
+            logger.error(f"[DockerSandboxManager] Unexpected error creating container: {e}")
             return None
 
     def _get_container(
@@ -485,11 +477,7 @@ class DockerSandboxManager:
         except NotFound:
             return None
         except Exception as exc:
-            logger.warning(
-                "[DockerSandboxManager] Unable to inspect sandbox container index={}: {}",
-                sandbox_index,
-                exc,
-            )
+            logger.warning(f"[DockerSandboxManager] Unable to inspect sandbox container index={sandbox_index}: {exc}")
             return None
 
     def _probe_container(self, container: docker.models.containers.Container) -> bool:
@@ -507,7 +495,7 @@ class DockerSandboxManager:
             )
             return result.exit_code == 0
         except Exception as exc:
-            logger.warning("[DockerSandboxManager] Sandbox health probe failed: {}", exc)
+            logger.warning(f"[DockerSandboxManager] Sandbox health probe failed: {exc}")
             return False
 
     def _ensure_container_running(
@@ -851,12 +839,12 @@ exit "$EXIT_CODE"
             container = self.client.containers.get(container_name)
             container.stop(timeout=5)
             container.remove(force=True)
-            logger.info("[DockerSandboxManager] Cleaned up sandbox container: {}", container_name)
+            logger.info(f"[DockerSandboxManager] Cleaned up sandbox container: {container_name}")
             return True
         except NotFound:
             return True
         except Exception as e:
-            logger.error("[DockerSandboxManager] Error cleaning up sandbox: {}", e)
+            logger.error(f"[DockerSandboxManager] Error cleaning up sandbox: {e}")
             return False
 
     def get_container_status(self, sandbox_index: int) -> Optional[str]:
@@ -926,7 +914,7 @@ exit "$EXIT_CODE"
                 })
             return result
         except Exception as e:
-            logger.error("[DockerSandboxManager] Error listing containers: {}", e)
+            logger.error(f"[DockerSandboxManager] Error listing containers: {e}")
             return []
 
 
@@ -974,13 +962,14 @@ class SandboxService:
         }
 
     @staticmethod
-    def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return logger.bind(
-            request_id=getattr(getattr(request, "state", None), "request_id", "-"),
-            user_id=user_id
+    def _get_log_prefix(request: Request | None = None, user_id: int | None = None) -> str:
+        request_id = getattr(getattr(request, "state", None), "request_id", "-")
+        resolved_user_id = (
+            user_id
             if user_id is not None
-            else getattr(getattr(request, "state", None), "user_id", "-"),
+            else getattr(getattr(request, "state", None), "user_id", "-")
         )
+        return f"[SandboxService][request_id={request_id}][user_id={resolved_user_id}]"
 
     @staticmethod
     def _coerce_utc_datetime(value: datetime | None) -> datetime | None:
@@ -1108,9 +1097,9 @@ class SandboxService:
     def list_sandboxes(
         self, request: Request, db_session: Session, user_id: int
     ) -> List[SandboxSlot]:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
         sandboxes = self._synchronize_sandbox_states(db_session)
-        request_logger.debug("Listed global sandboxes, count={}", len(sandboxes))
+        logger.debug(f"{log_prefix} Listed global sandboxes, count={len(sandboxes)}")
         return sandboxes
 
     def _claim_ready_sandbox(
@@ -1266,7 +1255,7 @@ class SandboxService:
         user_message: str,
         conversation_id: int,
     ) -> AsyncGenerator[str, None]:
-        request_logger = self._get_request_logger(request, user_id)
+        log_prefix = self._get_log_prefix(request, user_id)
 
         if not _settings.skills.enable_sandbox:
             yield self._format_sse_event(
@@ -1371,7 +1360,7 @@ class SandboxService:
                 if stream_type == "stderr":
                     stderr_text = content.strip()
                     if stderr_text:
-                        request_logger.warning("Sandbox stderr: {}", stderr_text)
+                        logger.warning(f"{log_prefix} Sandbox stderr: {stderr_text}")
                     continue
 
                 if stream_type != "stdout":
@@ -1386,7 +1375,7 @@ class SandboxService:
                     try:
                         event = json.loads(line)
                     except (json.JSONDecodeError, ValueError):
-                        request_logger.debug("Sandbox stdout: {}", line)
+                        logger.debug(f"{log_prefix} Sandbox stdout: {line}")
                         continue
 
                     event_type = event.get("type", "")
@@ -1471,7 +1460,7 @@ class SandboxService:
                 try:
                     event = json.loads(remaining_stdout)
                 except (json.JSONDecodeError, ValueError):
-                    request_logger.debug("Sandbox stdout: {}", remaining_stdout)
+                    logger.debug(f"{log_prefix} Sandbox stdout: {remaining_stdout}")
                 else:
                     if event.get("type") == "result" and event.get("result") and not full_output:
                         result_text = event["result"]
@@ -1486,8 +1475,9 @@ class SandboxService:
             output_files = self.docker_manager.collect_output_files(sandbox.sandbox_index)
             result_dir = self.docker_manager._get_result_dir(sandbox.sandbox_index)
             if not output_files:
-                request_logger.warning(
-                    "Skill execution completed but no deliverable files were found in sandbox result directory"
+                logger.warning(
+                    f"{log_prefix} Skill execution completed but no deliverable files were found "
+                    f"in sandbox result directory"
                 )
 
             file_attachments = []
@@ -1517,16 +1507,10 @@ class SandboxService:
                         blob_key,
                         expiry_hours=24,
                     )
-                    request_logger.info(
-                        "Uploaded sandbox result file to blob: {}",
-                        blob_key,
-                    )
+                    logger.info(f"{log_prefix} Uploaded sandbox result file to blob: {blob_key}")
                     file_path.unlink(missing_ok=True)
                 except Exception as blob_exc:
-                    request_logger.warning(
-                        "Failed to upload sandbox result file to blob: {}",
-                        blob_exc,
-                    )
+                    logger.warning(f"{log_prefix} Failed to upload sandbox result file to blob: {blob_exc}")
                     continue
 
                 output_payload = {
@@ -1572,10 +1556,9 @@ class SandboxService:
                     blob_size=primary_attachment.get("size") if primary_attachment else None,
                 ),
             )
-            request_logger.info(
-                "Persisted skill assistant message id={} blob_path={}",
-                assistant_message.id,
-                assistant_message.blob_path,
+            logger.info(
+                f"{log_prefix} Persisted skill assistant message id={assistant_message.id} "
+                f"blob_path={assistant_message.blob_path}"
             )
 
             yield self._format_sse_event(
@@ -1587,7 +1570,7 @@ class SandboxService:
             )
         except Exception as exc:
             destroy_container = True
-            request_logger.error("Error executing skill: {}", exc)
+            logger.error(f"{log_prefix} Error executing skill: {exc}")
             try:
                 conversation_service.add_message(
                     request,
@@ -1600,18 +1583,13 @@ class SandboxService:
                     ),
                 )
             except Exception:
-                request_logger.warning(
-                    "Failed to persist skill execution error to conversation"
-                )
+                logger.warning(f"{log_prefix} Failed to persist skill execution error to conversation")
             yield self._format_sse_event("error", {"message": str(exc)})
         finally:
             try:
                 self.docker_manager.reset_workspace(sandbox.sandbox_index)
             except Exception as cleanup_exc:
-                request_logger.warning(
-                    "Failed to clean up sandbox workspace: {}",
-                    cleanup_exc,
-                )
+                logger.warning(f"{log_prefix} Failed to clean up sandbox workspace: {cleanup_exc}")
                 destroy_container = True
 
             self.release_sandbox(

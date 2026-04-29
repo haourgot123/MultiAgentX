@@ -52,15 +52,13 @@ def generate_access_token(
     """
     user = get_by_id(db_session, User, user_id)
     if not user:
-        logger.bind(user_id=user_id).warning(
-            "[TokenService] Cannot generate access token because user does not exist"
-        )
+        logger.warning(f"[TokenService][user_id={user_id}] Cannot generate access token because user does not exist")
         raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
 
     access_token = create_access_token(
         data={"user_id": user_id, "email": email, "refresh_token": refresh_token}
     )
-    logger.bind(user_id=user_id).debug("[TokenService] Generated access token")
+    logger.debug(f"[TokenService][user_id={user_id}] Generated access token")
     return access_token
 
 
@@ -75,8 +73,6 @@ def generate_tokens(db_session: Session, user_id: int, email: str) -> Tuple[str,
     Returns:
         Tuple containing (refresh_token, access_token).
     """
-
-    request_logger = logger.bind(user_id=user_id)
     token = get_token(
         db_session,
         Token(
@@ -87,10 +83,11 @@ def generate_tokens(db_session: Session, user_id: int, email: str) -> Tuple[str,
 
     # Always generate a new refresh token on login
     refresh_token = create_refresh_token(user_id, email)
+    log_prefix = f"[TokenService][user_id={user_id}]"
 
     if not token:
         # Add a new token to database
-        request_logger.debug("Creating refresh token record")
+        logger.debug(f"{log_prefix} Creating refresh token record")
         insert_row(
             db_session,
             Token(
@@ -101,9 +98,9 @@ def generate_tokens(db_session: Session, user_id: int, email: str) -> Tuple[str,
         )
     else:
         # Always update the existing token with new refresh token
-        request_logger.debug("Updating existing refresh token record")
+        logger.debug(f"{log_prefix} Updating existing refresh token record")
         update_row(db_session, token, TokenUpdate(token=refresh_token))
 
     access_token = generate_access_token(db_session, email, user_id, refresh_token)
-    request_logger.info("Generated token pair successfully")
+    logger.info(f"{log_prefix} Generated token pair successfully")
     return refresh_token, access_token

@@ -18,43 +18,24 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         method = request.method
         path = request.url.path
-        client_ip = request.client.host if request.client else "-"
         start = perf_counter()
-
-        logger.bind(
-            service="http-middleware",
-            request_id=request_id,
-            user_id=getattr(request.state, "user_id", "-"),
-        ).info("HTTP request started method={} path={} client_ip={}", method, path, client_ip)
-
         try:
             response = await call_next(request)
         except Exception:
             elapsed_ms = (perf_counter() - start) * 1000
-            logger.bind(
-                service="http-middleware",
-                request_id=request_id,
-                user_id=getattr(request.state, "user_id", "-"),
-            ).exception(
-                "HTTP request failed method={} path={} duration_ms={:.2f}",
-                method,
-                path,
-                elapsed_ms,
+            user_id = getattr(request.state, "user_id", "-")
+            logger.exception(
+                f"[Middleware][request_id={request_id}][user_id={user_id}] "
+                f"HTTP request failed method={method} path={path} duration_ms={elapsed_ms:.2f}"
             )
             raise
 
         elapsed_ms = (perf_counter() - start) * 1000
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Process-Time-Ms"] = f"{elapsed_ms:.2f}"
-        logger.bind(
-            service="http-middleware",
-            request_id=request_id,
-            user_id=getattr(request.state, "user_id", "-"),
-        ).info(
-            "HTTP request completed method={} path={} status={} duration_ms={:.2f}",
-            method,
-            path,
-            response.status_code,
-            elapsed_ms,
+        user_id = getattr(request.state, "user_id", "-")
+        logger.info(
+            f"[Middleware][request_id={request_id}][user_id={user_id}] "
+            f"HTTP request completed method={method} path={path} duration_ms={elapsed_ms:.2f}"
         )
         return response

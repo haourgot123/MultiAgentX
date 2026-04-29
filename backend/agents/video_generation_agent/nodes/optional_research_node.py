@@ -46,7 +46,7 @@ class OptionalResearchNode(Runnable):
             )
             return {"sources": results}
         except Exception as exc:
-            logger.warning("[VideoGenerationAgent (OptionalResearchNode)] Video research failed: {}", exc)
+            logger.warning(f"[VideoGenerationAgent (OptionalResearchNode)] Video research failed: {exc}")
             await adispatch_custom_event(
                 "status",
                 {

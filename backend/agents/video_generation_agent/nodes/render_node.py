@@ -56,8 +56,7 @@ class RenderNode(Runnable):
             "--thumbnail",
             str(thumbnail_path),
         ]
-        logger.info("[VideoGenerationAgent (RenderNode)] Running Remotion command in {}: {}", renderer_dir, command)
-
+        logger.info(f"[VideoGenerationAgent (RenderNode)] Running Remotion command in {renderer_dir}: {command}")
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=str(renderer_dir),
@@ -76,9 +75,9 @@ class RenderNode(Runnable):
             raise RuntimeError("Remotion render timed out") from exc
 
         if stdout:
-            logger.debug("[VideoGenerationAgent (RenderNode)] Remotion stdout: {}", stdout.decode(errors="ignore")[-2000:])
+            logger.debug(f"[VideoGenerationAgent (RenderNode)] Remotion stdout: {stdout.decode(errors='ignore')[-2000:]}")
         if stderr:
-            logger.debug("[VideoGenerationAgent (RenderNode)] Remotion stderr: {}", stderr.decode(errors="ignore")[-2000:])
+            logger.debug(f"[VideoGenerationAgent (RenderNode)] Remotion stderr: {stderr.decode(errors='ignore')[-2000:]}")
 
         if process.returncode != 0:
             error_text = stderr.decode(errors="ignore").strip() or "Remotion render failed"

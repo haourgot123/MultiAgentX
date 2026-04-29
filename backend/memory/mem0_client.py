@@ -2,11 +2,7 @@ from typing import List, Dict, Any, Optional
 from backend.config.settings import _settings
 from loguru import logger
 import os
-
-try:
-    from mem0 import AsyncMemory
-except ImportError:
-    AsyncMemory = None
+from mem0 import AsyncMemory
 
 
 class Mem0Client:
@@ -18,7 +14,6 @@ class Mem0Client:
     
     def __init__(self):
         self._memory: Optional[AsyncMemory] = None
-        self.logger = logger.bind(service="mem0-client")
         self._initialized = False
     
     async def initialize(self):
@@ -27,20 +22,20 @@ class Mem0Client:
             return
 
         if AsyncMemory is None:
-            self.logger.warning("Mem0 package is not installed; long-term memory is unavailable")
+            logger.warning("[Mem0] Package is not installed; long-term memory is unavailable")
             return
         
         if not _settings.mem0.enable_long_term_memory:
-            self.logger.warning("Mem0 long-term memory is disabled")
+            logger.warning("[Mem0] Long-term memory is disabled")
             return
         
         try:
             config = self._build_config()
             self._memory = AsyncMemory.from_config(config)
             self._initialized = True
-            self.logger.info("Mem0 AsyncMemory client initialized successfully with Milvus")
+            logger.info("[Mem0] AsyncMemory client initialized successfully with Milvus")
         except Exception as e:
-            self.logger.error(f"Failed to initialize Mem0 client: {e}")
+            logger.error(f"[Mem0] Failed to initialize client: {e}")
             raise
     
     def _build_config(self) -> Dict[str, Any]:
@@ -119,12 +114,12 @@ class Mem0Client:
             Dict with results or None if disabled/failed
         """
         if not self._initialized or not self._memory:
-            self.logger.debug("Mem0 not initialized or disabled, skipping add_memory")
+            logger.debug("[Mem0] Not initialized or disabled, skipping add_memory")
             return None
         
         try:
-            self.logger.debug(
-                f"Adding memory for user_id={user_id}, messages_count={len(messages)}"
+            logger.debug(
+                f"[Mem0] Adding memory for user_id={user_id}, messages_count={len(messages)}"
             )
             
             result = await self._memory.add(
@@ -135,14 +130,14 @@ class Mem0Client:
             )
             
             results = result.get("results", [])
-            self.logger.info(
-                f"Successfully stored {len(results)} memories in Milvus for user {user_id}"
+            logger.info(
+                f"[Mem0] Successfully stored {len(results)} memories in Milvus for user {user_id}"
             )
             
             return result
             
         except Exception as e:
-            self.logger.error(f"Error adding memory: {e}")
+            logger.error(f"[Mem0] Error adding memory: {e}")
             return None
     
     async def search_memories(
@@ -163,7 +158,7 @@ class Mem0Client:
             List of relevant memory objects
         """
         if not self._initialized or not self._memory:
-            self.logger.debug("Mem0 not initialized or disabled, returning empty memories")
+            logger.debug("[Mem0] Not initialized or disabled, returning empty memories")
             return []
         
         try:
@@ -182,15 +177,15 @@ class Mem0Client:
                 if mem.get("score", 0) >= _settings.mem0.memory_score_threshold
             ]
             
-            self.logger.debug(
-                f"Found {len(filtered_memories)}/{len(memories)} relevant memories "
+            logger.debug(
+                f"[Mem0] Found {len(filtered_memories)}/{len(memories)} relevant memories "
                 f"for user {user_id} (threshold={_settings.mem0.memory_score_threshold})"
             )
             
             return filtered_memories
             
         except Exception as e:
-            self.logger.error(f"Error searching memories: {e}")
+            logger.error(f"[Mem0] Error searching memories: {e}")
             return []
     
     async def get_all_memories(
@@ -209,12 +204,12 @@ class Mem0Client:
             )
             
             memories = result.get("results", [])
-            self.logger.debug(f"Retrieved {len(memories)} memories for user {user_id}")
+            logger.debug(f"[Mem0] Retrieved {len(memories)} memories for user {user_id}")
             
             return memories
             
         except Exception as e:
-            self.logger.error(f"Error getting all memories: {e}")
+            logger.error(f"[Mem0] Error getting all memories: {e}")
             return []
     
     async def delete_memory(
@@ -227,11 +222,11 @@ class Mem0Client:
         
         try:
             await self._memory.delete(memory_id=memory_id)
-            self.logger.info(f"Deleted memory {memory_id}")
+            logger.info(f"[Mem0] Deleted memory {memory_id}")
             return True
             
         except Exception as e:
-            self.logger.error(f"Error deleting memory {memory_id}: {e}")
+            logger.error(f"[Mem0] Error deleting memory {memory_id}: {e}")
             return False
     
     async def clear_user_memories(
@@ -244,11 +239,11 @@ class Mem0Client:
         
         try:
             await self._memory.delete_all(user_id=user_id)
-            self.logger.info(f"Cleared all memories for user {user_id}")
+            logger.info(f"[Mem0] Cleared all memories for user {user_id}")
             return True
             
         except Exception as e:
-            self.logger.error(f"Error clearing memories for user {user_id}: {e}")
+            logger.error(f"[Mem0] Error clearing memories for user {user_id}: {e}")
             return False
 
 
