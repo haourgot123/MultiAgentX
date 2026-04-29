@@ -1,6 +1,5 @@
 from langchain_core.runnables import Runnable
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.callbacks import dispatch_custom_event
 from pydantic import BaseModel, Field
 from typing import List
 from loguru import logger
@@ -8,9 +7,7 @@ from loguru import logger
 from backend.agents.deep_research_agent.state import DeepResearchAgentState
 from backend.utils.llm import azure_chat_openai_gpt_5_1
 from backend.agents.prompts.deep_research import DEEP_RESEARCH_PROMPTS
-
-
-service_logger = logger.bind(service="deep-research-plan")
+from backend.agents.utils import astream_custom_event
 
 
 class ResearchPlan(BaseModel):
@@ -51,23 +48,19 @@ class PlanNode(Runnable):
     async def ainvoke(self, state: DeepResearchAgentState, **kwargs):
         # If plan already approved (coming from approve endpoint), skip re-planning
         if state.plan_approved and state.research_plan:
-            service_logger.info("Skipping plan creation - plan already approved")
-            dispatch_custom_event(
-                "status",
-                {
-                    "step": "deep_research_plan",
-                    "message": "Using approved research plan...",
-                },
+            logger.info(f"[DeepResearchAgent (PlanNode)] Skipping plan creation - plan already approved")
+            await astream_custom_event(
+                event_name="status",
+                step="deep_research_plan",
+                message="Using approved research plan...",
             )
             return {"research_plan": state.research_plan}
 
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "deep_research_plan",
-                "message": "Creating research plan...",
-            },
-        )
+        await astream_custom_event(
+            event_name="status",
+            step="deep_research_plan",
+            message="Creating research plan...",
+        )   
 
         # Build conversation context from memories
         context = ""
@@ -86,7 +79,7 @@ class PlanNode(Runnable):
             )),
         ]
 
-        service_logger.info(f"Creating research plan for: '{state.user_question[:100]}...'")
+        logger.info(f"[DeepResearchAgent (PlanNode)] Creating research plan for: '{state.user_question[:100]}...'")
 
         llm_with_structure = azure_chat_openai_gpt_5_1.with_structured_output(ResearchPlan)
         result = await llm_with_structure.ainvoke(messages)
@@ -94,24 +87,21 @@ class PlanNode(Runnable):
         # Validate sub-questions count (enforce 3-5 range)
         sub_questions = result.sub_questions
         if len(sub_questions) < 3:
-            service_logger.warning(f"Plan generated only {len(sub_questions)} sub-questions, padding")
+            logger.warning(f"[DeepResearchAgent (PlanNode)] Plan generated only {len(sub_questions)} sub-questions, padding")
         elif len(sub_questions) > 5:
-            service_logger.info(f"Plan generated {len(sub_questions)} sub-questions, trimming to 5")
+            logger.info(f"[DeepResearchAgent (PlanNode)] Plan generated {len(sub_questions)} sub-questions, trimming to 5")
             sub_questions = sub_questions[:5]
 
-        service_logger.info(
-            f"Research plan created: {len(sub_questions)} sub-questions, "
+        logger.info(
+            f"[DeepResearchAgent (PlanNode)] Research plan created: {len(sub_questions)} sub-questions, "
             f"approach={result.approach}, depth={result.estimated_depth}"
         )
 
-        # Emit plan_request event for human approval
-        dispatch_custom_event(
-            "plan_request",
-            {
-                "step": "deep_research_plan_approval",
-                "plan": sub_questions,
-                "message": "Research plan created. Awaiting user approval.",
-            },
+        astream_custom_event(
+            event_name="status",
+            step="deep_research_plan_approval",
+            message="Research plan created. Awaiting user approval.",
+            plan=sub_questions,
         )
 
         return {

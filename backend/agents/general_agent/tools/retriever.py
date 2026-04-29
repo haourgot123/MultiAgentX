@@ -8,9 +8,6 @@ from pymilvus import Collection, connections, AsyncMilvusClient
 from backend.config.settings import _settings
 
 
-service_logger = logger.bind(service="retriever-service")
-
-
 class RetrievedChunk(BaseModel):
     chunk_id: str
     text: str
@@ -117,8 +114,8 @@ class HybridRetriever:
         desired = ["id", "text", "file_name", "file_id", "page_no", "chunk_index", "bbox", "metadata_json"]
         self._available_fields = [f for f in desired if f in schema_fields]
 
-        service_logger.info(
-            f"Collection '{self.collection_name}' available fields: {self._available_fields} "
+        logger.info(
+            f"[GeneralAgent (Retriever)] Collection '{self.collection_name}' available fields: {self._available_fields} "
             f"(schema has {len(schema_fields)} fields total)"
         )
         return self._available_fields
@@ -217,7 +214,7 @@ class HybridRetriever:
             chunks.sort(key=lambda x: x.score, reverse=True)
             return chunks[:top_k]
         except Exception as e:
-            service_logger.warning(f"BM25 search failed: {e}")
+            logger.warning(f"[GeneralAgent (Retriever)] BM25 search failed: {e}")
             return []
 
     def _parse_metadata(self, metadata_json: Optional[str]) -> dict:
@@ -275,7 +272,7 @@ class HybridRetriever:
         user_id: int,
         file_ids: Optional[List[int]] = None,
     ) -> HybridSearchResult:
-        service_logger.info(f"Hybrid search for user_id={user_id}, query='{query[:50]}...'")
+        logger.info(f"[GeneralAgent (Retriever)] Hybrid search for user_id={user_id}, query='{query[:50]}...'")
 
         query_embedding = self._generate_embedding(query)
 
@@ -285,7 +282,7 @@ class HybridRetriever:
             file_ids=file_ids,
             top_k=self.config.vector_top_k,
         )
-        service_logger.debug(f"Vector search returned {len(vector_results)} results")
+        logger.debug(f"[GeneralAgent (Retriever)] Vector search returned {len(vector_results)} results")
 
         bm25_results = self._bm25_search(
             query=query,
@@ -293,7 +290,7 @@ class HybridRetriever:
             file_ids=file_ids,
             top_k=self.config.bm25_top_k,
         )
-        service_logger.debug(f"BM25 search returned {len(bm25_results)} results")
+        logger.debug(f"[GeneralAgent (Retriever)] BM25 search returned {len(bm25_results)} results")
 
         merged_results = self._merge_results(
             vector_results=vector_results,

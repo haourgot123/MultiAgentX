@@ -1,6 +1,5 @@
 from langchain_core.runnables import Runnable
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.callbacks import dispatch_custom_event
 from pydantic import BaseModel, Field
 from typing import List
 from loguru import logger
@@ -8,9 +7,8 @@ from loguru import logger
 from backend.agents.deep_research_agent.state import DeepResearchAgentState
 from backend.utils.llm import azure_chat_openai_gpt_5_1
 from backend.agents.prompts.deep_research import DEEP_RESEARCH_PROMPTS
+from backend.agents.utils import astream_custom_event
 
-
-service_logger = logger.bind(service="deep-research-query")
 
 
 class SearchQueries(BaseModel):
@@ -52,12 +50,10 @@ class QueryGenerationNode(Runnable):
         pass
 
     async def ainvoke(self, state: DeepResearchAgentState, **kwargs):
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "deep_research_query_gen",
-                "message": f"Generating search queries (iteration {state.current_iteration + 1}/{state.max_iterations})...",
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="deep_research_query_gen",
+            message=f"Generating search queries (iteration {state.current_iteration + 1}/{state.max_iterations})...",
         )
 
         # Build findings summary from previous iterations
@@ -98,7 +94,7 @@ class QueryGenerationNode(Runnable):
             )),
         ]
 
-        service_logger.info(f"Generating search queries for iteration {state.current_iteration + 1}, focus: '{current_focus[:60]}...'")
+        logger.info(f"[DeepResearchAgent (QueryGenerationNode)] Generating search queries for iteration {state.current_iteration + 1}, focus: '{current_focus[:60]}...'")
 
         llm_with_structure = azure_chat_openai_gpt_5_1.with_structured_output(SearchQueries)
         result = await llm_with_structure.ainvoke(messages)
@@ -116,17 +112,15 @@ class QueryGenerationNode(Runnable):
         queries = new_queries[:3]
         if not queries:
             # Fallback: use the current focus sub-question as a query
-            service_logger.warning("All generated queries were duplicates, using focus sub-question as fallback")
+            logger.warning(f"[DeepResearchAgent (QueryGenerationNode)] All generated queries were duplicates, using focus sub-question as fallback")
             queries = [current_focus]
 
-        service_logger.info(f"Generated {len(queries)} unique search queries (filtered from {len(result.queries)})")
+        logger.info(f"[DeepResearchAgent (QueryGenerationNode)] Generated {len(queries)} unique search queries (filtered from {len(result.queries)})")
 
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "deep_research_query_gen",
-                "message": f"Generated {len(queries)} unique search queries ...",
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="deep_research_query_gen",
+            message=f"Generated {len(queries)} unique search queries ...",
         )
 
         return {

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MessageBubble } from '@/components/chat/MessageBubble'
 
@@ -9,6 +9,10 @@ const windowOpenMock = vi.fn()
 vi.stubGlobal('open', windowOpenMock)
 
 describe('MessageBubble', () => {
+    beforeEach(() => {
+        windowOpenMock.mockReset()
+    })
+
     it('renders user messages on the reversed row layout', () => {
         const { container } = render(
             <MessageBubble
@@ -192,5 +196,35 @@ describe('MessageBubble', () => {
 
         await user.hover(citationBadge)
         expect((await screen.findAllByText('https://www.manpowergroup.com')).length).toBeGreaterThan(0)
+    })
+
+    it('renders assistant blob files and opens Office previews through the viewer URL', async () => {
+        const user = userEvent.setup()
+        const blobUrl = 'https://blob.example.com/pitch-deck.pptx?sig=test'
+
+        render(
+            <MessageBubble
+                message={{
+                    id: 10,
+                    role: 'assistant',
+                    content: 'Created the deck.',
+                    blobPath: 'skill-outputs/1/10/pitch-deck.pptx',
+                    blobName: 'pitch-deck.pptx',
+                    blobContentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                    blobSize: 4096,
+                    blobUrl,
+                    timestamp: Date.parse('2026-04-15T10:09:00Z'),
+                }}
+            />
+        )
+
+        await user.click(screen.getByText('pitch-deck.pptx'))
+
+        expect(screen.getByText('Created the deck.')).toBeInTheDocument()
+        expect(windowOpenMock).toHaveBeenCalledWith(
+            `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(blobUrl)}`,
+            '_blank',
+            'noreferrer'
+        )
     })
 })

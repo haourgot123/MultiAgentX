@@ -19,14 +19,13 @@ from backend.databases.db import get_by_id, get_utc_now, insert_row
 from backend.exceptions.model import InvalidRequestException, ObjectNotFoundException
 from backend.utils.constants import Message
 
-service_logger = logger.bind(service="user-service")
 
 
 class UserService:
     """Service class for managing user-related operations."""
     @staticmethod
     def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return service_logger.bind(
+        return logger.bind(
             request_id=getattr(getattr(request, "state", None), "request_id", "-"),
             user_id=user_id
             if user_id is not None

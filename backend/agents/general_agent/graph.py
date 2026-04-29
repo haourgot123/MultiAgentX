@@ -21,9 +21,7 @@ from backend.agents.deep_research_agent.graph import DeepResearchAgentGraph
 from backend.agents.deep_research_agent.state import DeepResearchAgentState
 from backend.agents.rag_agent.graph import RAGAgentGraph
 from backend.agents.rag_agent.state import RAGAgentState
-
-from langchain_core.callbacks import dispatch_custom_event
-
+from backend.agents.utils import astream_custom_event
 
 class GeneralAgentGraph:
     def __init__(
@@ -51,13 +49,11 @@ class GeneralAgentGraph:
         self, state: GeneralAgentState, config: RunnableConfig
     ) -> Dict[str, Any]:
         """Wrapper to call the websearch subgraph"""
-        logger.info("Delegating to websearch_agent...")
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "websearch_delegate",
-                "message": "Switching to the Web Search Agent...",
-            },
+        logger.info("[GeneralAgent (Delegate)] Delegating to websearch_agent...")
+        await astream_custom_event(
+            event_name="status",
+            step="websearch_delegate",
+            message="Switching to websearch agent...",
         )
         websearch_state = WebsearchAgentState(
             user_question=state.user_question, search_query="", memories=state.memories
@@ -74,13 +70,11 @@ class GeneralAgentGraph:
         self, state: GeneralAgentState, config: RunnableConfig
     ) -> Dict[str, Any]:
         """Wrapper to call the image generation subgraph"""
-        logger.info("Delegating to Image Generation Agent...")
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "image_generation_delegate",
-                "message": "Switching to Image Generation Agent...",
-            },
+        logger.info("[GeneralAgent (Delegate)] Delegating to Image Generation Agent...")
+        await astream_custom_event(
+            event_name="status",
+            step="image_generation_delegate",
+            message="Switching to Image Generation Agent...",
         )
         image_state = ImageGenerationAgentState(
             user_question=state.user_question,
@@ -97,13 +91,11 @@ class GeneralAgentGraph:
         self, state: GeneralAgentState, config: RunnableConfig
     ) -> Dict[str, Any]:
         """Wrapper to call the deep research subgraph"""
-        logger.info("Delegating to Deep Research Agent...")
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "deep_research_delegate",
-                "message": "Switching to Deep Research Agent...",
-            },
+        logger.info("[GeneralAgent (Delegate)] Delegating to Deep Research Agent...")
+        await astream_custom_event(
+            event_name="status",
+            step="deep_research_delegate",
+            message="Switching to Deep Research Agent...",
         )
         research_state = DeepResearchAgentState(
             user_question=state.user_question,
@@ -120,13 +112,11 @@ class GeneralAgentGraph:
         self, state: GeneralAgentState, config: RunnableConfig
     ) -> Dict[str, Any]:
         """Wrapper to call the RAG subgraph when file ids are present."""
-        logger.info("Delegating to RAG Agent...")
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "rag_delegate",
-                "message": "Switching to the RAG Agent...",
-            },
+        logger.info("[GeneralAgent (Delegate)] Delegating to RAG Agent...")
+        await astream_custom_event(
+            event_name="status",
+            step="rag_delegate",
+            message="Switching to the RAG Agent...",
         )
         rag_state = RAGAgentState(
             user_question=state.user_question,

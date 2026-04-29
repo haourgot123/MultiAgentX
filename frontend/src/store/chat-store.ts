@@ -6,6 +6,11 @@ export type Message = {
     id: number
     role: 'user' | 'assistant'
     content: string
+    blobPath?: string | null
+    blobName?: string | null
+    blobContentType?: string | null
+    blobSize?: number | null
+    blobUrl?: string | null
     timestamp: number
 }
 
@@ -51,6 +56,11 @@ type MessageApiResponse = {
     id: number
     role: 'user' | 'assistant'
     content: string
+    blob_path?: string | null
+    blob_name?: string | null
+    blob_content_type?: string | null
+    blob_size?: number | null
+    blob_url?: string | null
     created_at: string
     updated_at: string
 }
@@ -130,6 +140,11 @@ const mapMessageResponse = (message: MessageApiResponse): Message => ({
     id: message.id,
     role: message.role,
     content: message.content,
+    blobPath: message.blob_path,
+    blobName: message.blob_name,
+    blobContentType: message.blob_content_type,
+    blobSize: message.blob_size,
+    blobUrl: message.blob_url,
     timestamp: new Date(message.created_at).getTime(),
 })
 

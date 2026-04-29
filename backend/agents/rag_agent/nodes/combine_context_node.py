@@ -2,13 +2,11 @@ from collections import defaultdict
 import json
 
 from langchain_core.runnables import Runnable
-from langchain_core.callbacks import dispatch_custom_event
 from loguru import logger
 
 from backend.agents.rag_agent.state import RAGAgentState, RetrievedChunk
+from backend.agents.utils import astream_custom_event
 
-
-service_logger = logger.bind(service="rag-combine-context")
 
 
 def _filter_bbox_json_to_page(bbox_json: str | None, page_no: int | None) -> str:
@@ -49,17 +47,15 @@ class CombineContextNode(Runnable):
         pass
 
     async def ainvoke(self, state: RAGAgentState, **kwargs):
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "rag_combine_context",
-                "message": "Organizing retrieved passages with citations...",
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="rag_combine_context",
+            message="Organizing retrieved passages with citations...",
         )
 
         chunks = state.retrieved_chunks
         if not chunks:
-            service_logger.warning("No chunks to combine")
+            logger.warning("[RAGAgent (CombineContextNode)] No chunks to combine")
             return {
                 "combined_context": "",
                 "citation_map": {},
@@ -144,8 +140,8 @@ class CombineContextNode(Runnable):
 
         combined_context = "\n\n---\n\n".join(context_parts)
 
-        service_logger.info(
-            f"Combined {len(normalized_chunks)} chunks across {len(file_order)} file(s) "
+        logger.info(
+            f"[RAGAgent (CombineContextNode)] Combined {len(normalized_chunks)} chunks across {len(file_order)} file(s) "
             f"into {len(citation_map)} cited passages"
         )
 

@@ -1,7 +1,7 @@
 import math
 from typing import List
 
-from langchain_core.callbacks import dispatch_custom_event
+from langchain_core.callbacks import adispatch_custom_event
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 from loguru import logger
@@ -13,8 +13,6 @@ from backend.agents.video_generation_agent.state import (
 )
 from backend.utils.llm import azure_chat_openai_gpt_5_1
 
-
-service_logger = logger.bind(service="video-storyboard")
 
 
 class StoryboardSceneDraft(BaseModel):
@@ -94,7 +92,7 @@ class StoryboardNode(Runnable):
         return self_trim_scenes(scenes, state.duration_seconds)
 
     async def ainvoke(self, state: VideoGenerationAgentState, **kwargs):
-        dispatch_custom_event(
+        await adispatch_custom_event(
             "status",
             {
                 "step": "storyboard",
@@ -134,11 +132,11 @@ class StoryboardNode(Runnable):
             draft = await llm.ainvoke(messages)
             scenes = self._normalize_scenes(state, draft.scenes)
         except Exception as exc:
-            service_logger.warning("LLM storyboard failed, using fallback: {}", exc)
+            logger.warning("[VideoGenerationAgent (StoryboardNode)] LLM storyboard failed, using fallback: {}", exc)
             scenes = self._fallback_storyboard(state)
 
         storyboard_payload = [scene.model_dump() for scene in scenes]
-        dispatch_custom_event("storyboard", {"scenes": storyboard_payload})
+        await adispatch_custom_event("storyboard", {"scenes": storyboard_payload})
         return {"storyboard": scenes}
 
 

@@ -2,13 +2,21 @@ from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, UnicodeText
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Index, Integer, UnicodeText
 
 from backend.databases.db import Base
 
 
 class StoredFile(Base):
     __tablename__ = "FileAsset"
+    __table_args__ = (
+        Index(
+            "ix_FileAsset_user_deleted_created",
+            "user_id",
+            "deleted_at",
+            "created_at",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(

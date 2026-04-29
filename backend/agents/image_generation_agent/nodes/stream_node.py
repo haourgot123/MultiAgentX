@@ -1,11 +1,9 @@
 from langchain_core.runnables import Runnable
-from langchain_core.callbacks import dispatch_custom_event
 from loguru import logger
 
 from backend.agents.image_generation_agent.state import ImageGenerationAgentState
+from backend.agents.utils import astream_custom_event
 
-
-service_logger = logger.bind(service="image-stream")
 
 
 class StreamNode(Runnable):
@@ -16,15 +14,13 @@ class StreamNode(Runnable):
         pass
 
     async def ainvoke(self, state: ImageGenerationAgentState, **kwargs):
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "image_stream",
-                "message": "Preparing image response...",
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="image_stream",
+            message="Preparing image response...",
         )
 
-        service_logger.info("StreamNode: Preparing response")
+        logger.info("[ImageGenerationAgent (StreamNode)] Preparing response")
 
         if state.error_message:
             output = (

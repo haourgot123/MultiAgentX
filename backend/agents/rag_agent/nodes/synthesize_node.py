@@ -1,6 +1,6 @@
 from langchain_core.runnables import Runnable
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.callbacks import dispatch_custom_event
+from langchain_core.callbacks import adispatch_custom_event
 from loguru import logger
 
 from backend.agents.rag_agent.state import RAGAgentState, Tag
@@ -8,7 +8,6 @@ from backend.utils.llm import azure_chat_openai_gpt_5_1
 from backend.agents.prompts.rag import RAG_PROMPTS
 
 
-service_logger = logger.bind(service="rag-synthesize")
 
 
 class SynthesizeNode(Runnable):
@@ -19,7 +18,7 @@ class SynthesizeNode(Runnable):
         pass
 
     async def ainvoke(self, state: RAGAgentState, **kwargs):
-        dispatch_custom_event(
+        await adispatch_custom_event(
             "status",
             {
                 "step": "rag_synthesize",
@@ -30,8 +29,8 @@ class SynthesizeNode(Runnable):
         context = state.combined_context
 
         if not context or not context.strip():
-            service_logger.warning("No context to synthesize — returning no-context response")
-            dispatch_custom_event(
+            logger.warning("[RAGAgent (SynthesizeNode)] No context to synthesize — returning no-context response")
+            await adispatch_custom_event(
                 "status",
                 {
                     "step": "rag_synthesize",
@@ -48,8 +47,8 @@ class SynthesizeNode(Runnable):
             if isinstance(data, dict):
                 unique_files.add(data.get("file_name", "unknown"))
 
-        service_logger.info(
-            f"Synthesizing from context ({len(context)} chars) across {len(unique_files)} file(s)"
+        logger.info(
+            f"[RAGAgent (SynthesizeNode)] Synthesizing from context ({len(context)} chars) across {len(unique_files)} file(s)"
         )
 
         messages = [
@@ -73,8 +72,8 @@ class SynthesizeNode(Runnable):
                 continue
             final_answer += content
 
-        service_logger.info(
-            f"Synthesized answer of {len(final_answer)} characters from {len(unique_files)} files"
+        logger.info(
+            f"[RAGAgent (SynthesizeNode)] Synthesized answer of {len(final_answer)} characters from {len(unique_files)} files"
         )
 
         return {

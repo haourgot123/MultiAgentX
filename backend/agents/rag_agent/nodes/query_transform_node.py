@@ -1,6 +1,6 @@
 from langchain_core.runnables import Runnable
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.callbacks import dispatch_custom_event
+from langchain_core.callbacks import adispatch_custom_event
 from pydantic import BaseModel, Field
 from loguru import logger
 
@@ -9,7 +9,6 @@ from backend.utils.llm import azure_chat_openai_gpt_5_1
 from backend.agents.prompts.rag import RAG_PROMPTS
 
 
-service_logger = logger.bind(service="rag-query-transform")
 
 
 def _clean_queries(*queries: str) -> list[str]:
@@ -47,7 +46,7 @@ class QueryTransformNode(Runnable):
         is_retry = state.retry_count > 0 and state.evaluation_feedback
 
         if is_retry:
-            dispatch_custom_event(
+            await adispatch_custom_event(
                 "status",
                 {
                     "step": "rag_query_transform",
@@ -55,7 +54,7 @@ class QueryTransformNode(Runnable):
                 },
             )
         else:
-            dispatch_custom_event(
+            await adispatch_custom_event(
                 "status",
                 {
                     "step": "rag_query_transform",
@@ -93,8 +92,8 @@ class QueryTransformNode(Runnable):
                 )),
             ]
 
-        service_logger.info(
-            f"Transforming query (retry={is_retry}, attempt={state.retry_count}): "
+        logger.info(
+            f"[RAGAgent (QueryTransformNode)] Transforming query (retry={is_retry}, attempt={state.retry_count}): "
             f"'{state.user_question[:100]}...'"
         )
 
@@ -108,13 +107,13 @@ class QueryTransformNode(Runnable):
         )
         primary_query = transformed_queries[0] if transformed_queries else state.user_question
 
-        service_logger.info(
-            f"Transformed query: primary='{primary_query}', "
+        logger.info(
+            f"[RAGAgent (QueryTransformNode)] Transformed query: primary='{primary_query}', "
             f"keywords={result.keywords}, "
             f"alternatives={transformed_queries[1:]}"
         )
 
-        dispatch_custom_event(
+        await adispatch_custom_event(
             "status",
             {
                 "step": "rag_query_transform",

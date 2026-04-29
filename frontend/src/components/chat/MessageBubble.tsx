@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { InlineFilePreview } from "@/components/InlineFilePreview"
 import type { Message, FileCitation } from "@/store/chat-store"
 import { Bot, User, Globe, FileText } from "lucide-react"
 import ReactMarkdown from "react-markdown"
@@ -103,7 +104,7 @@ function processCitations(content: string, fileCitations?: FileCitation[]): stri
 
 function extractSources(content: string, fileCitations?: FileCitation[]): { sources: Source[]; contentWithoutSources: string } {
     // First process citations
-    let processed = processCitations(content, fileCitations)
+    const processed = processCitations(content, fileCitations)
     
     const sources: Source[] = []
     const seenUrls = new Set<string>()
@@ -252,6 +253,24 @@ function SourceIcons({ sources }: { sources: Source[] }) {
             )}
         </div>
     )
+}
+
+function getPreviewUrl(fileUrl: string, filename: string): string {
+    const extension = filename.split('.').pop()?.toLowerCase() || ''
+    if (['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'].includes(extension)) {
+        return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`
+    }
+    return fileUrl
+}
+
+function downloadFile(fileUrl: string, filename: string) {
+    const anchor = document.createElement('a')
+    anchor.href = fileUrl
+    anchor.download = filename
+    anchor.rel = 'noreferrer'
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
 }
 
 function MessageBubbleComponent({ message, fileCitations, onFileCitationClick }: MessageBubbleProps) {
@@ -445,6 +464,17 @@ function MessageBubbleComponent({ message, fileCitations, onFileCitationClick }:
                 {/* Hiển thị sources dưới dạng icon row */}
                 {!isUser && sources.length > 0 && (
                     <SourceIcons sources={sources} />
+                )}
+
+                {!isUser && message.blobUrl && message.blobName && (
+                    <div className="mt-2 w-full max-w-[38rem]">
+                        <InlineFilePreview
+                            fileUrl={message.blobUrl}
+                            filename={message.blobName}
+                            onView={() => window.open(getPreviewUrl(message.blobUrl as string, message.blobName as string), '_blank', 'noreferrer')}
+                            onDownload={() => downloadFile(message.blobUrl as string, message.blobName as string)}
+                        />
+                    </div>
                 )}
                 
                 <span className="text-xs text-text-muted mt-1">

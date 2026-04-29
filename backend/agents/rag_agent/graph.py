@@ -13,7 +13,6 @@ from backend.agents.rag_agent.nodes.evaluation_node import EvaluationNode
 from backend.agents.rag_agent.nodes.synthesize_node import SynthesizeNode
 
 
-service_logger = logger.bind(service="rag-agent-graph")
 
 
 class RAGAgentGraph:
@@ -83,13 +82,13 @@ class RAGAgentGraph:
             return Node.rag_agent_synthesize_node.name
 
         if state.retry_count < state.max_retries:
-            service_logger.info(
-                f"Evaluation: not relevant, retry {state.retry_count}/{state.max_retries} → re-transform query"
+            logger.info(
+                f"[RAGAgentGraph] Evaluation: not relevant, retry {state.retry_count}/{state.max_retries} → re-transform query"
             )
             return Node.rag_agent_query_transform_node.name
 
-        service_logger.info(
-            f"Evaluation: not relevant, max retries reached ({state.max_retries}) → synthesize anyway"
+        logger.info(
+            f"[RAGAgentGraph] Evaluation: not relevant, max retries reached ({state.max_retries}) → synthesize anyway"
         )
         return Node.rag_agent_synthesize_node.name
 

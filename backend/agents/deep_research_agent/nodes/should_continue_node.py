@@ -1,11 +1,9 @@
 from langchain_core.runnables import Runnable
-from langchain_core.callbacks import dispatch_custom_event
 from loguru import logger
 
 from backend.agents.deep_research_agent.state import DeepResearchAgentState
+from backend.agents.utils import astream_custom_event
 
-
-service_logger = logger.bind(service="deep-research-continue")
 
 
 class ShouldContinueNode(Runnable):
@@ -62,8 +60,8 @@ class ShouldContinueNode(Runnable):
             and (has_gaps or low_confidence or low_coverage)
         )
 
-        service_logger.info(
-            f"Should continue decision: iteration {current + 1}/{max_iter}, "
+        logger.info(
+            f"[DeepResearchAgent (ShouldContinueNode)] Should continue decision: iteration {current + 1}/{max_iter}, "
             f"continue={should_continue}, gaps={has_gaps}, low_conf={low_confidence}, "
             f"coverage={coverage_ratio:.0%}, diminishing_returns={diminishing_returns}"
         )
@@ -78,21 +76,17 @@ class ShouldContinueNode(Runnable):
                 reason_parts.append(f"only {coverage_ratio:.0%} of topics covered")
             reason = ", ".join(reason_parts) if reason_parts else "more research needed"
             
-            dispatch_custom_event(
-                "status",
-                {
-                    "step": "deep_research_continue",
-                    "message": f"Continuing research ...",
-                },
+            await astream_custom_event(
+                event_name="status",
+                step="deep_research_continue",
+                message=f"Continuing research ...",
             )
         else:
             reason = "iteration limit" if at_limit else ("diminishing returns" if diminishing_returns else "sufficient coverage")
-            dispatch_custom_event(
-                "status",
-                {
-                    "step": "deep_research_continue",
-                    "message": f"Research complete. Synthesizing findings...",
-                },
+            await astream_custom_event(
+                event_name="status",
+                step="deep_research_continue",
+                message=f"Research complete. Synthesizing findings...",
             )
 
         return {

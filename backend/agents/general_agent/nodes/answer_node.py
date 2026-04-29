@@ -2,7 +2,6 @@ import inspect
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
-from langchain_core.callbacks import dispatch_custom_event
 from loguru import logger
 from backend.agents.general_agent.state import GeneralAgentState, Tag
 from backend.utils.llm import azure_chat_openai_gpt_5_1
@@ -62,9 +61,9 @@ class AnswerNode(Runnable):
             ),
         ]
         
-        logger.info(f"AnswerNode processing direct response for question: '{state.user_question}'")
+        logger.info(f"[GeneralAgent (AnswerNode)] Processing direct response for question: '{state.user_question}'")
         if long_term_ctx and long_term_ctx != "No long-term memories available.":
-            logger.info(f"AnswerNode using long-term memory context ({len(long_term_ctx)} chars)")
+            logger.info(f"[GeneralAgent (AnswerNode)] Using long-term memory context ({len(long_term_ctx)} chars)")
         
         # Attach streaming tag so outer graph can capture on_chat_model_stream events
         config = kwargs.get("config", {}) or {}

@@ -11,8 +11,6 @@ from backend.agents.image_generation_agent.nodes.generate_node import GenerateNo
 from backend.agents.image_generation_agent.nodes.stream_node import StreamNode
 
 
-service_logger = logger.bind(service="image-generation-graph")
-
 
 class ImageGenerationAgentGraph:
     def __init__(self):

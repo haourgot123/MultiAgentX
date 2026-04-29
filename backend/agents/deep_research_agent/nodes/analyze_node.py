@@ -1,6 +1,5 @@
 from langchain_core.runnables import Runnable
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.callbacks import dispatch_custom_event
 from pydantic import BaseModel, Field
 from typing import List
 from loguru import logger
@@ -8,10 +7,7 @@ from loguru import logger
 from backend.agents.deep_research_agent.state import DeepResearchAgentState, SearchResult, ResearchFinding
 from backend.utils.llm import azure_chat_openai_gpt_5_1
 from backend.agents.prompts.deep_research import DEEP_RESEARCH_PROMPTS
-
-
-service_logger = logger.bind(service="deep-research-analyze")
-
+from backend.agents.utils import astream_custom_event
 
 class AnalysisResult(BaseModel):
     key_findings: List[str] = Field(description="key facts and insights extracted (3-7 items)")
@@ -58,12 +54,10 @@ class AnalyzeNode(Runnable):
         pass
 
     async def ainvoke(self, state: DeepResearchAgentState, **kwargs):
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "deep_research_analyze",
-                "message": "Analyzing findings with credibility assessment...",
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="deep_research_analyze",
+            message="Analyzing findings with credibility assessment...",
         )
 
         iteration = state.current_iteration
@@ -111,8 +105,7 @@ class AnalyzeNode(Runnable):
             )),
         ]
 
-        service_logger.info(f"Analyzing {len(new_results)} results for iteration {iteration + 1}, focus: '{current_task[:60]}'")
-
+        logger.info(f"[DeepResearchAgent (AnalyzeNode)] Starting analysis iteration {iteration} with {len(new_results)} new results, ")
         llm_with_structure = azure_chat_openai_gpt_5_1.with_structured_output(AnalysisResult)
         result = await llm_with_structure.ainvoke(messages)
 
@@ -126,23 +119,22 @@ class AnalyzeNode(Runnable):
 
         # Log contradictions if any
         if result.contradictions:
-            service_logger.warning(f"Contradictions detected: {result.contradictions}")
+            logger.warning(f"[DeepResearchAgent (AnalyzeNode)] Contradictions detected: {result.contradictions}")
 
-        service_logger.info(
-            f"Analysis complete: {len(result.key_findings)} findings, "
+        logger.info(
+            f"[DeepResearchAgent (AnalyzeNode)] Analysis complete: {len(result.key_findings)} findings, "
             f"{len(result.knowledge_gaps)} gaps, confidence={result.confidence:.0%}, "
             f"evidence={result.evidence_strength}, contradictions={len(result.contradictions)}"
         )
 
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "deep_research_analyze",
-                "message": (
-                    f"Extracted {len(result.key_findings)} key findings..."
-                ),
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="deep_research_analyze",
+            message=(
+                f"Extracted {len(result.key_findings)} key findings..."
+            ),
         )
+
 
         return {
             "findings": [f.model_dump() for f in state.findings + [finding]],

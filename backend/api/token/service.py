@@ -10,7 +10,6 @@ from backend.exceptions.model import ObjectNotFoundException
 from backend.utils.authentic import create_access_token, create_refresh_token
 from backend.utils.constants import Message, TokenType
 
-service_logger = logger.bind(service="token-service")
 
 
 def get_token(db_session: Session, token_data: Token) -> Token:
@@ -53,15 +52,15 @@ def generate_access_token(
     """
     user = get_by_id(db_session, User, user_id)
     if not user:
-        service_logger.bind(user_id=user_id).warning(
-            "Cannot generate access token because user does not exist"
+        logger.bind(user_id=user_id).warning(
+            "[TokenService] Cannot generate access token because user does not exist"
         )
         raise ObjectNotFoundException(message=Message.MESSAGE_USER_NOT_FOUND)
 
     access_token = create_access_token(
         data={"user_id": user_id, "email": email, "refresh_token": refresh_token}
     )
-    service_logger.bind(user_id=user_id).debug("Generated access token")
+    logger.bind(user_id=user_id).debug("[TokenService] Generated access token")
     return access_token
 
 
@@ -77,7 +76,7 @@ def generate_tokens(db_session: Session, user_id: int, email: str) -> Tuple[str,
         Tuple containing (refresh_token, access_token).
     """
 
-    request_logger = service_logger.bind(user_id=user_id)
+    request_logger = logger.bind(user_id=user_id)
     token = get_token(
         db_session,
         Token(

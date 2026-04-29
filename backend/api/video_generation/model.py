@@ -7,6 +7,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     UnicodeText,
@@ -36,6 +37,14 @@ VideoStatus = Literal[
 
 class VideoGenerationJob(Base):
     __tablename__ = "VideoGenerationJob"
+    __table_args__ = (
+        Index(
+            "ix_VideoGenerationJob_user_deleted_created",
+            "user_id",
+            "deleted_at",
+            "created_at",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(

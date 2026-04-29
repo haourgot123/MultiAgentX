@@ -1,6 +1,5 @@
 from datetime import datetime
 from langchain_core.runnables import Runnable
-from langchain_core.callbacks import dispatch_custom_event
 from loguru import logger
 from backend.agents.general_agent.state import GeneralAgentState
 from langchain_core.messages import HumanMessage, AIMessage
@@ -51,13 +50,13 @@ class MemoryNode(Runnable):
                     memory_text = mem.get("memory", "")
                     score = mem.get("score", 0)
                     long_term_memory_context += f"{idx}. {memory_text} (relevance: {score:.2f})\n"
-                    self.logger.debug(f"Retrieved memory {idx}: {memory_text[:100]}")
+                    self.logger.debug(f"[GeneralAgent (MemoryNode)] Retrieved memory {idx}: {memory_text[:100]}")
     
             else:
                 pass  # No relevant long-term memories found, continue without them
                 
         except Exception as e:
-            self.logger.error(f"Error retrieving long-term memories: {e}")
+            self.logger.error(f"[GeneralAgent (MemoryNode)] Error retrieving long-term memories: {e}")
             # Graceful degradation - continue without long-term memories
 
         # 3. Prepare result for next node

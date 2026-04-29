@@ -9,6 +9,7 @@ import yaml
 import zipfile
 from collections import deque
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
@@ -24,9 +25,7 @@ from fastapi import Request
 
 from backend.api.skills.model import (
     AgentSkill,
-    SandboxSession,
     SandboxSocketEvent,
-    SkillExecutionArtifact,
     SkillUpdateRequest,
 )
 from backend.api.conversation.model import ConversationMessageCreateRequest
@@ -39,7 +38,6 @@ from backend.utils.blob_storage import blob_storage_client
 from backend.utils.constants import Message
 from backend.utils.retention import mark_for_retention_delete
 
-service_logger = logger.bind(service="skill-service")
 
 
 class SkillService:
@@ -50,7 +48,7 @@ class SkillService:
 
     @staticmethod
     def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return service_logger.bind(
+        return logger.bind(
             request_id=getattr(getattr(request, "state", None), "request_id", "-"),
             user_id=user_id
             if user_id is not None
@@ -394,12 +392,14 @@ class SkillService:
 class DockerSandboxManager:
     """Manages Docker containers as sandboxes for skill execution."""
 
+    RESULT_DIR_NAME = "result"
+
     def __init__(self):
         try:
             self.client = docker.from_env()
-            service_logger.info("Docker client initialized successfully")
+            logger.info("[DockerSandboxManager] Docker client initialized successfully")
         except DockerException as e:
-            service_logger.error("Failed to initialize Docker client: {}", e)
+            logger.error("[DockerSandboxManager] Failed to initialize Docker client: {}", e)
             self.client = None
 
     @staticmethod
@@ -414,13 +414,16 @@ class DockerSandboxManager:
             / f"sandbox_{sandbox_index}"
         )
 
+    def _get_result_dir(self, sandbox_index: int) -> Path:
+        return self._get_sandbox_dir(sandbox_index) / self.RESULT_DIR_NAME
+
     def _create_sandbox_container(
         self,
         sandbox_index: int,
         skills: Sequence[AgentSkill],
     ) -> Optional[docker.models.containers.Container]:
         if not self.client:
-            service_logger.error("Docker client not available")
+            logger.error("[DockerSandboxManager] Docker client not available")
             return None
 
         container_name = self._get_container_name(sandbox_index)
@@ -458,18 +461,18 @@ class DockerSandboxManager:
                 name=container_name,
             )
 
-            service_logger.info(
-                "Created sandbox container: {} for {} skill(s)",
+            logger.info(
+                "[DockerSandboxManager] Created sandbox container: {} for {} skill(s)",
                 container_name,
                 len(skills),
             )
             return container
 
         except APIError as e:
-            service_logger.error("Failed to create sandbox container: {}", e)
+            logger.error("[DockerSandboxManager] Failed to create sandbox container: {}", e)
             return None
         except Exception as e:
-            service_logger.error("Unexpected error creating container: {}", e)
+            logger.error("[DockerSandboxManager] Unexpected error creating container: {}", e)
             return None
 
     def _get_container(
@@ -482,8 +485,8 @@ class DockerSandboxManager:
         except NotFound:
             return None
         except Exception as exc:
-            service_logger.warning(
-                "Unable to inspect sandbox container index={}: {}",
+            logger.warning(
+                "[DockerSandboxManager] Unable to inspect sandbox container index={}: {}",
                 sandbox_index,
                 exc,
             )
@@ -492,7 +495,11 @@ class DockerSandboxManager:
     def _probe_container(self, container: docker.models.containers.Container) -> bool:
         try:
             result = container.exec_run(
-                cmd=["sh", "-c", "test -d /workspace && test -d /workspace/output && whoami"],
+                cmd=[
+                    "sh",
+                    "-c",
+                    f"test -d /workspace && test -d /workspace/{self.RESULT_DIR_NAME} && whoami",
+                ],
                 stdout=True,
                 stderr=True,
                 tty=False,
@@ -500,7 +507,7 @@ class DockerSandboxManager:
             )
             return result.exit_code == 0
         except Exception as exc:
-            service_logger.warning("Sandbox health probe failed: {}", exc)
+            logger.warning("[DockerSandboxManager] Sandbox health probe failed: {}", exc)
             return False
 
     def _ensure_container_running(
@@ -509,7 +516,7 @@ class DockerSandboxManager:
         skills: Sequence[AgentSkill],
     ) -> Optional[docker.models.containers.Container]:
         if not self.client:
-            service_logger.error("Docker client not available")
+            logger.error("[DockerSandboxManager] Docker client not available")
             return None
 
         container = self._get_container(sandbox_index)
@@ -523,8 +530,8 @@ class DockerSandboxManager:
                     return container
                 self.cleanup_sandbox(sandbox_index)
             except Exception as exc:
-                service_logger.warning(
-                    "Existing sandbox container was not reusable index={}: {}",
+                logger.warning(
+                    "[DockerSandboxManager] Existing sandbox container was not reusable index={}: {}",
                     sandbox_index,
                     exc,
                 )
@@ -537,10 +544,12 @@ class DockerSandboxManager:
         sandbox_dir.mkdir(parents=True, exist_ok=True)
 
         for child_name in (
+            self.RESULT_DIR_NAME,
             "output",
             "input",
             ".claude",
             "user_task.txt",
+            "task_prompt.txt",
             "CLAUDE.md",
             "execute_task.sh",
             "beta_proxy.js",
@@ -579,10 +588,24 @@ class DockerSandboxManager:
         user_task: str,
     ) -> None:
         """Set up workspace with Claude CLI configuration and skills."""
-        (sandbox_dir / "output").mkdir(parents=True, exist_ok=True)
+        result_dir = sandbox_dir / self.RESULT_DIR_NAME
+        result_dir.mkdir(parents=True, exist_ok=True)
 
         # Write user task
         (sandbox_dir / "user_task.txt").write_text(user_task)
+        task_prompt = f"""User task:
+{user_task}
+
+Execution contract:
+- Do all intermediate work in /workspace or subdirectories outside /workspace/{self.RESULT_DIR_NAME}.
+- Save only final user-requested deliverable file(s) in /workspace/{self.RESULT_DIR_NAME}.
+- Do not put package files, source files, logs, README files, temporary files, screenshots, thumbnails, or analysis notes in /workspace/{self.RESULT_DIR_NAME}.
+- If the requested result is a PowerPoint file, the final .pptx must be placed directly in /workspace/{self.RESULT_DIR_NAME}.
+- Treat /workspace/{self.RESULT_DIR_NAME} as the only handoff directory. Files outside it will not be returned to the user.
+- Final response must use the same language as the user's task.
+- Final response should summarize what was completed in Markdown. Do not include raw JSON, tool logs, file paths, or implementation details.
+"""
+        (sandbox_dir / "task_prompt.txt").write_text(task_prompt)
 
         # Create ~/.claude/skills/ directory structure (mounted at /workspace/.claude/skills/)
         claude_skills_dir = sandbox_dir / ".claude" / "skills"
@@ -606,15 +629,16 @@ class DockerSandboxManager:
 
 ## Directory Layout
 - /workspace/ — Working directory (use freely for intermediate work)
-- /workspace/output/ — DELIVERABLES ONLY: Save ONLY the final result file(s) here
+- /workspace/result/ — HANDOFF DIRECTORY: Save ONLY the final user-requested deliverable file(s) here
 - /skill/ — Skill folder (read-only, contains SKILL.md and resources)
 
 ## Output Rules — CRITICAL
-1. `/workspace/output/` is for the **final deliverable only** — do NOT save scripts, intermediate files, thumbnails, logs, or QA images there
-2. Save exactly the file(s) the user asked for — if they asked for a .pptx, save only the .pptx
-3. All intermediate work (scripts, thumbnails, temp files) must stay in /workspace/, NOT in /workspace/output/
+1. `/workspace/result/` is the only handoff directory for returned files
+2. Save exactly the file(s) the user asked for there — if they asked for a .pptx, save only the final .pptx
+3. All intermediate work (scripts, packages, thumbnails, temp files, logs, QA images) must stay outside /workspace/result/
 4. Use descriptive filenames (e.g., financial_report_2024.pdf, not file1.pdf)
-5. Read /skill/SKILL.md for skill-specific instructions and templates
+5. If /skill/SKILL.md mentions another output folder, still copy the final requested deliverable into /workspace/result/ before finishing
+6. Read /skill/SKILL.md for skill-specific instructions and templates
 
 ## Available Packages
 - Python: python-pptx, python-docx, openpyxl, pillow, pyyaml, requests, httpx
@@ -686,6 +710,13 @@ const server = http.createServer((req, res) => {
   req.pipe(proxyReq);
 });
 
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    process.exit(0);
+  }
+  throw e;
+});
+
 server.listen(9999, '127.0.0.1', () => {
   process.stdout.write('PROXY_READY\n');
 });
@@ -701,30 +732,37 @@ export HOME=/home/sandbox
 ln -sfn /workspace/.claude "$HOME/.claude"
 
 # Start beta-header proxy if an Azure/custom base URL is configured
+PROXY_PID=""
 if [ -n "${{REAL_ANTHROPIC_BASE_URL:-}}" ]; then
-    node /workspace/beta_proxy.js &
-    PROXY_PID=$!
-    # Wait for proxy to be ready
-    for i in $(seq 1 20); do
-        if curl -s http://127.0.0.1:9999/ >/dev/null 2>&1; then break; fi
-        sleep 0.1
-    done
+    if ! node -e "const net=require('net'); const s=net.connect(9999,'127.0.0.1'); s.on('connect',()=>process.exit(0)); s.on('error',()=>process.exit(1)); setTimeout(()=>process.exit(1),500);" >/dev/null 2>&1; then
+        node /workspace/beta_proxy.js >/tmp/multiagentx_beta_proxy.log 2>&1 &
+        PROXY_PID=$!
+        for i in $(seq 1 20); do
+            if node -e "const net=require('net'); const s=net.connect(9999,'127.0.0.1'); s.on('connect',()=>process.exit(0)); s.on('error',()=>process.exit(1)); setTimeout(()=>process.exit(1),500);" >/dev/null 2>&1; then break; fi
+            sleep 0.1
+        done
+    fi
     export ANTHROPIC_BASE_URL="http://127.0.0.1:9999"
-    trap "kill $PROXY_PID 2>/dev/null" EXIT
 fi
 
 echo "[SANDBOX] Starting Claude CLI execution..."
 echo "=========================================="
 
-USER_TASK=$(cat /workspace/user_task.txt)
+USER_TASK=$(cat /workspace/task_prompt.txt)
 
 # Run Claude CLI with full permissions
-exec claude -p "$USER_TASK" \\
+set +e
+claude -p "$USER_TASK" \\
     --dangerously-skip-permissions \\
     --output-format stream-json \\
     --verbose \\
     --model "{model}" \\
     --max-turns {max_turns}
+EXIT_CODE=$?
+if [ -n "$PROXY_PID" ]; then
+    kill "$PROXY_PID" 2>/dev/null || true
+fi
+exit "$EXIT_CODE"
 """
         script_path = sandbox_dir / "execute_task.sh"
         script_path.write_text(script_content)
@@ -813,12 +851,12 @@ exec claude -p "$USER_TASK" \\
             container = self.client.containers.get(container_name)
             container.stop(timeout=5)
             container.remove(force=True)
-            service_logger.info("Cleaned up sandbox container: {}", container_name)
+            logger.info("[DockerSandboxManager] Cleaned up sandbox container: {}", container_name)
             return True
         except NotFound:
             return True
         except Exception as e:
-            service_logger.error("Error cleaning up sandbox: {}", e)
+            logger.error("[DockerSandboxManager] Error cleaning up sandbox: {}", e)
             return False
 
     def get_container_status(self, sandbox_index: int) -> Optional[str]:
@@ -836,28 +874,13 @@ exec claude -p "$USER_TASK" \\
             return None
 
     def list_output_files(self, sandbox_index: int) -> List[Dict[str, Any]]:
-        output_dir = self._get_sandbox_dir(sandbox_index) / "output"
-
-        # Only surface deliverable file types to the user.
-        # Intermediate files (scripts, thumbnail images, temp files) are excluded.
-        DOCUMENT_EXTENSIONS = {
-            ".pptx", ".docx", ".xlsx", ".pdf",
-            ".csv", ".json", ".txt", ".md",
-            ".zip", ".mp4", ".mp3", ".wav",
-        }
-        IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
-        CODE_EXTENSIONS = {".js", ".ts", ".py", ".sh", ".rb", ".html", ".css"}
+        result_dir = self._get_result_dir(sandbox_index)
 
         files = []
-        if output_dir.exists():
-            all_files = [f for f in output_dir.iterdir() if f.is_file()]
-            documents = [f for f in all_files if f.suffix.lower() in DOCUMENT_EXTENSIONS]
-            images = [f for f in all_files if f.suffix.lower() in IMAGE_EXTENSIONS]
-            # Show images only when there are no document-type deliverables (pure image task)
-            candidates = documents if documents else images if images else [
-                f for f in all_files if f.suffix.lower() not in CODE_EXTENSIONS
-            ]
-            for f in candidates:
+        if result_dir.exists():
+            for f in result_dir.iterdir():
+                if not f.is_file():
+                    continue
                 files.append({
                     "name": f.name,
                     "size": f.stat().st_size,
@@ -865,11 +888,14 @@ exec claude -p "$USER_TASK" \\
                 })
         return files
 
-    def get_output_file(self, sandbox_index: int, filename: str) -> Optional[Path]:
-        output_dir = (self._get_sandbox_dir(sandbox_index) / "output").resolve()
-        file_path = (output_dir / filename).resolve()
+    def collect_output_files(self, sandbox_index: int) -> List[Dict[str, Any]]:
+        return self.list_output_files(sandbox_index)
 
-        if not file_path.is_relative_to(output_dir):
+    def get_output_file(self, sandbox_index: int, filename: str) -> Optional[Path]:
+        result_dir = self._get_result_dir(sandbox_index).resolve()
+        file_path = (result_dir / filename).resolve()
+
+        if not file_path.is_relative_to(result_dir):
             return None
         if file_path.exists() and file_path.is_file():
             return file_path
@@ -900,8 +926,23 @@ exec claude -p "$USER_TASK" \\
                 })
             return result
         except Exception as e:
-            service_logger.error("Error listing containers: {}", e)
+            logger.error("[DockerSandboxManager] Error listing containers: {}", e)
             return []
+
+
+@dataclass
+class SandboxSlot:
+    id: int
+    user_id: Optional[int]
+    sandbox_index: int
+    status: str
+    current_skill_id: Optional[int]
+    task_description: Optional[str]
+    progress: int
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
 
 
 class SandboxService:
@@ -914,10 +955,27 @@ class SandboxService:
         self.idle_ttl_seconds = max(60, _settings.skills.global_idle_ttl_seconds)
         self._queue_condition = asyncio.Condition()
         self._wait_queue: deque[str] = deque()
+        now = get_utc_now()
+        self._sandboxes: dict[int, SandboxSlot] = {
+            index: SandboxSlot(
+                id=index + 1,
+                user_id=None,
+                sandbox_index=index,
+                status="ready",
+                current_skill_id=None,
+                task_description=None,
+                progress=0,
+                started_at=None,
+                completed_at=None,
+                created_at=now,
+                updated_at=now,
+            )
+            for index in range(self.pool_size)
+        }
 
     @staticmethod
     def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return service_logger.bind(
+        return logger.bind(
             request_id=getattr(getattr(request, "state", None), "request_id", "-"),
             user_id=user_id
             if user_id is not None
@@ -933,11 +991,11 @@ class SandboxService:
         return value.astimezone(timezone.utc)
 
     @staticmethod
-    def _is_public_owner(viewer_user_id: int, sandbox: SandboxSession) -> bool:
+    def _is_public_owner(viewer_user_id: int, sandbox: SandboxSlot) -> bool:
         return sandbox.user_id == viewer_user_id and sandbox.status == "busy"
 
     @staticmethod
-    def _build_public_socket_payload(sandbox: SandboxSession) -> SandboxSocketEvent:
+    def _build_public_socket_payload(sandbox: SandboxSlot) -> SandboxSocketEvent:
         return SandboxSocketEvent(
             id=sandbox.id,
             user_id=None,
@@ -951,7 +1009,7 @@ class SandboxService:
             updated_at=sandbox.updated_at or get_utc_now(),
         )
 
-    def _emit_sandbox_status(self, sandbox: SandboxSession) -> None:
+    def _emit_sandbox_status(self, sandbox: SandboxSlot) -> None:
         socketio_manager.emit_global_sandbox_status_sync(
             payload=self._build_public_socket_payload(sandbox).model_dump(mode="json")
         )
@@ -967,46 +1025,37 @@ class SandboxService:
             return
         loop.create_task(_notify())
 
-    def initialize_global_sandboxes(self, db_session: Session) -> List[SandboxSession]:
-        existing = {
-            sandbox.sandbox_index: sandbox
-            for sandbox in db_session.query(SandboxSession).all()
-        }
+    def initialize_global_sandboxes(self, db_session: Session | None = None) -> List[SandboxSlot]:
         now = get_utc_now()
-        created = []
-
         for index in range(self.pool_size):
-            if index in existing:
-                continue
-            sandbox = SandboxSession(
-                user_id=None,
-                sandbox_index=index,
-                status="ready",
-                progress=0,
-                created_at=now,
-                updated_at=now,
-            )
-            db_session.add(sandbox)
-            created.append(sandbox)
+            if index not in self._sandboxes:
+                self._sandboxes[index] = SandboxSlot(
+                    id=index + 1,
+                    user_id=None,
+                    sandbox_index=index,
+                    status="ready",
+                    current_skill_id=None,
+                    task_description=None,
+                    progress=0,
+                    started_at=None,
+                    completed_at=None,
+                    created_at=now,
+                    updated_at=now,
+                )
 
-        if created:
-            db_session.commit()
+        for index in list(self._sandboxes):
+            if index >= self.pool_size:
+                self._sandboxes.pop(index, None)
 
-        sandboxes = (
-            db_session.query(SandboxSession)
-            .filter(SandboxSession.sandbox_index < self.pool_size)
-            .order_by(SandboxSession.sandbox_index)
-            .all()
-        )
-        return sandboxes
+        return [self._sandboxes[index] for index in sorted(self._sandboxes)]
 
     def _mark_sandbox_ready(
         self,
-        db_session: Session,
-        sandbox: SandboxSession,
+        db_session: Session | None,
+        sandbox: SandboxSlot,
         *,
         progress: int = 0,
-    ) -> SandboxSession:
+    ) -> SandboxSlot:
         sandbox.user_id = None
         sandbox.status = "ready"
         sandbox.progress = progress
@@ -1015,24 +1064,15 @@ class SandboxService:
         sandbox.started_at = None
         sandbox.completed_at = get_utc_now()
         sandbox.updated_at = get_utc_now()
-        db_session.commit()
-        db_session.refresh(sandbox)
         self._emit_sandbox_status(sandbox)
         self._notify_waiters()
         return sandbox
 
-    def _reap_idle_sandboxes(self, db_session: Session) -> None:
+    def _reap_idle_sandboxes(self, db_session: Session | None = None) -> None:
         now = get_utc_now()
-        sandboxes = (
-            db_session.query(SandboxSession)
-            .filter(
-                SandboxSession.sandbox_index < self.pool_size,
-                SandboxSession.status == "ready",
-            )
-            .all()
-        )
-
-        for sandbox in sandboxes:
+        for sandbox in self.initialize_global_sandboxes(db_session):
+            if sandbox.status != "ready":
+                continue
             updated_at = self._coerce_utc_datetime(sandbox.updated_at)
             if updated_at is None:
                 continue
@@ -1042,9 +1082,8 @@ class SandboxService:
             if self.docker_manager.get_container_status(sandbox.sandbox_index):
                 self.docker_manager.cleanup_sandbox(sandbox.sandbox_index)
 
-    def _synchronize_sandbox_states(self, db_session: Session) -> List[SandboxSession]:
+    def _synchronize_sandbox_states(self, db_session: Session | None = None) -> List[SandboxSlot]:
         sandboxes = self.initialize_global_sandboxes(db_session)
-        changed = False
 
         for sandbox in sandboxes:
             container_status = self.docker_manager.get_container_status(
@@ -1060,22 +1099,15 @@ class SandboxService:
                 sandbox.started_at = None
                 sandbox.completed_at = get_utc_now()
                 sandbox.updated_at = get_utc_now()
-                changed = True
             elif sandbox.status == "ready" and container_status == "running":
-                # Warm container available; slot remains ready.
                 continue
-
-        if changed:
-            db_session.commit()
-            for sandbox in sandboxes:
-                db_session.refresh(sandbox)
 
         self._reap_idle_sandboxes(db_session)
         return sandboxes
 
     def list_sandboxes(
         self, request: Request, db_session: Session, user_id: int
-    ) -> List[SandboxSession]:
+    ) -> List[SandboxSlot]:
         request_logger = self._get_request_logger(request, user_id)
         sandboxes = self._synchronize_sandbox_states(db_session)
         request_logger.debug("Listed global sandboxes, count={}", len(sandboxes))
@@ -1087,19 +1119,10 @@ class SandboxService:
         user_id: int,
         skill_id: int,
         task_description: str,
-    ) -> Optional[SandboxSession]:
-        sandbox = (
-            db_session.query(SandboxSession)
-            .filter(
-                SandboxSession.sandbox_index < self.pool_size,
-                SandboxSession.status == "ready",
-            )
-            .order_by(SandboxSession.sandbox_index)
-            .with_for_update(skip_locked=True)
-            .first()
-        )
+    ) -> Optional[SandboxSlot]:
+        sandboxes = self.initialize_global_sandboxes(db_session)
+        sandbox = next((slot for slot in sandboxes if slot.status == "ready"), None)
         if not sandbox:
-            db_session.rollback()
             return None
 
         now = get_utc_now()
@@ -1111,8 +1134,6 @@ class SandboxService:
         sandbox.started_at = now
         sandbox.completed_at = None
         sandbox.updated_at = now
-        db_session.commit()
-        db_session.refresh(sandbox)
         self._emit_sandbox_status(sandbox)
         return sandbox
 
@@ -1122,7 +1143,7 @@ class SandboxService:
         user_id: int,
         skill_id: int,
         task_description: str,
-    ) -> Optional[SandboxSession]:
+    ) -> Optional[SandboxSlot]:
         token = uuid.uuid4().hex
         deadline = monotonic() + self.queue_timeout_seconds
 
@@ -1162,16 +1183,15 @@ class SandboxService:
 
     def release_sandbox(
         self,
-        db_session: Session,
+        db_session: Session | None,
         sandbox_id: int,
         *,
         destroy_container: bool = False,
         progress: int = 100,
-    ) -> SandboxSession:
-        sandbox = (
-            db_session.query(SandboxSession)
-            .filter(SandboxSession.id == sandbox_id)
-            .first()
+    ) -> SandboxSlot:
+        sandbox = next(
+            (slot for slot in self.initialize_global_sandboxes(db_session) if slot.id == sandbox_id),
+            None,
         )
 
         if not sandbox:
@@ -1184,15 +1204,14 @@ class SandboxService:
 
     def update_sandbox_progress(
         self,
-        db_session: Session,
+        db_session: Session | None,
         sandbox_id: int,
         progress: int,
         status: Optional[str] = None,
-    ) -> SandboxSession:
-        sandbox = (
-            db_session.query(SandboxSession)
-            .filter(SandboxSession.id == sandbox_id)
-            .first()
+    ) -> SandboxSlot:
+        sandbox = next(
+            (slot for slot in self.initialize_global_sandboxes(db_session) if slot.id == sandbox_id),
+            None,
         )
 
         if not sandbox:
@@ -1203,8 +1222,6 @@ class SandboxService:
             sandbox.status = status
         sandbox.updated_at = get_utc_now()
 
-        db_session.commit()
-        db_session.refresh(sandbox)
         self._emit_sandbox_status(sandbox)
         return sandbox
 
@@ -1213,12 +1230,8 @@ class SandboxService:
         db_session: Session,
         user_id: int,
         sandbox_index: int,
-    ) -> SandboxSession:
-        sandbox = (
-            db_session.query(SandboxSession)
-            .filter(SandboxSession.sandbox_index == sandbox_index)
-            .first()
-        )
+    ) -> SandboxSlot:
+        sandbox = self._sandboxes.get(sandbox_index)
         if not sandbox:
             raise ObjectNotFoundException(message="Sandbox not found")
         if sandbox.user_id != user_id:
@@ -1342,6 +1355,7 @@ class SandboxService:
             self.update_sandbox_progress(db_session, sandbox.id, 25, "busy")
 
             full_output: list[str] = []
+            stdout_buffer = ""
             command = "bash /workspace/execute_task.sh"
 
             async for stream_type, content in self._async_stream_execute(
@@ -1354,15 +1368,25 @@ class SandboxService:
                     yield self._format_sse_event("error", {"message": content})
                     return
 
-                for line in content.split("\n"):
+                if stream_type == "stderr":
+                    stderr_text = content.strip()
+                    if stderr_text:
+                        request_logger.warning("Sandbox stderr: {}", stderr_text)
+                    continue
+
+                if stream_type != "stdout":
+                    continue
+
+                stdout_buffer += content
+                while "\n" in stdout_buffer:
+                    line, stdout_buffer = stdout_buffer.split("\n", 1)
                     line = line.strip()
                     if not line:
                         continue
                     try:
                         event = json.loads(line)
                     except (json.JSONDecodeError, ValueError):
-                        full_output.append(line + "\n")
-                        yield self._format_sse_event("token", {"delta": line + "\n"})
+                        request_logger.debug("Sandbox stdout: {}", line)
                         continue
 
                     event_type = event.get("type", "")
@@ -1370,9 +1394,16 @@ class SandboxService:
                     if event_type == "assistant" and "message" in event:
                         msg = event["message"]
                         if isinstance(msg, dict):
-                            for block in msg.get("content", []):
-                                if not isinstance(block, dict):
-                                    continue
+                            content_blocks = [
+                                block
+                                for block in msg.get("content", [])
+                                if isinstance(block, dict)
+                            ]
+                            has_tool_use = any(
+                                block.get("type") == "tool_use"
+                                for block in content_blocks
+                            )
+                            for block in content_blocks:
                                 if block.get("type") == "thinking":
                                     thinking_text = block.get("thinking", "") or block.get("text", "")
                                     if thinking_text:
@@ -1387,10 +1418,19 @@ class SandboxService:
                                 elif block.get("type") == "text":
                                     text = block.get("text", "")
                                     if text:
-                                        full_output.append(text)
-                                        yield self._format_sse_event(
-                                            "token", {"delta": text}
-                                        )
+                                        if has_tool_use:
+                                            yield self._format_sse_event(
+                                                "status",
+                                                {
+                                                    "step": "planning",
+                                                    "message": text.strip(),
+                                                },
+                                            )
+                                        else:
+                                            full_output.append(text)
+                                            yield self._format_sse_event(
+                                                "token", {"delta": text}
+                                            )
                         elif isinstance(msg, str) and msg:
                             full_output.append(msg)
                             yield self._format_sse_event("token", {"delta": msg})
@@ -1426,49 +1466,68 @@ class SandboxService:
                                 "status", {"step": "system", "message": msg}
                             )
 
+            remaining_stdout = stdout_buffer.strip()
+            if remaining_stdout:
+                try:
+                    event = json.loads(remaining_stdout)
+                except (json.JSONDecodeError, ValueError):
+                    request_logger.debug("Sandbox stdout: {}", remaining_stdout)
+                else:
+                    if event.get("type") == "result" and event.get("result") and not full_output:
+                        result_text = event["result"]
+                        full_output.append(result_text)
+                        yield self._format_sse_event(
+                            "token", {"delta": result_text}
+                        )
+
             result = "".join(full_output)
             self.update_sandbox_progress(db_session, sandbox.id, 100, "busy")
 
-            output_files = self.docker_manager.list_output_files(sandbox.sandbox_index)
-            sandbox_out_dir = (
-                self.docker_manager._get_sandbox_dir(sandbox.sandbox_index) / "output"
-            )
+            output_files = self.docker_manager.collect_output_files(sandbox.sandbox_index)
+            result_dir = self.docker_manager._get_result_dir(sandbox.sandbox_index)
+            if not output_files:
+                request_logger.warning(
+                    "Skill execution completed but no deliverable files were found in sandbox result directory"
+                )
 
             file_attachments = []
             for file_info in output_files:
                 blob_url: str | None = None
                 blob_key: str | None = None
+                content_type = (
+                    mimetypes.guess_type(file_info["name"])[0]
+                    or "application/octet-stream"
+                )
                 try:
-                    file_path = sandbox_out_dir / file_info["name"]
-                    if file_path.is_file():
-                        blob_key = (
-                            f"skill-outputs/{user_id}/{conversation_id}/"
-                            f"{uuid.uuid4().hex}_{file_info['name']}"
+                    file_path = result_dir / file_info["name"]
+                    if not file_path.is_file():
+                        continue
+
+                    blob_key = (
+                        f"skill-outputs/{user_id}/{conversation_id}/"
+                        f"{uuid.uuid4().hex}_{file_info['name']}"
+                    )
+                    with open(file_path, "rb") as file_data:
+                        blob_storage_client.upload_bytes(
+                            blob_path=blob_key,
+                            data=file_data,
+                            content_type=content_type,
                         )
-                        content_type = (
-                            mimetypes.guess_type(file_info["name"])[0]
-                            or "application/octet-stream"
-                        )
-                        with open(file_path, "rb") as file_data:
-                            blob_storage_client.upload_bytes(
-                                blob_path=blob_key,
-                                data=file_data,
-                                content_type=content_type,
-                            )
-                        blob_url = blob_storage_client.generate_sas_url(
-                            blob_key,
-                            expiry_hours=24,
-                        )
-                        request_logger.info(
-                            "Uploaded sandbox output to blob: {}",
-                            blob_key,
-                        )
-                        file_path.unlink(missing_ok=True)
+                    blob_url = blob_storage_client.generate_sas_url(
+                        blob_key,
+                        expiry_hours=24,
+                    )
+                    request_logger.info(
+                        "Uploaded sandbox result file to blob: {}",
+                        blob_key,
+                    )
+                    file_path.unlink(missing_ok=True)
                 except Exception as blob_exc:
                     request_logger.warning(
-                        "Failed to upload output file to blob: {}",
+                        "Failed to upload sandbox result file to blob: {}",
                         blob_exc,
                     )
+                    continue
 
                 output_payload = {
                     "name": file_info["name"],
@@ -1476,11 +1535,11 @@ class SandboxService:
                     "sandbox_index": sandbox.sandbox_index,
                     "download_url": f"/skills/sandboxes/{sandbox.sandbox_index}/files/{file_info['name']}",
                     "blob_url": blob_url,
-                    "_blob_path": blob_key,
+                    "blob_path": blob_key,
+                    "content_type": content_type,
                 }
                 file_attachments.append(output_payload)
-                yield_payload = {k: v for k, v in output_payload.items() if not k.startswith("_")}
-                yield self._format_sse_event("file", yield_payload)
+                yield self._format_sse_event("file", output_payload)
 
             message_content = result or "Execution completed without textual output."
             if file_attachments:
@@ -1490,7 +1549,16 @@ class SandboxService:
                         f"\n- {attachment['name']} ({attachment['size']:,} bytes)"
                     )
 
-            new_message, _ = conversation_service.add_message(
+            primary_attachment = next(
+                (
+                    attachment
+                    for attachment in file_attachments
+                    if attachment.get("blob_path")
+                ),
+                None,
+            )
+
+            assistant_message, _ = conversation_service.add_message(
                 request,
                 db_session,
                 user_id,
@@ -1498,45 +1566,23 @@ class SandboxService:
                 ConversationMessageCreateRequest(
                     role="assistant",
                     content=message_content,
+                    blob_path=primary_attachment.get("blob_path") if primary_attachment else None,
+                    blob_name=primary_attachment.get("name") if primary_attachment else None,
+                    blob_content_type=primary_attachment.get("content_type") if primary_attachment else None,
+                    blob_size=primary_attachment.get("size") if primary_attachment else None,
                 ),
             )
-
-            for attachment in file_attachments:
-                if not attachment.get("blob_url"):
-                    continue
-                try:
-                    artifact = SkillExecutionArtifact(
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        message_id=new_message.id if new_message else None,
-                        skill_id=skill.id if skill else None,
-                        sandbox_index=sandbox.sandbox_index,
-                        file_name=attachment["name"],
-                        blob_path=attachment["_blob_path"],
-                        content_type=(
-                            mimetypes.guess_type(attachment["name"])[0]
-                            or "application/octet-stream"
-                        ),
-                        size=attachment["size"],
-                        created_at=get_utc_now(),
-                        updated_at=get_utc_now(),
-                    )
-                    db_session.add(artifact)
-                except Exception as artifact_exc:
-                    request_logger.warning(
-                        "Failed to persist artifact to DB: {}",
-                        artifact_exc,
-                    )
-            db_session.commit()
+            request_logger.info(
+                "Persisted skill assistant message id={} blob_path={}",
+                assistant_message.id,
+                assistant_message.blob_path,
+            )
 
             yield self._format_sse_event(
                 "done",
                 {
                     "output": result,
-                    "files": [
-                        {k: v for k, v in attachment.items() if not k.startswith("_")}
-                        for attachment in file_attachments
-                    ],
+                    "files": file_attachments,
                 },
             )
         except Exception as exc:

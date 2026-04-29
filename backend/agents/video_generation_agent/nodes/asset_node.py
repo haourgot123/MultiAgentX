@@ -3,7 +3,7 @@ import io
 import uuid
 
 import httpx
-from langchain_core.callbacks import dispatch_custom_event
+from langchain_core.callbacks import adispatch_custom_event
 from langchain_core.runnables import Runnable
 from loguru import logger
 
@@ -18,8 +18,6 @@ from backend.utils.blob_storage import blob_storage_client
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
-service_logger = logger.bind(service="video-assets")
-
 
 class AssetNode(Runnable):
     def invoke(self, state: VideoGenerationAgentState, **kwargs):
@@ -74,7 +72,7 @@ class AssetNode(Runnable):
                     if self._is_image_url(result.url):
                         urls.append(result.url)
             except Exception as exc:
-                service_logger.warning("Scene image search failed query={}: {}", query, exc)
+                logger.warning("[VideoGenerationAgent (AssetNode)] Scene image search failed query={}: {}", query, exc)
 
         return self._dedupe_urls([url for url in urls if self._is_image_url(url)])
 
@@ -111,7 +109,7 @@ class AssetNode(Runnable):
             )
             return blob_storage_client.generate_sas_url(blob_path, expiry_hours=24)
         except Exception as exc:
-            service_logger.debug("Unable to mirror image url={} error={}", url, exc)
+            logger.debug("[VideoGenerationAgent (AssetNode)] Unable to mirror image url={} error={}", url, exc)
             return None
 
     async def _prepare_image_urls(self, state: VideoGenerationAgentState) -> list[str]:
@@ -129,7 +127,7 @@ class AssetNode(Runnable):
         return prepared_urls
 
     async def ainvoke(self, state: VideoGenerationAgentState, **kwargs):
-        dispatch_custom_event(
+        await adispatch_custom_event(
             "status",
             {
                 "step": "assets",
@@ -138,7 +136,7 @@ class AssetNode(Runnable):
         )
 
         image_urls = await self._prepare_image_urls(state)
-        dispatch_custom_event(
+        await adispatch_custom_event(
             "status",
             {
                 "step": "assets",

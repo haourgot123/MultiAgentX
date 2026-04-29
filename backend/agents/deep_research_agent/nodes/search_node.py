@@ -1,6 +1,5 @@
 from typing import List
 from langchain_core.runnables import Runnable
-from langchain_core.callbacks import dispatch_custom_event
 from loguru import logger
 
 from backend.agents.deep_research_agent.state import (
@@ -11,9 +10,8 @@ from backend.agents.general_agent.tools.websearch import (
     TavilySearchService,
     SearchRequest,
 )
+from backend.agents.utils import astream_custom_event
 
-
-service_logger = logger.bind(service="deep-research-search")
 
 
 class SearchNode(Runnable):
@@ -25,19 +23,17 @@ class SearchNode(Runnable):
         pass
 
     async def ainvoke(self, state: DeepResearchAgentState, **kwargs):
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "deep_research_search",
-                "message": "Searching for information...",
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="deep_research_search",
+            message="Searching for information...",
         )
 
         all_results: List[SearchResult] = []
         iteration = state.current_iteration
 
-        service_logger.info(
-            f"Executing {len(state.search_queries)} searches for iteration {iteration + 1}"
+        logger.info(
+            f"[DeepResearchAgent (SearchNode)] Executing {len(state.search_queries)} searches for iteration {iteration + 1}"
         )
 
         for i, query in enumerate(state.search_queries):
@@ -57,22 +53,20 @@ class SearchNode(Runnable):
                     )
                     all_results.append(search_result)
 
-                service_logger.info(
-                    f"Query '{query[:30]}...' returned {len(results)} results"
+                logger.info(
+                    f"[DeepResearchAgent (SearchNode)] Query '{query[:30]}...' returned {len(results)} results"
                 )
 
             except Exception as e:
-                service_logger.error(f"Search failed for query '{query}': {e}")
+                logger.error(f"[DeepResearchAgent (SearchNode)] Search failed for query '{query}': {e}")
 
         existing_urls = {r.url for r in state.search_results}
         new_results = [r for r in all_results if r.url not in existing_urls]
 
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "deep_research_search",
-                "message": f"Found {len(new_results)} new results ...",
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="deep_research_search",
+            message=f"Found {len(new_results)} new results ...",
         )
 
         return {

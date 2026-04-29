@@ -3,7 +3,6 @@ from typing import Optional
 from datetime import datetime, timedelta
 from loguru import logger
 
-service_logger = logger.bind(service="research-session")
 
 # In-memory session storage (should use Redis in production)
 # Structure: { session_id: { "user_id": int, "user_question": str, "memories": list, "created_at": datetime, "plan": list } }
@@ -32,7 +31,7 @@ class ResearchSessionManager:
             "research_plan": research_plan,
             "created_at": datetime.now(),
         }
-        service_logger.info(f"Created research session: {session_id}")
+        logger.info(f"[ResearchSessionManager] Created research session: {session_id}")
 
     @staticmethod
     def get_session(session_id: str) -> Optional[dict]:
@@ -54,7 +53,7 @@ class ResearchSessionManager:
         """Delete a session"""
         if session_id in _research_sessions:
             del _research_sessions[session_id]
-            service_logger.info(f"Deleted research session: {session_id}")
+            logger.info(f"[ResearchSessionManager] Deleted research session: {session_id}")
 
     @staticmethod
     def update_approved_plan(session_id: str, approved_plan: list) -> bool:
@@ -65,7 +64,7 @@ class ResearchSessionManager:
         
         session["approved_plan"] = approved_plan
         session["approved_at"] = datetime.now()
-        service_logger.info(f"Updated research session with approved plan: {session_id}")
+        logger.info(f"[ResearchSessionManager] Updated research session with approved plan: {session_id}")
         return True
 
     @staticmethod
@@ -83,7 +82,7 @@ class ResearchSessionManager:
                 expired_count += 1
         
         if expired_count > 0:
-            service_logger.info(f"Cleaned up {expired_count} expired sessions")
+            logger.info(f"[ResearchSessionManager] Cleaned up {expired_count} expired sessions")
         
         return expired_count
 

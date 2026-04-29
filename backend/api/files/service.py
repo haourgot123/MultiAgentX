@@ -20,7 +20,6 @@ from backend.utils.blob_storage import blob_storage_client
 from backend.utils.constants import Message
 from backend.utils.retention import mark_for_retention_delete
 
-service_logger = logger.bind(service="file-service")
 
 
 class FileService:
@@ -46,7 +45,7 @@ class FileService:
 
     @staticmethod
     def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return service_logger.bind(
+        return logger.bind(
             request_id=getattr(getattr(request, "state", None), "request_id", "-"),
             user_id=user_id
             if user_id is not None

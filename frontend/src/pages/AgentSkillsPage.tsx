@@ -15,6 +15,8 @@ import { FileViewer } from "@/components/FileViewer"
 import { API_BASE_URL } from "@/lib/api"
 import { toast } from "sonner"
 import JSZip from "jszip"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import {
     Bot,
     Boxes,
@@ -117,7 +119,6 @@ export default function AgentSkillsPage() {
         executionOutput,
         currentConversationId,
         executionRunsByConversation,
-        artifactsByConversation,
         lastExecutionError,
         fetchConversations,
         loadConversation,
@@ -233,25 +234,6 @@ export default function AgentSkillsPage() {
             return []
         }
 
-        const artifacts = artifactsByConversation[currentConversationId] || []
-        const artifactsByMessageId = artifacts.reduce<Map<number, OutputFile[]>>((map, artifact) => {
-            if (!artifact.message_id) {
-                return map
-            }
-
-            const artifactOutputFile: OutputFile = {
-                name: artifact.file_name,
-                size: artifact.size,
-                sandbox_index: -1,
-                download_url: artifact.download_url || `/skills/artifacts/${artifact.id}/download`,
-                blob_url: artifact.download_url,
-            }
-
-            const existingFiles = map.get(artifact.message_id) || []
-            map.set(artifact.message_id, [...existingFiles, artifactOutputFile])
-            return map
-        }, new Map<number, OutputFile[]>())
-
         return (executionRunsByConversation[currentConversationId] || []).map((run) => ({
             id: run.id,
             prompt: run.prompt,
@@ -269,14 +251,10 @@ export default function AgentSkillsPage() {
             outputFiles:
                 run.outputFiles && run.outputFiles.length > 0
                     ? run.outputFiles
-                    : (
-                        run.assistantMessageId
-                            ? artifactsByMessageId.get(run.assistantMessageId)
-                            : undefined
-                    ),
+                    : undefined,
             createdAt: run.createdAt,
         }))
-    }, [artifactsByConversation, currentConversationId, executionRunsByConversation, files, skillMap])
+    }, [currentConversationId, executionRunsByConversation, files, skillMap])
 
     useEffect(() => {
         if (!currentConversationId) {
@@ -792,12 +770,44 @@ export default function AgentSkillsPage() {
                                                     </div>
                                                 )}
 
-                                                {/* After done: show success/error message only */}
+                                                {/* Final agent response */}
                                                 {run.status !== 'running' && (
-                                                    <div className={`text-sm ${run.status === 'error' ? 'text-red-600' : 'text-emerald-600'}`}>
+                                                    <div
+                                                        className={`break-words text-sm leading-relaxed ${
+                                                            run.status === 'error'
+                                                                ? 'text-red-600'
+                                                                : 'text-text-primary'
+                                                        }`}
+                                                    >
                                                         {run.status === 'error'
                                                             ? (run.error || 'Execution failed.')
-                                                            : 'Execution completed successfully.'}
+                                                            : (
+                                                                <ReactMarkdown
+                                                                    remarkPlugins={[remarkGfm]}
+                                                                    components={{
+                                                                        p: ({ children }) => (
+                                                                            <p className="mb-2 last:mb-0">{children}</p>
+                                                                        ),
+                                                                        ul: ({ children }) => (
+                                                                            <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0">
+                                                                                {children}
+                                                                            </ul>
+                                                                        ),
+                                                                        ol: ({ children }) => (
+                                                                            <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">
+                                                                                {children}
+                                                                            </ol>
+                                                                        ),
+                                                                        strong: ({ children }) => (
+                                                                            <strong className="font-semibold text-text-primary">
+                                                                                {children}
+                                                                            </strong>
+                                                                        ),
+                                                                    }}
+                                                                >
+                                                                    {run.output?.trim() || 'Execution completed successfully.'}
+                                                                </ReactMarkdown>
+                                                            )}
                                                     </div>
                                                 )}
 
@@ -925,7 +935,7 @@ export default function AgentSkillsPage() {
                                 </Button>
                                 <span>{selectedSkills.length} skills selected</span>
                                 <span className="hidden text-border sm:inline">|</span>
-                                <span>{readySandboxes.length}/10 sandboxes ready</span>
+                                <span>{readySandboxes.length}/{sandboxes.length} sandboxes ready</span>
                             </div>
 
                             <Button

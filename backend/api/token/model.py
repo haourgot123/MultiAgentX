@@ -22,6 +22,7 @@ class Token(Base, TimeStampMixin):
 
     __table_args__ = (
         Index("token_idx_token", "token", "token_type", postgresql_using="btree"),
+        Index("ix_Token_user_type", "user_id", "token_type", postgresql_using="btree"),
     )
 
 

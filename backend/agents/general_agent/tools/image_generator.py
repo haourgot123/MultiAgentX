@@ -4,10 +4,6 @@ from loguru import logger
 
 from backend.config.settings import _settings
 
-
-service_logger = logger.bind(service="image-generator")
-
-
 class ImageGenerationResult:
     def __init__(self, urls: List[str], revised_prompt: Optional[str] = None):
         self.urls = urls
@@ -49,7 +45,7 @@ class ImageGenerationService:
         quality = quality or self.default_quality
         n = n or self.default_n
 
-        service_logger.info(f"Generating image with prompt: '{prompt[:100]}...'")
+        logger.info(f"[GeneralAgent (ImageGenerator)] Generating image with prompt: '{prompt[:100]}...'")
 
         try:
             result = client.images.generate(
@@ -63,12 +59,12 @@ class ImageGenerationService:
             urls = [img.url for img in result.data if img.url]
             revised_prompt = result.data[0].revised_prompt if result.data else None
 
-            service_logger.info(f"Generated {len(urls)} images")
+            logger.info(f"[GeneralAgent (ImageGenerator)] Generated {len(urls)} images")
 
             return ImageGenerationResult(urls=urls, revised_prompt=revised_prompt)
 
         except Exception as e:
-            service_logger.error(f"Image generation failed: {e}")
+            logger.error(f"[GeneralAgent (ImageGenerator)] Image generation failed: {e}")
             raise
 
     async def generate_with_retry(
@@ -83,7 +79,7 @@ class ImageGenerationService:
                 return await self.generate(prompt, **kwargs)
             except Exception as e:
                 last_error = e
-                service_logger.warning(f"Attempt {attempt + 1} failed: {e}")
+                logger.warning(f"[GeneralAgent (ImageGenerator)] Attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
                     continue
         raise last_error or Exception("Image generation failed after retries")

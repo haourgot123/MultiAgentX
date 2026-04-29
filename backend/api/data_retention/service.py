@@ -13,14 +13,13 @@ from sqlalchemy.orm import Session
 
 from backend.api.conversation.model import Conversation
 from backend.api.files.model import StoredFile
-from backend.api.skills.model import AgentSkill, SkillExecutionArtifact
+from backend.api.skills.model import AgentSkill
 from backend.api.video_generation.model import VideoGenerationJob
 from backend.config.settings import _settings
 from backend.databases.db import get_utc_now
 from backend.utils.blob_storage import blob_storage_client
 from backend.utils.retention import get_retention_delta
 
-service_logger = logger.bind(service="data-retention")
 
 
 class DataRetentionService:
@@ -103,16 +102,16 @@ class DataRetentionService:
                         file_id=stored_file.id,
                     )
                 except Exception as exc:
-                    service_logger.warning(
-                        "Vector purge failed for file_id={}: {}",
+                    logger.warning(
+                        "[DataRetentionService] Vector purge failed for file_id={}: {}",
                         stored_file.id,
                         exc,
                     )
                 try:
                     self._delete_blob(stored_file.storage_path)
                 except Exception as exc:
-                    service_logger.warning(
-                        "Blob purge failed for file_id={} path={}: {}",
+                    logger.warning(
+                        "[DataRetentionService] Blob purge failed for file_id={} path={}: {}",
                         stored_file.id,
                         stored_file.storage_path,
                         exc,
@@ -136,8 +135,8 @@ class DataRetentionService:
                     try:
                         self._delete_blob(blob_path)
                     except Exception as exc:
-                        service_logger.warning(
-                            "Video blob purge failed job_id={} path={}: {}",
+                        logger.warning(
+                            "[DataRetentionService] Video blob purge failed job_id={} path={}: {}",
                             job.id,
                             blob_path,
                             exc,
@@ -152,8 +151,8 @@ class DataRetentionService:
                 try:
                     self._delete_blob(skill.blob_path)
                 except Exception as exc:
-                    service_logger.warning(
-                        "Skill blob purge failed skill_id={} path={}: {}",
+                    logger.warning(
+                        "[DataRetentionService] Skill blob purge failed skill_id={} path={}: {}",
                         skill.id,
                         skill.blob_path,
                         exc,
@@ -166,38 +165,14 @@ class DataRetentionService:
                         else:
                             storage_path.unlink(missing_ok=True)
                     except OSError as exc:
-                        service_logger.warning(
-                            "Skill local purge failed skill_id={} path={}: {}",
+                        logger.warning(
+                            "[DataRetentionService] Skill blob purge failed skill_id={} path={}: {}",
                             skill.id,
                             storage_path,
                             exc,
                         )
                 self._mark_purged(skill, now)
                 result["tables"]["AgentSkill"]["purged"] += 1
-
-        artifacts = self._due_records(
-            db_session,
-            SkillExecutionArtifact,
-            now,
-            effective_batch_size,
-        )
-        result["tables"]["SkillExecutionArtifact"] = {
-            "eligible": len(artifacts),
-            "purged": 0,
-        }
-        for artifact in artifacts:
-            if not dry_run:
-                try:
-                    self._delete_blob(artifact.blob_path)
-                except Exception as exc:
-                    service_logger.warning(
-                        "Artifact blob purge failed artifact_id={} path={}: {}",
-                        artifact.id,
-                        artifact.blob_path,
-                        exc,
-                    )
-                self._mark_purged(artifact, now)
-                result["tables"]["SkillExecutionArtifact"]["purged"] += 1
 
         conversations = self._due_records(
             db_session,
@@ -211,6 +186,16 @@ class DataRetentionService:
         }
         for conversation in conversations:
             if not dry_run:
+                for message in conversation.messages:
+                    try:
+                        self._delete_blob(message.blob_path)
+                    except Exception as exc:
+                        logger.warning(
+                            "[DataRetentionService] Message blob purge failed message_id={} path={}: {}",
+                            message.id,
+                            message.blob_path,
+                            exc,
+                        )
                 self._mark_purged(conversation, now)
                 result["tables"]["Conversation"]["purged"] += 1
 

@@ -14,9 +14,6 @@ from backend.agents.deep_research_agent.nodes.should_continue_node import Should
 from backend.agents.deep_research_agent.nodes.synthesize_node import SynthesizeNode
 
 
-service_logger = logger.bind(service="deep-research-graph")
-
-
 class DeepResearchAgentGraph:
     def __init__(self, max_iterations: int = 3, plan_only: bool = False):
         self.graph = StateGraph(DeepResearchAgentState)

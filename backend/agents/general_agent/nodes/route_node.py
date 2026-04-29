@@ -1,7 +1,6 @@
 import re
 import unicodedata
 
-from langchain_core.callbacks import dispatch_custom_event
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 from loguru import logger
@@ -10,7 +9,7 @@ from pydantic import BaseModel, Field
 from backend.agents.general_agent.state import GeneralAgentState
 from backend.agents.prompts.routing import ROUTE_SYSTEM_MESSAGE, ROUTE_USER_MESSAGE
 from backend.utils.llm import azure_chat_openai_gpt_5_1
-
+from backend.agents.utils import astream_custom_event
 
 class RouteResponse(BaseModel):
     route: str = Field(
@@ -269,27 +268,27 @@ class RouteNode(Runnable):
             HumanMessage(content=ROUTE_USER_MESSAGE.format(user_question=state.user_question)),
         ]
 
-        logger.info(f"RouteNode evaluating question with LLM fallback: '{state.user_question}'")
+        logger.info(f"[GeneralAgent (RouteNode)] Evaluating question with LLM fallback: '{state.user_question}'")
         llm_with_structured_output = azure_chat_openai_gpt_5_1.with_structured_output(RouteResponse)
         response = await llm_with_structured_output.ainvoke(messages)
         route = response.route if response.route in VALID_ROUTES else "direct_response"
         return route, response.confidence, response.reasoning
 
     async def ainvoke(self, state: GeneralAgentState, **kwargs):
-        dispatch_custom_event(
-            "status",
-            {"step": "routing", "message": "Analyzing the request and selecting the best route..."},
+
+        await astream_custom_event(
+            event_name="status",
+            step="routing",
+            message="Analyzing the request and selecting the best route...",
         )
 
         heuristic_route, heuristic_reason = self._heuristic_route(state)
         if heuristic_route:
-            logger.info(f"RouteNode selected heuristic route: {heuristic_route} ({heuristic_reason})")
-            dispatch_custom_event(
-                "status",
-                {
-                    "step": "routing",
-                    "message": f"Selected route: {heuristic_route}",
-                },
+            logger.info(f"[GeneralAgent (RouteNode)] Selected heuristic route: {heuristic_route} ({heuristic_reason})")
+            await astream_custom_event(
+                event_name="status",
+                step="routing",
+                message=f"Selected route: {heuristic_route} ({heuristic_reason})",
             )
             return {"route": heuristic_route}
 
@@ -300,17 +299,16 @@ class RouteNode(Runnable):
             confidence = max(confidence, 0.6)
 
         if confidence < 0.4 and route != "direct_response":
-            logger.info(f"RouteNode confidence too low ({confidence:.2f}), falling back to direct_response")
+            logger.info(f"[GeneralAgent (RouteNode)] Confidence too low ({confidence:.2f}), falling back to direct_response")
             route = "direct_response"
 
         logger.info(
-            f"RouteNode decided route: {route} (confidence: {confidence:.2f}, reason: {reasoning[:100]})"
+            f"[GeneralAgent (RouteNode)] Decided route: {route} (confidence: {confidence:.2f}, reason: {reasoning[:100]})"
         )
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "routing",
-                "message": f"Selected route: {route}",
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="routing",
+            message=f"Selected route: {route}",
         )
+
         return {"route": route}

@@ -33,9 +33,8 @@ from backend.agents.rag_agent.state import Tag as RAGTag
 from backend.agents.rag_agent.graph import RAGAgentGraph
 from backend.memory.mem0_client import mem0_client
 from backend.utils.research_session import research_session_manager
-from backend.utils.retention import get_purge_after, mark_for_retention_delete
+from backend.utils.retention import mark_for_retention_delete
 
-service_logger = logger.bind(service="conversation-service")
 
 
 class ConversationService:
@@ -51,7 +50,7 @@ class ConversationService:
 
     @staticmethod
     def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return service_logger.bind(
+        return logger.bind(
             request_id=getattr(getattr(request, "state", None), "request_id", "-"),
             user_id=user_id
             if user_id is not None
@@ -286,26 +285,6 @@ class ConversationService:
         )
         now = get_utc_now()
         mark_for_retention_delete(conversation, now)
-        try:
-            from backend.api.skills.model import SkillExecutionArtifact
-
-            db_session.query(SkillExecutionArtifact).filter(
-                SkillExecutionArtifact.user_id == user_id,
-                SkillExecutionArtifact.conversation_id == conversation_id,
-                SkillExecutionArtifact.deleted_at.is_(None),
-            ).update(
-                {
-                    "deleted_at": now,
-                    "purge_after": get_purge_after(now),
-                    "updated_at": now,
-                },
-                synchronize_session=False,
-            )
-        except Exception as exc:
-            request_logger.warning(
-                "Unable to mark conversation artifacts for retention: {}",
-                exc,
-            )
         db_session.commit()
         request_logger.info("Soft deleted conversation")
         return {"message": Message.MESSAGE_CONVERSATION_DELETED_SUCCESSFULLY}
@@ -367,6 +346,10 @@ class ConversationService:
             conversation_id=conversation.id,
             role=message_request.role,
             content=message_request.content.strip(),
+            blob_path=message_request.blob_path,
+            blob_name=message_request.blob_name,
+            blob_content_type=message_request.blob_content_type,
+            blob_size=message_request.blob_size,
             created_at=now,
             updated_at=now,
         )

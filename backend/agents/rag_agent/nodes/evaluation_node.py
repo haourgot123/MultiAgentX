@@ -1,6 +1,6 @@
 from langchain_core.runnables import Runnable
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.callbacks import dispatch_custom_event
+from langchain_core.callbacks import adispatch_custom_event
 from pydantic import BaseModel, Field
 from loguru import logger
 
@@ -9,7 +9,6 @@ from backend.utils.llm import azure_chat_openai_gpt_5_1
 from backend.agents.prompts.rag import RAG_PROMPTS
 
 
-service_logger = logger.bind(service="rag-evaluation")
 
 
 class EvaluationResult(BaseModel):
@@ -49,7 +48,7 @@ class EvaluationNode(Runnable):
     async def ainvoke(self, state: RAGAgentState, **kwargs):
         current_retry = state.retry_count
 
-        dispatch_custom_event(
+        await adispatch_custom_event(
             "status",
             {
                 "step": "rag_evaluation",
@@ -59,10 +58,10 @@ class EvaluationNode(Runnable):
 
         # If no context was retrieved, mark as not relevant
         if not state.combined_context or not state.combined_context.strip():
-            service_logger.warning("No context to evaluate — marking as not relevant")
+            logger.warning("[RAGAgent (EvaluationNode)] No context to evaluate — marking as not relevant")
 
             if current_retry >= state.max_retries:
-                service_logger.info("Max retries reached with no context — proceeding with empty context")
+                logger.info("[RAGAgent (EvaluationNode)] Max retries reached with no context — proceeding with empty context")
                 return {
                     "is_relevant": False,
                     "retry_count": current_retry,
@@ -89,14 +88,14 @@ class EvaluationNode(Runnable):
             llm_with_structure = azure_chat_openai_gpt_5_1.with_structured_output(EvaluationResult)
             result = await llm_with_structure.ainvoke(messages)
 
-            service_logger.info(
-                f"Evaluation result: relevant={result.is_relevant}, "
+            logger.info(
+                f"[RAGAgent (EvaluationNode)] Evaluation result: relevant={result.is_relevant}, "
                 f"confidence={result.confidence:.2f}, "
                 f"reasoning='{result.reasoning[:100]}'"
             )
 
             if result.is_relevant:
-                dispatch_custom_event(
+                await adispatch_custom_event(
                     "status",
                     {
                         "step": "rag_evaluation",
@@ -110,10 +109,10 @@ class EvaluationNode(Runnable):
 
             # Not relevant — decide whether to retry
             if current_retry >= state.max_retries:
-                service_logger.info(
-                    f"Max retries ({state.max_retries}) reached — proceeding with current context anyway"
+                logger.info(
+                    f"[RAGAgent (EvaluationNode)] Max retries ({state.max_retries}) reached — proceeding with current context anyway"
                 )
-                dispatch_custom_event(
+                await adispatch_custom_event(
                     "status",
                     {
                         "step": "rag_evaluation",
@@ -128,11 +127,11 @@ class EvaluationNode(Runnable):
                 }
 
             # Not relevant and retries remaining — retry with refined query
-            service_logger.info(
-                f"Context not relevant (attempt {current_retry + 1}/{state.max_retries}). "
+            logger.info(
+                f"[RAGAgent (EvaluationNode)] Context not relevant (attempt {current_retry + 1}/{state.max_retries}). "
                 f"Suggestion: {result.suggested_query_refinement[:100]}"
             )
-            dispatch_custom_event(
+            await adispatch_custom_event(
                 "status",
                 {
                     "step": "rag_evaluation",
@@ -150,7 +149,7 @@ class EvaluationNode(Runnable):
             }
 
         except Exception as e:
-            service_logger.error(f"Evaluation failed: {e}")
+            logger.error(f"[RAGAgent (EvaluationNode)] Evaluation failed: {e}")
             # Graceful degradation: assume relevance and proceed
 
             return {

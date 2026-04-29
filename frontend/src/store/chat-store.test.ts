@@ -77,6 +77,52 @@ describe('useChatStore', () => {
         ])
     })
 
+    it('maps generated file blob metadata from loaded assistant messages', async () => {
+        apiFetchMock.mockResolvedValueOnce({
+            id: 43,
+            title: 'Generated deck',
+            chat_type: 'normal',
+            file_ids: [],
+            message_count: 2,
+            created_at: '2026-04-15T10:00:00Z',
+            updated_at: '2026-04-15T10:00:03Z',
+            messages: [
+                {
+                    id: 3,
+                    role: 'user',
+                    content: 'Create a pitch deck',
+                    created_at: '2026-04-15T10:00:01Z',
+                    updated_at: '2026-04-15T10:00:01Z',
+                },
+                {
+                    id: 4,
+                    role: 'assistant',
+                    content: 'Created the deck.',
+                    blob_path: 'skill-outputs/1/43/pitch-deck.pptx',
+                    blob_name: 'pitch-deck.pptx',
+                    blob_content_type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                    blob_size: 4096,
+                    blob_url: 'https://blob.example.com/pitch-deck.pptx?sig=test',
+                    created_at: '2026-04-15T10:00:02Z',
+                    updated_at: '2026-04-15T10:00:02Z',
+                },
+            ],
+        })
+
+        await useChatStore.getState().loadConversation(43)
+        useChatStore.getState().setCurrentChat(43)
+
+        expect(useChatStore.getState().getCurrentMessages()[1]).toMatchObject({
+            id: 4,
+            role: 'assistant',
+            blobPath: 'skill-outputs/1/43/pitch-deck.pptx',
+            blobName: 'pitch-deck.pptx',
+            blobContentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            blobSize: 4096,
+            blobUrl: 'https://blob.example.com/pitch-deck.pptx?sig=test',
+        })
+    })
+
     it('switches active conversation by chat type without reusing file chat in normal mode', () => {
         useChatStore.setState({
             currentChatId: 7,

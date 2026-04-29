@@ -30,6 +30,7 @@ from backend.api.files.model import StoredFile
 from backend.exceptions.model import InvalidRequestException
 from backend.utils.constants import Message
 from backend.utils.dependency import get_current_user, get_db
+from backend.utils.blob_storage import blob_storage_client
 
 router = APIRouter(
     prefix="/conversations",
@@ -57,10 +58,22 @@ def _to_conversation_response(conversation: Conversation) -> ConversationRespons
 
 
 def _to_message_response(message: ConversationMessage) -> ConversationMessageResponse:
+    blob_url: str | None = None
+    if message.blob_path:
+        try:
+            blob_url = blob_storage_client.generate_sas_url(message.blob_path)
+        except Exception:
+            blob_url = None
+
     return ConversationMessageResponse(
         id=message.id,
         role=message.role,
         content=message.content,
+        blob_path=message.blob_path,
+        blob_name=message.blob_name,
+        blob_content_type=message.blob_content_type,
+        blob_size=message.blob_size,
+        blob_url=blob_url,
         created_at=message.created_at,
         updated_at=message.updated_at,
     )

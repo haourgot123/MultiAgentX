@@ -1,13 +1,12 @@
 import asyncio
 from langchain_core.runnables import Runnable
-from langchain_core.callbacks import dispatch_custom_event
+from langchain_core.callbacks import adispatch_custom_event
 from loguru import logger
 
 from backend.agents.rag_agent.state import RAGAgentState, RetrievedChunk
 from backend.agents.general_agent.tools.retriever import hybrid_retriever
 
 
-service_logger = logger.bind(service="rag-retrieve")
 
 
 def _deduplicate_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
@@ -28,7 +27,7 @@ class RetrieveNode(Runnable):
         pass
 
     async def ainvoke(self, state: RAGAgentState, **kwargs):
-        dispatch_custom_event(
+        await adispatch_custom_event(
             "status",
             {
                 "step": "rag_retrieve",
@@ -41,8 +40,8 @@ class RetrieveNode(Runnable):
             [state.transformed_query] if state.transformed_query else [state.user_question]
         )
 
-        service_logger.info(
-            f"Retrieving with {len(queries)} queries: "
+        logger.info(
+            f"[RAGAgent (RetrieveNode)] Retrieving with {len(queries)} queries: "
             + " | ".join(f"[{i+1}] '{q[:60]}'" for i, q in enumerate(queries))
         )
 
@@ -64,13 +63,13 @@ class RetrieveNode(Runnable):
 
         retrieved_chunks = _deduplicate_chunks(all_chunks)
 
-        service_logger.info(
-            f"Retrieved {len(retrieved_chunks)} unique chunks from {len(queries)} queries"
+        logger.info(
+            f"[RAGAgent (RetrieveNode)] Retrieved {len(retrieved_chunks)} unique chunks from {len(queries)} queries"
         )
 
         if retrieved_chunks:
             sources_preview = ", ".join([c.file_name or f"chunk_{c.chunk_id[:8]}" for c in retrieved_chunks[:3]])
-            dispatch_custom_event(
+            await adispatch_custom_event(
                 "status",
                 {
                     "step": "rag_retrieve",
@@ -78,7 +77,7 @@ class RetrieveNode(Runnable):
                 },
             )
         else:
-            dispatch_custom_event(
+            await adispatch_custom_event(
                 "status",
                 {
                     "step": "rag_retrieve",

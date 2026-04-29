@@ -22,7 +22,6 @@ from backend.utils.blob_storage import blob_storage_client
 from backend.utils.retention import mark_for_retention_delete
 
 
-service_logger = logger.bind(service="video-generation-service")
 
 
 class VideoGenerationService:
@@ -42,7 +41,7 @@ class VideoGenerationService:
 
     @staticmethod
     def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return service_logger.bind(
+        return logger.bind(
             request_id=getattr(getattr(request, "state", None), "request_id", "-"),
             user_id=user_id
             if user_id is not None
@@ -180,7 +179,7 @@ class VideoGenerationService:
                     job.thumbnail_blob_path, expiry_hours=24
                 )
         except Exception as exc:
-            service_logger.warning("Failed to generate video SAS URL: {}", exc)
+            logger.warning("[VideoGenerationService] Failed to generate video SAS URL: {}", exc)
 
         return VideoGenerationJobResponse(
             id=job.id,

@@ -3,15 +3,13 @@ import uuid
 
 import httpx
 from langchain_core.runnables import Runnable
-from langchain_core.callbacks import dispatch_custom_event
 from loguru import logger
 
 from backend.agents.image_generation_agent.state import ImageGenerationAgentState
 from backend.agents.general_agent.tools.image_generator import image_generation_service
 from backend.utils.blob_storage import blob_storage_client
+from backend.agents.utils import astream_custom_event
 
-
-service_logger = logger.bind(service="image-generate")
 
 
 class GenerateNode(Runnable):
@@ -22,17 +20,15 @@ class GenerateNode(Runnable):
         pass
 
     async def ainvoke(self, state: ImageGenerationAgentState, **kwargs):
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "image_generate",
-                "message": "Generating image...",
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="image_generate",
+            message="Generating image...",
         )
 
         prompt = state.enhanced_prompt if state.enhanced_prompt else state.user_question
 
-        service_logger.info(f"Generating image for prompt: '{prompt[:100]}...'")
+        logger.info(f"[ImageGenerationAgent (GenerateNode)] Generating image for prompt: '{prompt[:100]}...'")
 
         try:
             result = await image_generation_service.generate_with_retry(
@@ -41,13 +37,13 @@ class GenerateNode(Runnable):
             )
 
             if not result.urls:
-                service_logger.error("No image URLs returned")
+                logger.error("[ImageGenerationAgent (GenerateNode)] No image URLs returned")
                 return {
                     "error_message": "Image generation failed: No images were generated.",
                     "image_urls": [],
                 }
 
-            service_logger.info(f"Generated {len(result.urls)} images, uploading to blob storage...")
+            logger.info(f"[ImageGenerationAgent (GenerateNode)] Generated {len(result.urls)} images, uploading to blob storage...")
 
             sas_urls = await self._upload_images_to_blob(result.urls, state.user_id)
 
@@ -58,13 +54,11 @@ class GenerateNode(Runnable):
             }
 
         except Exception as e:
-            service_logger.error(f"Image generation error: {e}")
-            dispatch_custom_event(
-                "status",
-                {
-                    "step": "image_generate",
-                    "message": f"Image generation failed.",
-                },
+            logger.error(f"[ImageGenerationAgent (GenerateNode)] Image generation error: {e}")
+            await astream_custom_event(
+                event_name="status",
+                step="image_generate",
+                message="Image generation failed.",
             )
             return {
                 "error_message": f"Image generation failed: {str(e)}",
@@ -95,9 +89,9 @@ class GenerateNode(Runnable):
                     )
                     sas_url = blob_storage_client.generate_sas_url(blob_path, expiry_hours=24)
                     sas_urls.append(sas_url)
-                    service_logger.info(f"Uploaded generated image to blob: {blob_path}")
+                    logger.info(f"[ImageGenerationAgent (GenerateNode)] Uploaded generated image to blob: {blob_path}")
                 except Exception as exc:
-                    service_logger.error(f"Failed to upload image to blob: {exc}")
+                    logger.error(f"[ImageGenerationAgent (GenerateNode)] Failed to upload image to blob: {exc}")
                     # Fall back to the temporary URL so the response isn't empty
                     sas_urls.append(temp_url)
         return sas_urls

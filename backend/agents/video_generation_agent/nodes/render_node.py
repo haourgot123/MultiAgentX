@@ -2,15 +2,13 @@ import asyncio
 import json
 from pathlib import Path
 
-from langchain_core.callbacks import dispatch_custom_event
+from langchain_core.callbacks import adispatch_custom_event
 from langchain_core.runnables import Runnable
 from loguru import logger
 
 from backend.agents.video_generation_agent.state import VideoGenerationAgentState
 from backend.config.settings import _settings
 
-
-service_logger = logger.bind(service="video-render")
 
 
 class RenderNode(Runnable):
@@ -22,7 +20,7 @@ class RenderNode(Runnable):
         return Path(__file__).resolve().parents[4]
 
     async def ainvoke(self, state: VideoGenerationAgentState, **kwargs):
-        dispatch_custom_event(
+        await adispatch_custom_event(
             "status",
             {
                 "step": "rendering",
@@ -58,7 +56,7 @@ class RenderNode(Runnable):
             "--thumbnail",
             str(thumbnail_path),
         ]
-        service_logger.info("Running Remotion command in {}: {}", renderer_dir, command)
+        logger.info("[VideoGenerationAgent (RenderNode)] Running Remotion command in {}: {}", renderer_dir, command)
 
         process = await asyncio.create_subprocess_exec(
             *command,
@@ -78,9 +76,9 @@ class RenderNode(Runnable):
             raise RuntimeError("Remotion render timed out") from exc
 
         if stdout:
-            service_logger.debug("Remotion stdout: {}", stdout.decode(errors="ignore")[-2000:])
+            logger.debug("[VideoGenerationAgent (RenderNode)] Remotion stdout: {}", stdout.decode(errors="ignore")[-2000:])
         if stderr:
-            service_logger.debug("Remotion stderr: {}", stderr.decode(errors="ignore")[-2000:])
+            logger.debug("[VideoGenerationAgent (RenderNode)] Remotion stderr: {}", stderr.decode(errors="ignore")[-2000:])
 
         if process.returncode != 0:
             error_text = stderr.decode(errors="ignore").strip() or "Remotion render failed"

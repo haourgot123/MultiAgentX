@@ -2,7 +2,17 @@ from datetime import datetime
 from typing import Literal, Optional, List
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Table, UnicodeText, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Table,
+    UnicodeText,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 
 from backend.databases.db import Base
@@ -24,6 +34,7 @@ conversation_files = Table(
         nullable=False,
     ),
     UniqueConstraint("conversation_id", "file_id", name="uq_conversation_file_pair"),
+    Index("ix_Conversation_File_file_conversation", "file_id", "conversation_id"),
 )
 
 
@@ -32,6 +43,15 @@ ChatType = Literal["normal", "file", "skill"]
 
 class Conversation(Base):
     __tablename__ = "Conversation"
+    __table_args__ = (
+        Index(
+            "ix_Conversation_user_type_deleted_updated",
+            "user_id",
+            "chat_type",
+            "deleted_at",
+            "updated_at",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(
@@ -49,6 +69,7 @@ class Conversation(Base):
         "ConversationMessage",
         back_populates="conversation",
         cascade="all, delete-orphan",
+        order_by="ConversationMessage.created_at, ConversationMessage.id",
     )
     files = relationship(
         "StoredFile",
@@ -69,6 +90,10 @@ class ConversationMessage(Base):
     )
     role = Column(UnicodeText, nullable=False)
     content = Column(UnicodeText, nullable=False)
+    blob_path = Column(UnicodeText, nullable=True)
+    blob_name = Column(UnicodeText, nullable=True)
+    blob_content_type = Column(UnicodeText, nullable=True)
+    blob_size = Column(BigInteger, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -78,6 +103,15 @@ class ConversationMessage(Base):
 class RetrievalRecord(Base):
     """Stores retrieval results per assistant message for PDF bbox highlighting and citations."""
     __tablename__ = "RetrievalRecord"
+    __table_args__ = (
+        Index(
+            "ix_RetrievalRecord_user_conversation_message_citation",
+            "user_id",
+            "conversation_id",
+            "message_id",
+            "citation_label",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     conversation_id = Column(
@@ -144,12 +178,21 @@ class ConversationFilesUpdateRequest(BaseModel):
 class ConversationMessageCreateRequest(BaseModel):
     role: Literal["user", "assistant"] = Field(..., description="Message role")
     content: str = Field(..., min_length=1, description="Message content")
+    blob_path: Optional[str] = Field(None, description="Generated file blob path")
+    blob_name: Optional[str] = Field(None, description="Generated file display name")
+    blob_content_type: Optional[str] = Field(None, description="Generated file MIME type")
+    blob_size: Optional[int] = Field(None, description="Generated file size in bytes")
 
 
 class ConversationMessageResponse(BaseModel):
     id: int = Field(..., description="Message ID")
     role: Literal["user", "assistant"] = Field(..., description="Message role")
     content: str = Field(..., description="Message content")
+    blob_path: Optional[str] = Field(None, description="Generated file blob path")
+    blob_name: Optional[str] = Field(None, description="Generated file display name")
+    blob_content_type: Optional[str] = Field(None, description="Generated file MIME type")
+    blob_size: Optional[int] = Field(None, description="Generated file size in bytes")
+    blob_url: Optional[str] = Field(None, description="Temporary read URL for generated file")
     created_at: datetime = Field(..., description="Created time")
     updated_at: datetime = Field(..., description="Updated time")
 

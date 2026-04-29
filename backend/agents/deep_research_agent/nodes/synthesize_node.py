@@ -1,15 +1,13 @@
 from langchain_core.runnables import Runnable
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.callbacks import dispatch_custom_event
 from loguru import logger
 import re
 
 from backend.agents.deep_research_agent.state import DeepResearchAgentState, Tag, SearchResult
 from backend.utils.llm import azure_chat_openai_gpt_5_1
 from backend.agents.prompts.deep_research import DEEP_RESEARCH_PROMPTS
+from backend.agents.utils import astream_custom_event
 
-
-service_logger = logger.bind(service="deep-research-synthesize")
 
 
 SYNTHESIZE_USER = """Synthesize a comprehensive research report:
@@ -104,12 +102,10 @@ class SynthesizeNode(Runnable):
         pass
 
     async def ainvoke(self, state: DeepResearchAgentState, **kwargs):
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "deep_research_synthesize",
-                "message": "Synthesizing comprehensive research report...",
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="deep_research_synthesize",
+            message="Synthesizing comprehensive research report...",
         )
 
         # Build detailed findings text
@@ -166,9 +162,11 @@ class SynthesizeNode(Runnable):
             )),
         ]
 
-        service_logger.info(
-            f"Synthesizing final report: {len(state.findings)} findings, "
-            f"{len(sources_index)} unique sources, {state.current_iteration} iterations"
+        await astream_custom_event(
+            event_name="status",
+            step="deep_research_synthesize",
+            message=f"Synthesizing final report: {len(state.findings)} findings, "
+                    f"{len(sources_index)} unique sources, {state.current_iteration} iterations",
         )
 
         # Stream tokens natively using tagged config so the outer graph's
@@ -196,14 +194,12 @@ class SynthesizeNode(Runnable):
         full_output += metadata_summary
         full_output = self._append_canonical_sources_section(full_output, sources_index)
 
-        service_logger.info(f"Final report synthesized: {len(full_output)} characters")
+        logger.info(f"[DeepResearchAgent (SynthesizeNode)] Final report synthesized: {len(full_output)} characters")
 
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "deep_research_synthesize",
-                "message": "Research report complete.",
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="deep_research_synthesize",
+            message="Research report complete.",
         )
 
         return {

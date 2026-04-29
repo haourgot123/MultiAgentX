@@ -23,7 +23,6 @@ from backend.exceptions.model import InvalidRequestException, ObjectNotFoundExce
 from backend.realtime.socketio import socketio_manager
 from backend.utils.constants import Message
 
-service_logger = logger.bind(service="ingestion-service")
 
 
 class DataIngestionService:
@@ -39,7 +38,7 @@ class DataIngestionService:
 
     @staticmethod
     def _get_request_logger(request: Request | None = None, user_id: int | None = None):
-        return service_logger.bind(
+        return logger.bind(
             request_id=getattr(getattr(request, "state", None), "request_id", "-"),
             user_id=user_id
             if user_id is not None
@@ -129,7 +128,7 @@ class DataIngestionService:
                 "ingested_at": ingested_at.isoformat() if ingested_at else None,
             },
         )
-        active_logger = request_logger or service_logger.bind(user_id=user_id)
+        active_logger = request_logger or logger.bind(user_id=user_id)
         active_logger.debug(
             "Emitted ingestion status event stage={} status={} progress={}",
             stage,
@@ -364,8 +363,8 @@ class DataIngestionService:
             )
             provider = "openai"
 
-        service_logger.debug(
-            "Generating embeddings for chunk_count={} batch_size={} model={} provider={}",
+        logger.debug(
+            "[DataIngestionService] Generating embeddings for chunk_count={} batch_size={} model={} provider={}",
             len(chunks),
             self.embedding_batch_size,
             self.embedding_model,

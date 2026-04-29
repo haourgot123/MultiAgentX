@@ -1,16 +1,12 @@
 from langchain_core.runnables import Runnable
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.callbacks import dispatch_custom_event
 from pydantic import BaseModel, Field
 from loguru import logger
 
 from backend.agents.image_generation_agent.state import ImageGenerationAgentState
 from backend.utils.llm import azure_chat_openai_gpt_5_1
 from backend.agents.prompts.image_generation import IMAGE_GENERATION_PROMPTS
-
-
-service_logger = logger.bind(service="image-prompt-enhance")
-
+from backend.agents.utils import astream_custom_event
 
 class EnhancedPrompt(BaseModel):
     enhanced_prompt: str = Field(description="enhanced English prompt for image generation (max 400 chars)")
@@ -33,12 +29,10 @@ class PromptEnhanceNode(Runnable):
         pass
 
     async def ainvoke(self, state: ImageGenerationAgentState, **kwargs):
-        dispatch_custom_event(
-            "status",
-            {
-                "step": "image_prompt_enhance",
-                "message": "Enhancing image prompt for professional quality...",
-            },
+        await astream_custom_event(
+            event_name="status",
+            step="image_prompt_enhance",
+            message="Enhancing image prompt for professional quality...",
         )
 
         # Build conversation context from memories
@@ -58,7 +52,7 @@ class PromptEnhanceNode(Runnable):
             )),
         ]
 
-        service_logger.info(f"Enhancing prompt: '{state.user_question[:100]}...'")
+        logger.info(f"[ImageGenerationAgent (PromptEnhanceNode)] Enhancing prompt: '{state.user_question[:100]}...'")
 
         llm_with_structure = azure_chat_openai_gpt_5_1.with_structured_output(EnhancedPrompt)
         result = await llm_with_structure.ainvoke(messages)
@@ -67,10 +61,10 @@ class PromptEnhanceNode(Runnable):
         enhanced = result.enhanced_prompt
         if len(enhanced) > 400:
             enhanced = enhanced[:397] + "..."
-            service_logger.info(f"Truncated enhanced prompt from {len(result.enhanced_prompt)} to 400 chars")
+            logger.info(f"[ImageGenerationAgent (PromptEnhanceNode)] Truncated enhanced prompt from {len(result.enhanced_prompt)} to 400 chars")
 
-        service_logger.info(
-            f"Enhanced prompt: '{enhanced[:100]}...' | "
+        logger.info(
+            f"[ImageGenerationAgent (PromptEnhanceNode)] Enhanced prompt: '{enhanced[:100]}...' | "
             f"Style: {result.style_category} | "
             f"Negative: '{result.negative_prompt[:60]}...'"
         )
