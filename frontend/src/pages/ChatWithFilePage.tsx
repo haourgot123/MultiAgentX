@@ -1163,13 +1163,34 @@ export default function ChatWithFilePage() {
                                                     )}
                                                 </button>
                                                 <div
-                                                    className={`flex shrink-0 items-center gap-2 rounded-md border px-2 py-2 text-xs font-medium ${isSelectableForChat ? 'border-border bg-surface text-text-primary' : 'border-border/60 bg-slate-50 text-text-muted'}`}
+                                                    role="button"
+                                                    tabIndex={isSelectableForChat ? 0 : -1}
+                                                    aria-pressed={isSelectedForChat}
+                                                    aria-disabled={!isSelectableForChat}
+                                                    className={`flex shrink-0 items-center gap-2 rounded-md border px-2 py-2 text-xs font-medium ${isSelectableForChat ? 'cursor-pointer border-border bg-surface text-text-primary' : 'border-border/60 bg-slate-50 text-text-muted'}`}
+                                                    onClick={() => {
+                                                        if (!isSelectableForChat) {
+                                                            return
+                                                        }
+                                                        toggleChatFileSelection(file)
+                                                    }}
+                                                    onKeyDown={(event) => {
+                                                        if (!isSelectableForChat) {
+                                                            return
+                                                        }
+                                                        if (event.key !== 'Enter' && event.key !== ' ') {
+                                                            return
+                                                        }
+                                                        event.preventDefault()
+                                                        toggleChatFileSelection(file)
+                                                    }}
                                                 >
                                                     <Checkbox
                                                         aria-label={`Use ${file.name} in chat`}
                                                         checked={isSelectedForChat}
                                                         disabled={!isSelectableForChat}
                                                         className="rounded-none border-2"
+                                                        onClick={(event) => event.stopPropagation()}
                                                         onCheckedChange={() => toggleChatFileSelection(file)}
                                                     />
                                                     <span>{isSelectableForChat ? 'Use in chat' : 'Processing'}</span>

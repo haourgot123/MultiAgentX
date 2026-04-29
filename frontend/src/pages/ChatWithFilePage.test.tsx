@@ -474,7 +474,7 @@ describe('ChatWithFilePage', () => {
         })
 
         await user.click(screen.getByRole('button', { name: /report_246\.pdf/i }))
-        await user.click(await screen.findByRole('button', { name: /transformer\.pdf/i }))
+        await user.click((await screen.findAllByRole('button', { name: /transformer\.pdf/i }))[0])
 
         await waitFor(() => {
             expect(screen.getByText('PDF Viewer: https://example.com/file-1.pdf')).toBeInTheDocument()
@@ -482,6 +482,57 @@ describe('ChatWithFilePage', () => {
 
         expect(screen.queryByText(/page 2/i)).not.toBeInTheDocument()
         expect(screen.queryByText(/\[2\.2\]/i)).not.toBeInTheDocument()
+    })
+
+    it('toggles a chat file when clicking the use-in-chat control', async () => {
+        const user = userEvent.setup()
+
+        useFileStore.setState({
+            files: [
+                createFile({ id: 1, name: 'transformer.pdf', type: 'application/pdf', ingestionStatus: 'completed' }),
+            ],
+            refreshSasUrl: vi.fn().mockResolvedValue('https://example.com/file-1.pdf'),
+        })
+
+        useChatStore.setState({
+            currentChatId: 11,
+            chatSessions: [
+                {
+                    id: 11,
+                    title: 'Toggle file selection',
+                    createdAt: Date.parse('2026-04-16T10:00:00Z'),
+                    updatedAt: Date.parse('2026-04-16T10:00:00Z'),
+                    chatType: 'file',
+                    fileIds: [1],
+                    messageCount: 0,
+                },
+            ],
+            messagesByChat: { 11: [] },
+        })
+
+        render(
+            <MemoryRouter initialEntries={['/chat-file']}>
+                <ChatWithFilePage />
+            </MemoryRouter>
+        )
+
+        await waitFor(() => {
+            expect(screen.getByText('PDF Viewer: https://example.com/file-1.pdf')).toBeInTheDocument()
+            expect(screen.getByText('1/1 chat')).toBeInTheDocument()
+        })
+
+        await user.click(screen.getByRole('button', { name: /transformer\.pdf/i }))
+        await user.click(screen.getByText('Use in chat'))
+
+        await waitFor(() => {
+            expect(screen.getByText('0/1 chat')).toBeInTheDocument()
+        })
+
+        await user.click(screen.getByText('Use in chat'))
+
+        await waitFor(() => {
+            expect(screen.getByText('1/1 chat')).toBeInTheDocument()
+        })
     })
 
     it('opens upload flow from add files menu after chat has started', async () => {
