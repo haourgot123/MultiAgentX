@@ -604,7 +604,7 @@ class DataIngestionService:
         from backend.utils.blob_storage import blob_storage_client
 
         blob_path = stored_file.storage_path
-    logger.info(f"{log_prefix} Starting ingestion pipeline for blob_path={blob_path}")
+        logger.info(f"{log_prefix} Starting ingestion pipeline for blob_path={blob_path}")
 
         # Download blob to a local temp file for processing
         suffix = Path(blob_path).suffix or ".bin"
