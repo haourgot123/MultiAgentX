@@ -227,4 +227,28 @@ describe('MessageBubble', () => {
             'noreferrer'
         )
     })
+
+    it('renders generated image attachments from blob metadata', () => {
+        const blobUrl = 'https://blob.example.com/generated-image.png?sig=test'
+
+        render(
+            <MessageBubble
+                message={{
+                    id: 11,
+                    role: 'assistant',
+                    content: "Here's your generated image:",
+                    blobPath: 'uploads/1/generated-image.png',
+                    blobName: 'generated-image.png',
+                    blobContentType: 'image/png',
+                    blobSize: 2048,
+                    blobUrl,
+                    timestamp: Date.parse('2026-04-15T10:10:00Z'),
+                }}
+            />
+        )
+
+        const image = screen.getByRole('img', { name: 'generated-image.png' })
+        expect(image).toHaveAttribute('src', blobUrl)
+        expect(screen.getByText("Here's your generated image:")).toBeInTheDocument()
+    })
 })

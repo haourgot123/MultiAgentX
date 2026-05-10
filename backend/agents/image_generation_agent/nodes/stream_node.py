@@ -48,6 +48,12 @@ class StreamNode(Runnable):
                 "Please try again with a different description."
             )
 
+        await astream_custom_event(
+            event_name="token",
+            step="image_stream",
+            message="Streaming image response...",
+            delta=output,
+        )
 
         return {
             "output": output,

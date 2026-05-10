@@ -11,6 +11,11 @@ class ImageGenerationAgentState(BaseModel):
     image_urls: List[str] = []
     revised_prompt: str = ""
     error_message: str = ""
+    output: str = ""
+    blob_path: str = ""
+    blob_name: str = ""
+    blob_content_type: str = ""
+    blob_size: int = 0
 
 
 class Node(Enum):

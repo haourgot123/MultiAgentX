@@ -5,8 +5,16 @@ from loguru import logger
 from backend.config.settings import _settings
 
 class ImageGenerationResult:
-    def __init__(self, urls: List[str], revised_prompt: Optional[str] = None):
+    def __init__(
+        self,
+        urls: List[str],
+        base64_images: Optional[List[str]] = None,
+        output_format: str = "png",
+        revised_prompt: Optional[str] = None,
+    ):
         self.urls = urls
+        self.base64_images = base64_images or []
+        self.output_format = output_format
         self.revised_prompt = revised_prompt
 
 
@@ -56,12 +64,22 @@ class ImageGenerationService:
                 n=n,
             )
 
-            urls = [img.url for img in result.data if img.url]
+            urls = [img.url for img in result.data if getattr(img, "url", None)]
+            base64_images = [img.b64_json for img in result.data if getattr(img, "b64_json", None)]
+            output_format = getattr(result, "output_format", "png") or "png"
             revised_prompt = result.data[0].revised_prompt if result.data else None
 
-            logger.info(f"[GeneralAgent (ImageGenerator)] Generated {len(urls)} images")
+            logger.info(
+                f"[GeneralAgent (ImageGenerator)] Generated {len(urls) + len(base64_images)} images "
+                f"(urls={len(urls)}, base64={len(base64_images)})"
+            )
 
-            return ImageGenerationResult(urls=urls, revised_prompt=revised_prompt)
+            return ImageGenerationResult(
+                urls=urls,
+                base64_images=base64_images,
+                output_format=output_format,
+                revised_prompt=revised_prompt,
+            )
 
         except Exception as e:
             logger.error(f"[GeneralAgent (ImageGenerator)] Image generation failed: {e}")

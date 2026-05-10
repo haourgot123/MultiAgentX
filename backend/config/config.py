@@ -184,27 +184,50 @@ class AzureImageGenerationConfig:
     """Azure Image Generation configuration settings."""
 
     api_key: str = _env(
+        "GPT-IMAGE-1-5-API-KEY",
+        "GPT_IMAGE_1_5_API_KEY",
         "AZURE-OPENAI-IMAGE-API-KEY",
         "AZURE_OPENAI_IMAGE_KEY",
         "AZURE_OPENAI_KEY",
         default="",
     )
     api_endpoint: str = _env(
+        "GPT-IMAGE-1-5-API-BASE",
+        "GPT_IMAGE_1_5_API_BASE",
         "AZURE-OPENAI-IMAGE-ENDPOINT",
         "AZURE_OPENAI_IMAGE_ENDPOINT",
         default="",
     )
     api_version: str = _env(
+        "GPT-IMAGE-1-5-API-VERSION",
+        "GPT_IMAGE_1_5_API_VERSION",
         "AZURE-OPENAI-IMAGE-API-VERSION",
         default="2024-02-15-preview",
     )
     deployment_name: str = _env(
+        "GPT-IMAGE-1-5-DEPLOYMENT-NAME",
+        "GPT_IMAGE_1_5_DEPLOYMENT_NAME",
         "AZURE_OPENAI_IMAGE_DEPLOYMENT",
         default="gpt-image-1",
     )
-    default_size: str = "1024x1024"
-    default_quality: str = "standard"
-    default_n: int = 1
+    default_size: str = _env(
+        "GPT-IMAGE-1-5-SIZE",
+        "GPT_IMAGE_1_5_SIZE",
+        "AZURE_OPENAI_IMAGE_SIZE",
+        default="1024x1024",
+    )
+    default_quality: str = _env(
+        "GPT-IMAGE-1-5-QUALITY",
+        "GPT_IMAGE_1_5_QUALITY",
+        "AZURE_OPENAI_IMAGE_QUALITY",
+        default="auto",
+    )
+    default_n: int = _env_int(
+        "GPT-IMAGE-1-5-N",
+        "GPT_IMAGE_1_5_N",
+        "AZURE_OPENAI_IMAGE_N",
+        default=1,
+    )
 
 
 @dataclass
@@ -297,6 +320,7 @@ class TavilySearchConfig:
     api_endpoint: str = _env("TAVILY-SEARCH-API-ENDPOINT", "TAVILY_SEARCH_API_ENDPOINT")
     include_answer: bool = False
     search_depth: str = "advanced"
+    timeout_seconds: int = _env_int("TAVILY_SEARCH_TIMEOUT_SECONDS", default=15)
     exclude_domains: List[str] = field(default_factory=list)
 
 from typing import Optional

@@ -273,8 +273,19 @@ function downloadFile(fileUrl: string, filename: string) {
     document.body.removeChild(anchor)
 }
 
+function isImageAttachment(message: Message): boolean {
+    if (message.blobContentType?.startsWith('image/')) {
+        return true
+    }
+
+    const extension = message.blobName?.split('.').pop()?.toLowerCase() || ''
+    return ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(extension)
+}
+
 function MessageBubbleComponent({ message, fileCitations, onFileCitationClick }: MessageBubbleProps) {
     const isUser = message.role === 'user'
+    const hasImageAttachment = !isUser && !!message.blobUrl && !!message.blobName && isImageAttachment(message)
+    const hasNonImageAttachment = !isUser && !!message.blobUrl && !!message.blobName && !hasImageAttachment
     
     const { sources, contentWithoutSources, citationMap } = useMemo(() => {
         if (isUser) {
@@ -466,7 +477,24 @@ function MessageBubbleComponent({ message, fileCitations, onFileCitationClick }:
                     <SourceIcons sources={sources} />
                 )}
 
-                {!isUser && message.blobUrl && message.blobName && (
+                {hasImageAttachment && (
+                    <div className="mt-2 w-full max-w-[38rem] overflow-hidden rounded-2xl border border-border bg-surface">
+                        <a
+                            href={message.blobUrl as string}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block"
+                        >
+                            <img
+                                src={message.blobUrl as string}
+                                alt={message.blobName as string}
+                                className="max-h-[32rem] w-full object-contain bg-slate-50"
+                            />
+                        </a>
+                    </div>
+                )}
+
+                {hasNonImageAttachment && (
                     <div className="mt-2 w-full max-w-[38rem]">
                         <InlineFilePreview
                             fileUrl={message.blobUrl}

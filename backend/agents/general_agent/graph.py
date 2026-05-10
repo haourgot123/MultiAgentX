@@ -85,6 +85,10 @@ class GeneralAgentGraph:
         result_state = await image_graph.ainvoke(image_state, config=config)
         return {
             "output": result_state.get("output", ""),
+            "blob_path": result_state.get("blob_path", ""),
+            "blob_name": result_state.get("blob_name", ""),
+            "blob_content_type": result_state.get("blob_content_type", ""),
+            "blob_size": result_state.get("blob_size", 0),
         }
 
     async def call_deep_research_agent(
@@ -213,6 +217,7 @@ class GeneralAgentGraph:
         """
         config = self._config_graph()
         graph = self.compiled_graph
+        final_state: Dict[str, Any] = {}
         try:
             async for event in graph.astream_events(
                 input=inputs,
@@ -269,5 +274,14 @@ class GeneralAgentGraph:
                             "type": "token",
                             "delta": event_data.get("output", ""),
                         }
+
+                if kind == "on_chain_end" and event.get("name") == "LangGraph":
+                    final_state = event.get("data", {}).get("output", {}) or {}
+
+            if final_state:
+                yield {
+                    "type": "final_state",
+                    "state": final_state,
+                }
         finally:
             del graph

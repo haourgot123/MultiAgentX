@@ -20,6 +20,10 @@ class GeneralAgentState(BaseModel):
     websearch_results: List[SearchResults] = []
     route: str = ""
     output: str = ""
+    blob_path: str = ""
+    blob_name: str = ""
+    blob_content_type: str = ""
+    blob_size: int = 0
 
 
 class Node(Enum):

@@ -39,6 +39,7 @@ from backend.utils.retention import mark_for_retention_delete
 
 class ConversationService:
     NUMERIC_CITATION_REGEX = re.compile(r"\[(\d+)\](?!\()")
+    MARKDOWN_IMAGE_REGEX = re.compile(r"!\[[^\]]*\]\((?:data:image\/[^)]+|https?:\/\/[^)]+)\)")
     SOURCES_SECTION_REGEX = re.compile(
         r"(?:^|\n)((?:#{1,6}\s+)?(?:\d+(?:\.\d+)*\.?\s+)?(?:Sources|References|Nguon|Nguồn|Tai lieu tham khao|Tài liệu tham khảo):?\s*$)",
         re.IGNORECASE | re.MULTILINE,
@@ -112,6 +113,16 @@ class ConversationService:
         cleaned_body = re.sub(r"[ \t]+\n", "\n", cleaned_body)
 
         return f"{cleaned_body}{sources_section}"
+
+    @classmethod
+    def _sanitize_generated_image_content(cls, content: str) -> str:
+        if not content:
+            return content
+
+        sanitized = cls.MARKDOWN_IMAGE_REGEX.sub("", content)
+        sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
+        sanitized = re.sub(r"[ \t]+\n", "\n", sanitized)
+        return sanitized.strip()
 
     def _get_user_conversation(
         self,
@@ -383,7 +394,7 @@ class ConversationService:
     ):
         log_prefix = self._get_log_prefix(request, user_id)
         conversation = self._get_user_conversation(
-            db_session, user_id, conversation_id, request_logger
+            db_session, user_id, conversation_id, log_prefix
         )
         #  Create chat details
         _, _ = self.add_message(
@@ -417,6 +428,7 @@ class ConversationService:
         
         # We need to collect the chunks to save the assistant's final response to the database
         full_response = ""
+        final_state = {}
         
         # Initialize general agent graph
         try: 
@@ -441,10 +453,21 @@ class ConversationService:
                         "message": event.get("message", ""),
                     }
                     yield self._format_sse_event("status", payload)
+
+                elif event_type == "final_state":
+                    final_state = event.get("state", {}) or {}
                 
             # After successful generation, store assistant message
             if full_response:
-                full_response = self._sanitize_orphan_numeric_citations(full_response)
+                blob_path = final_state.get("blob_path") or ""
+                blob_name = final_state.get("blob_name") or ""
+                blob_content_type = final_state.get("blob_content_type") or ""
+                blob_size = final_state.get("blob_size") or 0
+
+                stored_response = full_response
+                if blob_path:
+                    stored_response = self._sanitize_generated_image_content(stored_response)
+                stored_response = self._sanitize_orphan_numeric_citations(stored_response)
                 _, _ = self.add_message(
                     request,
                     db_session,
@@ -452,7 +475,11 @@ class ConversationService:
                     conversation_id,
                     ConversationMessageCreateRequest(
                         role="assistant",
-                        content=full_response,
+                        content=stored_response,
+                        blob_path=blob_path or None,
+                        blob_name=blob_name or None,
+                        blob_content_type=blob_content_type or None,
+                        blob_size=blob_size or None,
                     ),
                 )
                 
@@ -462,7 +489,7 @@ class ConversationService:
                     
                     messages_for_mem0 = [
                         {"role": "user", "content": user_question},
-                        {"role": "assistant", "content": full_response}
+                        {"role": "assistant", "content": stored_response}
                     ]
                     
                     await mem0_client.add_memory(
