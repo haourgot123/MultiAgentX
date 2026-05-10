@@ -6,6 +6,9 @@ from langgraph.graph.state import CompiledStateGraph
 
 from backend.agents.video_generation_agent.nodes import (
     AssetNode,
+    CodeGenerationNode,
+    CreativeDirectionNode,
+    LoadSkillNode,
     OptionalResearchNode,
     RemotionInputNode,
     RenderNode,
@@ -46,8 +49,16 @@ class VideoGenerationAgentGraph:
             OptionalResearchNode().ainvoke,
         )
         self.graph.add_node(
+            Node.video_generation_agent_load_skill_node.name,
+            LoadSkillNode().ainvoke,
+        )
+        self.graph.add_node(
             Node.video_generation_agent_storyboard_node.name,
             StoryboardNode().ainvoke,
+        )
+        self.graph.add_node(
+            Node.video_generation_agent_creative_direction_node.name,
+            CreativeDirectionNode().ainvoke,
         )
         self.graph.add_node(
             Node.video_generation_agent_asset_node.name,
@@ -56,6 +67,10 @@ class VideoGenerationAgentGraph:
         self.graph.add_node(
             Node.video_generation_agent_remotion_input_node.name,
             RemotionInputNode().ainvoke,
+        )
+        self.graph.add_node(
+            Node.video_generation_agent_code_generation_node.name,
+            CodeGenerationNode().ainvoke,
         )
         self.graph.add_node(
             Node.video_generation_agent_render_node.name,
@@ -74,10 +89,18 @@ class VideoGenerationAgentGraph:
         )
         self.graph.add_edge(
             Node.video_generation_agent_optional_research_node.name,
+            Node.video_generation_agent_load_skill_node.name,
+        )
+        self.graph.add_edge(
+            Node.video_generation_agent_load_skill_node.name,
             Node.video_generation_agent_storyboard_node.name,
         )
         self.graph.add_edge(
             Node.video_generation_agent_storyboard_node.name,
+            Node.video_generation_agent_creative_direction_node.name,
+        )
+        self.graph.add_edge(
+            Node.video_generation_agent_creative_direction_node.name,
             Node.video_generation_agent_asset_node.name,
         )
         self.graph.add_edge(
@@ -86,6 +109,10 @@ class VideoGenerationAgentGraph:
         )
         self.graph.add_edge(
             Node.video_generation_agent_remotion_input_node.name,
+            Node.video_generation_agent_code_generation_node.name,
+        )
+        self.graph.add_edge(
+            Node.video_generation_agent_code_generation_node.name,
             Node.video_generation_agent_render_node.name,
         )
         self.graph.add_edge(

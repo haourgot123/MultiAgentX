@@ -132,7 +132,7 @@ export function VideoPreviewPanel() {
                                                 </span>
                                             </div>
                                             <p className="mt-1 line-clamp-2 text-xs text-text-muted">
-                                                {scene.on_screen_text || scene.narration}
+                                                {scene.scene_goal || scene.on_screen_text || scene.narration}
                                             </p>
                                         </div>
                                     ))

@@ -18,6 +18,7 @@ class SearchRequest(BaseModel):
     total_results: int = 4
     include_images: bool = False
     include_image_descriptions: bool = False
+    search_depth: str | None = None
 
 class SearchServiceBase(ABC):
     @abstractmethod
@@ -65,6 +66,9 @@ class TavilySearchService(SearchServiceBase):
         self.tavily_search_search_depth = _settings.tavily_search.search_depth
         self.tavily_search_exclude_domains = _settings.tavily_search.exclude_domains
 
+    def is_configured(self) -> bool:
+        return bool(self.tavily_search_url and self.tavily_search_api_key)
+
     @staticmethod
     def _extract_image_urls(raw_images) -> list[str]:
         urls: list[str] = []
@@ -84,26 +88,36 @@ class TavilySearchService(SearchServiceBase):
         return urls
 
     async def search(self, search_request: SearchRequest) -> list[SearchResults]:
+        if not self.is_configured():
+            raise RuntimeError(
+                "Tavily search is not configured: missing TAVILY_SEARCH_API_ENDPOINT or TAVILY_SEARCH_API_KEY"
+            )
+
         params = {
             "query": search_request.query,
             "max_results": search_request.total_results,
             "include_answer": self.tavily_search_include_answer,
-            "search_depth": self.tavily_search_search_depth,
+            "search_depth": search_request.search_depth or self.tavily_search_search_depth,
             "exclude_domains": self.tavily_search_exclude_domains,
             "include_images": search_request.include_images,
             "include_image_descriptions": search_request.include_image_descriptions,
         }
 
-        async with httpx.AsyncClient(verify=False) as client:
-            response = await client.post(
-                self.tavily_search_url, 
-                json=params, 
-                timeout=10.0, 
-                headers={
-                    "Authorization": f"Bearer {self.tavily_search_api_key}",
-                    "Content-Type": "application/json"
-                }
-            )
+        try:
+            async with httpx.AsyncClient(verify=False) as client:
+                response = await client.post(
+                    self.tavily_search_url,
+                    json=params,
+                    timeout=_settings.tavily_search.timeout_seconds,
+                    headers={
+                        "Authorization": f"Bearer {self.tavily_search_api_key}",
+                        "Content-Type": "application/json"
+                    }
+                )
+        except httpx.RequestError as exc:
+            raise RuntimeError(
+                f"Tavily request failed for query={search_request.query!r} endpoint={self.tavily_search_url!r}: {exc!r}"
+            ) from exc
 
         if response.status_code == 200:
             response_json = response.json()
@@ -136,8 +150,14 @@ class TavilySearchService(SearchServiceBase):
             return results
             
         else:
+            response_preview = response.text[:500].replace("\n", " ").strip()
             raise httpx.HTTPStatusError(
-                f"HTTP {response.status_code}", request=response.request, response=response
+                (
+                    f"Tavily HTTP {response.status_code} for query={search_request.query!r} "
+                    f"endpoint={self.tavily_search_url!r} response={response_preview!r}"
+                ),
+                request=response.request,
+                response=response,
             )
             
 

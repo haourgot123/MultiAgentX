@@ -14,12 +14,21 @@ const readArg = (name) => {
   return process.argv[index + 1];
 };
 
+const readOptionalArg = (name, fallback) => {
+  const index = process.argv.indexOf(name);
+  if (index === -1 || !process.argv[index + 1]) {
+    return fallback;
+  }
+  return process.argv[index + 1];
+};
+
+const entryPoint = readOptionalArg('--entry', path.join(__dirname, 'src', 'index.tsx'));
 const inputPath = readArg('--input');
 const outputPath = readArg('--output');
 const thumbnailPath = readArg('--thumbnail');
+const compositionId = readOptionalArg('--composition-id', 'GeneratedVideo');
 const inputProps = JSON.parse(await fs.readFile(inputPath, 'utf8'));
 
-const entryPoint = path.join(__dirname, 'src', 'index.tsx');
 const serveUrl = await bundle({
   entryPoint,
   webpackOverride: (config) => config,
@@ -27,7 +36,7 @@ const serveUrl = await bundle({
 
 const composition = await selectComposition({
   serveUrl,
-  id: 'GeneratedVideo',
+  id: compositionId,
   inputProps,
 });
 

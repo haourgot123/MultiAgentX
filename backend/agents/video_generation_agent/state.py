@@ -15,6 +15,13 @@ class VideoScene(BaseModel):
     on_screen_text: str
     duration_seconds: int
     image_url: Optional[str] = None
+    scene_goal: str = ""
+    camera_motion: str = ""
+    visual_motif: str = ""
+    layout_hint: str = ""
+    composition_notes: str = ""
+    headline_treatment: str = ""
+    transition_to_next: str = ""
 
 
 class VideoGenerationAgentState(BaseModel):
@@ -29,8 +36,12 @@ class VideoGenerationAgentState(BaseModel):
     width: int = 1280
     height: int = 720
     sources: List[SearchResults] = Field(default_factory=list)
+    skill_bundle: dict[str, Any] = Field(default_factory=dict)
     storyboard: List[VideoScene] = Field(default_factory=list)
+    creative_direction: dict[str, Any] = Field(default_factory=dict)
     remotion_input: dict[str, Any] = Field(default_factory=dict)
+    composition_code: str = ""
+    composition_id: str = "GeneratedVideo"
     workdir: Optional[Path] = None
     video_path: Optional[Path] = None
     thumbnail_path: Optional[Path] = None
@@ -40,8 +51,11 @@ class VideoGenerationAgentState(BaseModel):
 class Node(Enum):
     video_generation_agent_validate_settings_node = auto()
     video_generation_agent_optional_research_node = auto()
+    video_generation_agent_load_skill_node = auto()
     video_generation_agent_storyboard_node = auto()
+    video_generation_agent_creative_direction_node = auto()
     video_generation_agent_asset_node = auto()
+    video_generation_agent_code_generation_node = auto()
     video_generation_agent_remotion_input_node = auto()
     video_generation_agent_render_node = auto()
     video_generation_agent_stream_result_node = auto()

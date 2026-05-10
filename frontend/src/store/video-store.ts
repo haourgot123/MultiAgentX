@@ -17,6 +17,13 @@ export type VideoScene = {
     on_screen_text: string
     duration_seconds: number
     image_url?: string | null
+    scene_goal?: string
+    camera_motion?: string
+    visual_motif?: string
+    layout_hint?: string
+    composition_notes?: string
+    headline_treatment?: string
+    transition_to_next?: string
 }
 
 export type VideoGenerationJob = {

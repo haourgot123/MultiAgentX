@@ -9,7 +9,6 @@ from backend.agents.general_agent.tools.websearch import (
 from backend.agents.video_generation_agent.state import VideoGenerationAgentState
 
 
-
 class OptionalResearchNode(Runnable):
     def invoke(self, state: VideoGenerationAgentState, **kwargs):
         pass
@@ -28,9 +27,24 @@ class OptionalResearchNode(Runnable):
 
         try:
             search_service = TavilySearchService()
+            if not search_service.is_configured():
+                logger.info(
+                    "[VideoGenerationAgent (OptionalResearchNode)] "
+                    "Skipping video research because Tavily search is not configured."
+                )
+                await adispatch_custom_event(
+                    "status",
+                    {
+                        "step": "research",
+                        "message": "Web research is not configured. Continuing with the prompt only...",
+                    },
+                )
+                return {"sources": []}
+
+            query = f"{state.prompt} visual references images"
             results = await search_service.search(
                 SearchRequest(
-                    query=f"{state.prompt} visual references images",
+                    query=query,
                     total_results=6,
                     include_images=True,
                     include_image_descriptions=True,
@@ -46,7 +60,13 @@ class OptionalResearchNode(Runnable):
             )
             return {"sources": results}
         except Exception as exc:
-            logger.warning(f"[VideoGenerationAgent (OptionalResearchNode)] Video research failed: {exc}")
+            logger.opt(exception=exc).warning(
+                "[VideoGenerationAgent (OptionalResearchNode)] "
+                "Video research failed query={!r} error_type={} error={!r}",
+                query if "query" in locals() else None,
+                type(exc).__name__,
+                exc,
+            )
             await adispatch_custom_event(
                 "status",
                 {

@@ -1,4 +1,5 @@
 import json
+import shutil
 import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator
@@ -28,9 +29,12 @@ class VideoGenerationService:
     STATUS_PROGRESS = {
         "validate": ("queued", 5),
         "research": ("researching", 20),
+        "skills": ("storyboarding", 28),
         "storyboard": ("storyboarding", 35),
-        "assets": ("storyboarding", 50),
-        "remotion_input": ("storyboarding", 60),
+        "creative_direction": ("storyboarding", 46),
+        "assets": ("storyboarding", 55),
+        "remotion_input": ("storyboarding", 62),
+        "code_generation": ("rendering", 72),
         "rendering": ("rendering", 75),
         "finalizing": ("rendering", 90),
     }
@@ -56,6 +60,38 @@ class VideoGenerationService:
         if isinstance(value, Path):
             return value
         return Path(str(value))
+
+    @staticmethod
+    def _repo_root() -> Path:
+        return Path(__file__).resolve().parents[3]
+
+    def _render_workdir_for_job(self, job_id: int) -> Path:
+        return self._repo_root() / _settings.video_generation.render_workdir / str(job_id)
+
+    def _generated_source_dir_for_job(self, job_id: int) -> Path:
+        return (
+            self._repo_root()
+            / _settings.video_generation.renderer_project_dir
+            / ".generated"
+            / str(job_id)
+        )
+
+    def _cleanup_local_artifacts(self, job_id: int, log_prefix: str) -> None:
+        cleanup_targets = [
+            self._render_workdir_for_job(job_id),
+            self._generated_source_dir_for_job(job_id),
+        ]
+
+        for target in cleanup_targets:
+            try:
+                if target.exists():
+                    shutil.rmtree(target, ignore_errors=False)
+                    logger.info(f"{log_prefix} Removed local video generation artifact path={target}")
+            except Exception as exc:
+                logger.warning(
+                    f"{log_prefix} Failed to remove local video generation artifact "
+                    f"path={target} error={exc}"
+                )
 
     def _validate_request(self, render_request: VideoGenerationRequest) -> None:
         max_duration = _settings.video_generation.max_duration_seconds
@@ -287,6 +323,7 @@ class VideoGenerationService:
             },
         )
 
+        should_cleanup_local_artifacts = False
         try:
             state = VideoGenerationAgentState(
                 job_id=job.id,
@@ -361,6 +398,7 @@ class VideoGenerationService:
                     content_type="image/png",
                 )
 
+            should_cleanup_local_artifacts = True
             sources = final_state.get("sources", [])
             if sources and not isinstance(sources[0], dict):
                 sources = [source.model_dump() for source in sources]
@@ -401,6 +439,15 @@ class VideoGenerationService:
                 completed=True,
             )
             yield self._format_sse_event("error", {"message": message, "job_id": job.id})
+        finally:
+            # Remove per-job generated source and render output once the blob upload
+            # has succeeded, or after a failed run that already created local artifacts.
+            if (
+                should_cleanup_local_artifacts
+                or self._render_workdir_for_job(job.id).exists()
+                or self._generated_source_dir_for_job(job.id).exists()
+            ):
+                self._cleanup_local_artifacts(job.id, log_prefix)
 
 
 video_generation_service = VideoGenerationService()

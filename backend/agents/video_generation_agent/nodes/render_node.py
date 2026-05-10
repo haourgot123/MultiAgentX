@@ -35,20 +35,30 @@ class RenderNode(Runnable):
 
         workdir = repo_root / _settings.video_generation.render_workdir / str(state.job_id)
         workdir.mkdir(parents=True, exist_ok=True)
+        source_dir = renderer_dir / ".generated" / str(state.job_id)
+        source_dir.mkdir(parents=True, exist_ok=True)
 
         input_path = workdir / "input.json"
         output_path = workdir / "video.mp4"
         thumbnail_path = workdir / "thumbnail.png"
+        entry_path = source_dir / "index.tsx"
         input_path.write_text(
             json.dumps(state.remotion_input, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        if not state.composition_code.strip():
+            raise RuntimeError("No Remotion composition code was generated")
+        entry_path.write_text(state.composition_code, encoding="utf-8")
 
         command = [
             "npm",
             "run",
             "render",
             "--",
+            "--entry",
+            str(entry_path),
+            "--composition-id",
+            state.composition_id,
             "--input",
             str(input_path),
             "--output",
@@ -86,7 +96,7 @@ class RenderNode(Runnable):
         if not output_path.exists():
             raise RuntimeError("Remotion render completed without an output video")
 
-        dispatch_custom_event(
+        await adispatch_custom_event(
             "status",
             {
                 "step": "rendering",

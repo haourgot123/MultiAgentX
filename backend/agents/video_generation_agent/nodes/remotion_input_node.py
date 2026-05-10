@@ -29,5 +29,10 @@ class RemotionInputNode(Runnable):
                 "aspectRatio": state.aspect_ratio,
                 "scenes": [scene.model_dump() for scene in state.storyboard],
                 "sources": [source.model_dump() for source in state.sources],
+                "creativeDirection": state.creative_direction,
+                "assetReferences": state.creative_direction.get("asset_references", []),
+                "availableTools": state.creative_direction.get("available_tools", []),
+                "compositionId": state.composition_id,
+                "skillName": state.skill_bundle.get("name", ""),
             }
         }
