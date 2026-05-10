@@ -153,7 +153,7 @@ class FileService:
             )
 
         converted_name = f"{input_path.stem}.pdf"
-    logger.debug(f"{log_prefix} Converted office file to PDF: {converted_name}")
+        logger.debug(f"{log_prefix} Converted office file to PDF: {converted_name}")
         return converted_path, converted_name, "application/pdf"
 
     async def upload_files(

@@ -166,8 +166,8 @@ class Mem0Client:
             
             result = await self._memory.search(
                 query=query,
-                user_id=user_id,
-                limit=limit,
+                filters={"user_id": user_id},
+                top_k=limit,
             )
             
             memories = result.get("results", [])
@@ -199,8 +199,8 @@ class Mem0Client:
         
         try:
             result = await self._memory.get_all(
-                user_id=user_id,
-                limit=limit,
+                filters={"user_id": user_id},
+                top_k=limit,
             )
             
             memories = result.get("results", [])
