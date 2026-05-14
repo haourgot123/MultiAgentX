@@ -570,28 +570,6 @@ class SkillsConfig:
 
 
 @dataclass
-class VideoGenerationConfig:
-    """Video generation and Remotion rendering configuration."""
-
-    max_duration_seconds: int = _env_int("VIDEO_MAX_DURATION_SECONDS", default=30)
-    default_duration_seconds: int = _env_int(
-        "VIDEO_DEFAULT_DURATION_SECONDS", default=15
-    )
-    default_fps: int = _env_int("VIDEO_DEFAULT_FPS", default=30)
-    render_timeout_seconds: int = _env_int(
-        "VIDEO_RENDER_TIMEOUT_SECONDS", default=180
-    )
-    render_workdir: str = _env("VIDEO_RENDER_WORKDIR", default="tmp/video-renderer")
-    renderer_project_dir: str = _env(
-        "VIDEO_RENDERER_PROJECT_DIR", default="video_renderer"
-    )
-    max_concurrent_renders: int = _env_int(
-        "VIDEO_MAX_CONCURRENT_RENDERS",
-        default=2,
-    )
-
-
-@dataclass
 class AzureBlobStorageConfig:
     """Azure Blob Storage configuration settings."""
 

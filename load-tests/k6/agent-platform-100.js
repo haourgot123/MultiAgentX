@@ -69,7 +69,6 @@ export default function (data) {
 
   recordNonStream(http.get(`${API_BASE_URL}/conversations`, params), 'list_conversations')
   recordNonStream(http.get(`${API_BASE_URL}/files`, params), 'list_files')
-  recordNonStream(http.get(`${API_BASE_URL}/video-generations`, params), 'list_videos')
   recordNonStream(http.get(`${API_BASE_URL}/skills`, params), 'list_skills')
 
   if (RUN_STREAMS && CHAT_CONVERSATION_ID) {

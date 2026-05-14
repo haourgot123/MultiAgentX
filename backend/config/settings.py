@@ -26,7 +26,6 @@ from .config import (
     S3Config,
     SkillsConfig,
     TavilySearchConfig,
-    VideoGenerationConfig,
     VLMConfig,
     ProcessingConfig,
     GGSearch,
@@ -63,7 +62,6 @@ class Settings(BaseSettings):
     ingestion_summary: IngestionSummaryConfig = IngestionSummaryConfig()
     mem0: Mem0Config = Mem0Config()
     skills: SkillsConfig = SkillsConfig()
-    video_generation: VideoGenerationConfig = VideoGenerationConfig()
     azure_blob: AzureBlobStorageConfig = AzureBlobStorageConfig()
 
     def __str__(self) -> str:

@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 from backend.api.conversation.model import Conversation
 from backend.api.files.model import StoredFile
 from backend.api.skills.model import AgentSkill
-from backend.api.video_generation.model import VideoGenerationJob
 from backend.config.settings import _settings
 from backend.databases.db import get_utc_now
 from backend.utils.blob_storage import blob_storage_client
@@ -118,31 +117,6 @@ class DataRetentionService:
                     )
                 self._mark_purged(stored_file, now)
                 result["tables"]["FileAsset"]["purged"] += 1
-
-        videos = self._due_records(
-            db_session,
-            VideoGenerationJob,
-            now,
-            effective_batch_size,
-        )
-        result["tables"]["VideoGenerationJob"] = {
-            "eligible": len(videos),
-            "purged": 0,
-        }
-        for job in videos:
-            if not dry_run:
-                for blob_path in (job.video_blob_path, job.thumbnail_blob_path):
-                    try:
-                        self._delete_blob(blob_path)
-                    except Exception as exc:
-                        logger.warning(
-                            "[DataRetentionService] Video blob purge failed job_id={} path={}: {}",
-                            job.id,
-                            blob_path,
-                            exc,
-                        )
-                self._mark_purged(job, now)
-                result["tables"]["VideoGenerationJob"]["purged"] += 1
 
         skills = self._due_records(db_session, AgentSkill, now, effective_batch_size)
         result["tables"]["AgentSkill"] = {"eligible": len(skills), "purged": 0}

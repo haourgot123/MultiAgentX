@@ -1,7 +1,7 @@
 """add retention fields and indexes
 
 Revision ID: 6f2e9b1c0d77
-Revises: 1a2b3c4d5e6f
+Revises: c2f4a9d7e6b1
 Create Date: 2026-04-29 10:30:00.000000
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision: str = "6f2e9b1c0d77"
-down_revision: Union[str, Sequence[str], None] = "1a2b3c4d5e6f"
+down_revision: Union[str, Sequence[str], None] = "c2f4a9d7e6b1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -66,19 +66,6 @@ def upgrade() -> None:
         "SkillExecutionArtifact",
         sa.Column("purged_at", sa.DateTime(timezone=True), nullable=True),
     )
-    op.add_column(
-        "VideoGenerationJob",
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "VideoGenerationJob",
-        sa.Column("purge_after", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "VideoGenerationJob",
-        sa.Column("purged_at", sa.DateTime(timezone=True), nullable=True),
-    )
-
     op.create_index(
         "ix_FileAsset_user_deleted_updated",
         "FileAsset",
@@ -133,26 +120,8 @@ def upgrade() -> None:
         ["purge_after"],
         unique=False,
     )
-    op.create_index(
-        "ix_VideoGenerationJob_user_deleted_created",
-        "VideoGenerationJob",
-        ["user_id", "deleted_at", "created_at"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_VideoGenerationJob_purge_after",
-        "VideoGenerationJob",
-        ["purge_after"],
-        unique=False,
-    )
-
 
 def downgrade() -> None:
-    op.drop_index("ix_VideoGenerationJob_purge_after", table_name="VideoGenerationJob")
-    op.drop_index(
-        "ix_VideoGenerationJob_user_deleted_created",
-        table_name="VideoGenerationJob",
-    )
     op.drop_index(
         "ix_SkillExecutionArtifact_purge_after",
         table_name="SkillExecutionArtifact",
@@ -175,9 +144,6 @@ def downgrade() -> None:
     op.drop_index("ix_FileAsset_purge_after", table_name="FileAsset")
     op.drop_index("ix_FileAsset_user_deleted_updated", table_name="FileAsset")
 
-    op.drop_column("VideoGenerationJob", "purged_at")
-    op.drop_column("VideoGenerationJob", "purge_after")
-    op.drop_column("VideoGenerationJob", "deleted_at")
     op.drop_column("SkillExecutionArtifact", "purged_at")
     op.drop_column("SkillExecutionArtifact", "purge_after")
     op.drop_column("SkillExecutionArtifact", "deleted_at")

@@ -19,7 +19,6 @@ import {
     Edit2,
     ScanSearch,
     Bot,
-    Film,
 } from "lucide-react"
 import { Link, useLocation } from "react-router-dom"
 import {
@@ -628,30 +627,6 @@ export function Sidebar({ className, isCollapsed = false, toggleCollapse }: Side
                         )}
                     </div>
 
-                    {/* Video Studio Section */}
-                    <div>
-                        <div className={cn(
-                            "rounded-lg transition-all",
-                            isActive('/video') && "bg-primary/10"
-                        )}>
-                            <div className="flex items-center gap-1 px-2 py-1">
-                                <Link to="/video" className="flex-1">
-                                    <Button
-                                        variant="ghost"
-                                        className={cn(
-                                            "w-full justify-start text-text-secondary hover:text-primary hover:bg-transparent transition-all px-2",
-                                            isActive('/video') && "text-primary font-medium"
-                                        )}
-                                    >
-                                        <span className="icon-tech-shell mr-3 flex h-8 w-8 items-center justify-center rounded-xl">
-                                            <Film className="h-4 w-4" />
-                                        </span>
-                                        <span>Video Studio</span>
-                                    </Button>
-                                </Link>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </ScrollArea>
 

@@ -497,8 +497,8 @@ function MessageBubbleComponent({ message, fileCitations, onFileCitationClick }:
                 {hasNonImageAttachment && (
                     <div className="mt-2 w-full max-w-[38rem]">
                         <InlineFilePreview
-                            fileUrl={message.blobUrl}
-                            filename={message.blobName}
+                            fileUrl={message.blobUrl as string}
+                            filename={message.blobName as string}
                             onView={() => window.open(getPreviewUrl(message.blobUrl as string, message.blobName as string), '_blank', 'noreferrer')}
                             onDownload={() => downloadFile(message.blobUrl as string, message.blobName as string)}
                         />
